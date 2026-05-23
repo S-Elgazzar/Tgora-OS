@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tgora — Internal Operations</title>
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Inter font -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
+    rel="stylesheet"
+  />
+
+  <!-- Lucide icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <!-- Supabase JS -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+  <!-- Tailwind theme override -->
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+          },
+          colors: {
+            sidebar: {
+              DEFAULT: '#0B0B0F',
+              muted: '#111114',
+              border: '#1C1C22',
+              text: '#A1A1AA',
+              hover: '#1A1A20',
+              active: '#23232C',
+            },
+            brand: {
+              50: '#EEF2FF',
+              100: '#E0E7FF',
+              500: '#6366F1',
+              600: '#4F46E5',
+              700: '#4338CA',
+            },
+          },
+          boxShadow: {
+            'soft': '0 1px 2px 0 rgba(0,0,0,0.04), 0 1px 3px 0 rgba(0,0,0,0.06)',
+            'card': '0 1px 3px 0 rgba(0,0,0,0.05), 0 4px 12px -2px rgba(0,0,0,0.04)',
+            'modal': '0 25px 50px -12px rgba(0,0,0,0.25)',
+          },
+        },
+      },
+    };
+  </script>
+
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body class="bg-[#FAFAFA] text-gray-900 font-sans antialiased">
+
+  <!-- App Container -->
+  <div class="flex min-h-screen">
+
+    <!-- ================= SIDEBAR ================= -->
+    <aside
+      id="sidebar"
+      class="fixed lg:static inset-y-0 left-0 z-40 w-64 bg-sidebar text-sidebar-text border-r border-sidebar-border flex flex-col transform -translate-x-full lg:translate-x-0 transition-transform duration-300"
+    >
+      <!-- Brand -->
+      <div class="h-16 flex items-center gap-3 px-5 border-b border-sidebar-border">
+        <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg">
+          <span class="text-white font-bold text-sm">T</span>
+        </div>
+        <div>
+          <h1 class="text-white font-semibold text-sm tracking-tight">Tgora</h1>
+          <p class="text-[11px] text-sidebar-text">Internal Ops</p>
+        </div>
+      </div>
+
+      <!-- Nav -->
+      <nav class="flex-1 px-3 py-5 space-y-1 overflow-y-auto">
+        <p class="px-3 mb-2 text-[10px] uppercase tracking-wider text-zinc-500 font-medium">Workspace</p>
+        <a href="#" data-view="dashboard" class="nav-item active">
+          <i data-lucide="layout-dashboard" class="w-4 h-4"></i>
+          <span>Dashboard</span>
+        </a>
+        <a href="#" data-view="projects" class="nav-item">
+          <i data-lucide="folder-kanban" class="w-4 h-4"></i>
+          <span>Projects</span>
+          <span class="ml-auto text-[10px] bg-sidebar-active text-zinc-300 px-1.5 py-0.5 rounded" id="nav-projects-count">0</span>
+        </a>
+        <a href="#" data-view="tasks" class="nav-item">
+          <i data-lucide="check-square" class="w-4 h-4"></i>
+          <span>Tasks</span>
+          <span class="ml-auto text-[10px] bg-sidebar-active text-zinc-300 px-1.5 py-0.5 rounded" id="nav-tasks-count">0</span>
+        </a>
+
+        <p class="px-3 mt-6 mb-2 text-[10px] uppercase tracking-wider text-zinc-500 font-medium">Analytics</p>
+        <a href="#" class="nav-item opacity-60 cursor-not-allowed">
+          <i data-lucide="bar-chart-3" class="w-4 h-4"></i>
+          <span>Reports</span>
+          <span class="ml-auto text-[9px] bg-zinc-800 text-zinc-400 px-1.5 py-0.5 rounded">SOON</span>
+        </a>
+        <a href="#" class="nav-item opacity-60 cursor-not-allowed">
+          <i data-lucide="users" class="w-4 h-4"></i>
+          <span>Team</span>
+          <span class="ml-auto text-[9px] bg-zinc-800 text-zinc-400 px-1.5 py-0.5 rounded">SOON</span>
+        </a>
+        <a href="#" class="nav-item opacity-60 cursor-not-allowed">
+          <i data-lucide="calendar" class="w-4 h-4"></i>
+          <span>Calendar</span>
+        </a>
+
+        <p class="px-3 mt-6 mb-2 text-[10px] uppercase tracking-wider text-zinc-500 font-medium">Settings</p>
+        <a href="#" class="nav-item opacity-60 cursor-not-allowed">
+          <i data-lucide="settings" class="w-4 h-4"></i>
+          <span>Preferences</span>
+        </a>
+        <a href="#" class="nav-item opacity-60 cursor-not-allowed">
+          <i data-lucide="help-circle" class="w-4 h-4"></i>
+          <span>Help &amp; Support</span>
+        </a>
+      </nav>
+
+      <!-- User card -->
+      <div class="p-3 border-t border-sidebar-border">
+        <div class="flex items-center gap-3 p-2 rounded-lg hover:bg-sidebar-hover transition-colors cursor-pointer">
+          <div class="w-9 h-9 rounded-full bg-gradient-to-br from-pink-500 to-orange-500 flex items-center justify-center text-white text-xs font-semibold">
+            TG
+          </div>
+          <div class="flex-1 min-w-0">
+            <p class="text-xs font-medium text-white truncate">Tgora Team</p>
+            <p class="text-[11px] text-zinc-500 truncate">hello@tgora.com</p>
+          </div>
+          <i data-lucide="chevrons-up-down" class="w-4 h-4 text-zinc-500"></i>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Sidebar overlay (mobile) -->
+    <div id="sidebar-overlay" class="fixed inset-0 bg-black/40 z-30 hidden lg:hidden"></div>
+
+    <!-- ================= MAIN ================= -->
+    <main class="flex-1 min-w-0 flex flex-col">
+
+      <!-- Topbar -->
+      <header class="h-16 bg-white/80 backdrop-blur border-b border-gray-200 px-4 sm:px-6 lg:px-8 flex items-center gap-4 sticky top-0 z-20">
+        <button id="sidebar-toggle" class="lg:hidden w-9 h-9 rounded-lg hover:bg-gray-100 flex items-center justify-center">
+          <i data-lucide="menu" class="w-5 h-5"></i>
+        </button>
+
+        <!-- Search -->
+        <div class="flex-1 max-w-md relative">
+          <i data-lucide="search" class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
+          <input
+            id="global-search"
+            type="text"
+            placeholder="Search projects, tasks, clients…"
+            class="w-full h-10 pl-10 pr-4 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:bg-white focus:border-brand-500 focus:ring-2 focus:ring-brand-100 outline-none transition"
+          />
+        </div>
+
+        <div class="flex items-center gap-2">
+          <button class="hidden sm:flex h-9 w-9 rounded-lg hover:bg-gray-100 items-center justify-center text-gray-500 transition">
+            <i data-lucide="bell" class="w-5 h-5"></i>
+          </button>
+          <button class="hidden sm:flex h-9 w-9 rounded-lg hover:bg-gray-100 items-center justify-center text-gray-500 transition">
+            <i data-lucide="moon" class="w-5 h-5"></i>
+          </button>
+          <button
+            id="topbar-new"
+            class="h-9 px-3 sm:px-4 inline-flex items-center gap-2 bg-gray-900 hover:bg-black text-white text-sm font-medium rounded-lg transition shadow-sm"
+          >
+            <i data-lucide="plus" class="w-4 h-4"></i>
+            <span class="hidden sm:inline">New</span>
+          </button>
+        </div>
+      </header>
+
+      <!-- Content -->
+      <div class="flex-1 px-4 sm:px-6 lg:px-8 py-6 lg:py-8">
+
+        <!-- ============ DASHBOARD VIEW ============ -->
+        <section id="view-dashboard" class="view">
+          <div class="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-7">
+            <div>
+              <p class="text-xs font-medium text-brand-600 uppercase tracking-wider mb-1">Overview</p>
+              <h2 class="text-2xl sm:text-3xl font-semibold tracking-tight text-gray-900">
+                Welcome back, Tgora <span class="inline-block">👋</span>
+              </h2>
+              <p class="text-sm text-gray-500 mt-1">Here's what's happening across your agency today.</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <button class="h-9 px-3 inline-flex items-center gap-2 border border-gray-200 hover:border-gray-300 bg-white text-sm text-gray-700 rounded-lg transition">
+                <i data-lucide="download" class="w-4 h-4"></i> Export
+              </button>
+              <button data-action="open-project-modal" class="h-9 px-3 inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg transition shadow-sm">
+                <i data-lucide="plus" class="w-4 h-4"></i> New Project
+              </button>
+            </div>
+          </div>
+
+          <!-- Stat cards -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
+            <div class="stat-card">
+              <div class="flex items-start justify-between">
+                <div class="w-10 h-10 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center">
+                  <i data-lucide="folder-kanban" class="w-5 h-5"></i>
+                </div>
+                <span class="text-[11px] font-medium text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">+12%</span>
+              </div>
+              <p class="text-xs text-gray-500 mt-4">Total Projects</p>
+              <h3 class="text-2xl font-semibold text-gray-900 mt-1" id="stat-total-projects">0</h3>
+              <p class="text-xs text-gray-400 mt-1"><span id="stat-active-projects">0</span> active</p>
+            </div>
+
+            <div class="stat-card">
+              <div class="flex items-start justify-between">
+                <div class="w-10 h-10 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                  <i data-lucide="check-circle-2" class="w-5 h-5"></i>
+                </div>
+                <span class="text-[11px] font-medium text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">+5%</span>
+              </div>
+              <p class="text-xs text-gray-500 mt-4">Completed Tasks</p>
+              <h3 class="text-2xl font-semibold text-gray-900 mt-1" id="stat-completed-tasks">0</h3>
+              <p class="text-xs text-gray-400 mt-1">this month</p>
+            </div>
+
+            <div class="stat-card">
+              <div class="flex items-start justify-between">
+                <div class="w-10 h-10 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center">
+                  <i data-lucide="clock" class="w-5 h-5"></i>
+                </div>
+                <span class="text-[11px] font-medium text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">Live</span>
+              </div>
+              <p class="text-xs text-gray-500 mt-4">In Progress</p>
+              <h3 class="text-2xl font-semibold text-gray-900 mt-1" id="stat-in-progress">0</h3>
+              <p class="text-xs text-gray-400 mt-1">tasks ongoing</p>
+            </div>
+
+            <div class="stat-card">
+              <div class="flex items-start justify-between">
+                <div class="w-10 h-10 rounded-lg bg-rose-50 text-rose-600 flex items-center justify-center">
+                  <i data-lucide="alert-triangle" class="w-5 h-5"></i>
+                </div>
+                <span class="text-[11px] font-medium text-rose-600 bg-rose-50 px-2 py-0.5 rounded-full">Attention</span>
+              </div>
+              <p class="text-xs text-gray-500 mt-4">Overdue</p>
+              <h3 class="text-2xl font-semibold text-gray-900 mt-1" id="stat-overdue">0</h3>
+              <p class="text-xs text-gray-400 mt-1">past deadline</p>
+            </div>
+          </div>
+
+          <!-- Recent panels -->
+          <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
+
+            <!-- Recent projects -->
+            <div class="xl:col-span-2 bg-white rounded-xl border border-gray-200 shadow-card">
+              <div class="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+                <div>
+                  <h3 class="text-sm font-semibold text-gray-900">Recent Projects</h3>
+                  <p class="text-xs text-gray-500 mt-0.5">Latest agency engagements</p>
+                </div>
+                <button data-view="projects" data-action="goto-view" class="text-xs font-medium text-brand-600 hover:text-brand-700 inline-flex items-center gap-1">
+                  View all <i data-lucide="arrow-right" class="w-3.5 h-3.5"></i>
+                </button>
+              </div>
+              <div id="recent-projects-list" class="divide-y divide-gray-100">
+                <!-- Filled by JS -->
+              </div>
+            </div>
+
+            <!-- Recent tasks -->
+            <div class="bg-white rounded-xl border border-gray-200 shadow-card">
+              <div class="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+                <div>
+                  <h3 class="text-sm font-semibold text-gray-900">Upcoming Tasks</h3>
+                  <p class="text-xs text-gray-500 mt-0.5">Closest deadlines first</p>
+                </div>
+                <button data-view="tasks" data-action="goto-view" class="text-xs font-medium text-brand-600 hover:text-brand-700 inline-flex items-center gap-1">
+                  All <i data-lucide="arrow-right" class="w-3.5 h-3.5"></i>
+                </button>
+              </div>
+              <div id="recent-tasks-list" class="divide-y divide-gray-100">
+                <!-- Filled by JS -->
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ PROJECTS VIEW ============ -->
+        <section id="view-projects" class="view hidden">
+          <div class="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-7">
+            <div>
+              <p class="text-xs font-medium text-brand-600 uppercase tracking-wider mb-1">Workspace</p>
+              <h2 class="text-2xl sm:text-3xl font-semibold tracking-tight text-gray-900">Projects</h2>
+              <p class="text-sm text-gray-500 mt-1">Manage all client engagements in one place.</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <div class="hidden sm:flex items-center bg-white border border-gray-200 rounded-lg p-0.5">
+                <button data-projects-filter="all" class="filter-pill active">All</button>
+                <button data-projects-filter="active" class="filter-pill">Active</button>
+                <button data-projects-filter="completed" class="filter-pill">Done</button>
+              </div>
+              <button data-action="open-project-modal" class="h-9 px-3 inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg transition shadow-sm">
+                <i data-lucide="plus" class="w-4 h-4"></i> New Project
+              </button>
+            </div>
+          </div>
+
+          <!-- Projects table -->
+          <div class="bg-white rounded-xl border border-gray-200 shadow-card overflow-hidden">
+            <div class="overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead class="bg-gray-50 border-b border-gray-100">
+                  <tr class="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th class="px-5 py-3">Project</th>
+                    <th class="px-5 py-3">Client</th>
+                    <th class="px-5 py-3">Status</th>
+                    <th class="px-5 py-3">Priority</th>
+                    <th class="px-5 py-3">Deadline</th>
+                    <th class="px-5 py-3 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="projects-table-body" class="divide-y divide-gray-100">
+                  <!-- Filled by JS -->
+                </tbody>
+              </table>
+            </div>
+            <div id="projects-empty" class="hidden px-5 py-20 text-center">
+              <div class="w-12 h-12 mx-auto rounded-full bg-gray-100 flex items-center justify-center mb-3">
+                <i data-lucide="folder-open" class="w-6 h-6 text-gray-400"></i>
+              </div>
+              <p class="text-sm font-medium text-gray-900">No projects yet</p>
+              <p class="text-xs text-gray-500 mt-1">Get started by creating your first project.</p>
+              <button data-action="open-project-modal" class="mt-4 inline-flex items-center gap-2 h-9 px-3 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg">
+                <i data-lucide="plus" class="w-4 h-4"></i> New Project
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ TASKS VIEW ============ -->
+        <section id="view-tasks" class="view hidden">
+          <div class="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-7">
+            <div>
+              <p class="text-xs font-medium text-brand-600 uppercase tracking-wider mb-1">Workspace</p>
+              <h2 class="text-2xl sm:text-3xl font-semibold tracking-tight text-gray-900">Tasks</h2>
+              <p class="text-sm text-gray-500 mt-1">Track everything your team is working on.</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <div class="hidden sm:flex items-center bg-white border border-gray-200 rounded-lg p-0.5">
+                <button data-tasks-filter="all" class="filter-pill active">All</button>
+                <button data-tasks-filter="todo" class="filter-pill">To Do</button>
+                <button data-tasks-filter="in_progress" class="filter-pill">In Progress</button>
+                <button data-tasks-filter="completed" class="filter-pill">Done</button>
+              </div>
+              <button data-action="open-task-modal" class="h-9 px-3 inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg transition shadow-sm">
+                <i data-lucide="plus" class="w-4 h-4"></i> New Task
+              </button>
+            </div>
+          </div>
+
+          <!-- Tasks table -->
+          <div class="bg-white rounded-xl border border-gray-200 shadow-card overflow-hidden">
+            <div class="overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead class="bg-gray-50 border-b border-gray-100">
+                  <tr class="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th class="px-5 py-3">Task</th>
+                    <th class="px-5 py-3">Project</th>
+                    <th class="px-5 py-3">Assigned</th>
+                    <th class="px-5 py-3">Status</th>
+                    <th class="px-5 py-3">Priority</th>
+                    <th class="px-5 py-3">Deadline</th>
+                    <th class="px-5 py-3 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="tasks-table-body" class="divide-y divide-gray-100">
+                  <!-- Filled by JS -->
+                </tbody>
+              </table>
+            </div>
+            <div id="tasks-empty" class="hidden px-5 py-20 text-center">
+              <div class="w-12 h-12 mx-auto rounded-full bg-gray-100 flex items-center justify-center mb-3">
+                <i data-lucide="list-checks" class="w-6 h-6 text-gray-400"></i>
+              </div>
+              <p class="text-sm font-medium text-gray-900">No tasks yet</p>
+              <p class="text-xs text-gray-500 mt-1">Add a task to start tracking your work.</p>
+              <button data-action="open-task-modal" class="mt-4 inline-flex items-center gap-2 h-9 px-3 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg">
+                <i data-lucide="plus" class="w-4 h-4"></i> New Task
+              </button>
+            </div>
+          </div>
+        </section>
+
+      </div>
+
+      <footer class="px-4 sm:px-6 lg:px-8 py-5 border-t border-gray-200 text-xs text-gray-500 flex flex-col sm:flex-row items-center justify-between gap-2">
+        <p>© <span id="year"></span> Tgora Agency. Internal Operations.</p>
+        <p>Crafted with care · v1.0</p>
+      </footer>
+    </main>
+  </div>
+
+  <!-- ============ PROJECT MODAL ============ -->
+  <div id="project-modal" class="modal hidden">
+    <div class="modal-overlay" data-action="close-modal"></div>
+    <div class="modal-panel">
+      <div class="px-6 py-5 border-b border-gray-100 flex items-center justify-between">
+        <div>
+          <h3 class="text-lg font-semibold text-gray-900">New Project</h3>
+          <p class="text-xs text-gray-500 mt-0.5">Create a new client engagement.</p>
+        </div>
+        <button data-action="close-modal" class="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center">
+          <i data-lucide="x" class="w-4 h-4 text-gray-500"></i>
+        </button>
+      </div>
+
+      <form id="project-form" class="px-6 py-5 space-y-4">
+        <div>
+          <label class="form-label">Project name <span class="text-rose-500">*</span></label>
+          <input name="project_name" required type="text" class="form-input" placeholder="e.g. Acme Q3 Campaign" />
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="form-label">Client <span class="text-rose-500">*</span></label>
+            <input name="client" required type="text" class="form-input" placeholder="Acme Corp" />
+          </div>
+          <div>
+            <label class="form-label">Project link</label>
+            <input name="project_link" type="url" class="form-input" placeholder="https://…" />
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="form-label">Status</label>
+            <select name="status" class="form-input">
+              <option value="planning">Planning</option>
+              <option value="active" selected>Active</option>
+              <option value="on_hold">On Hold</option>
+              <option value="completed">Completed</option>
+            </select>
+          </div>
+          <div>
+            <label class="form-label">Priority</label>
+            <select name="priority" class="form-input">
+              <option value="low">Low</option>
+              <option value="medium" selected>Medium</option>
+              <option value="high">High</option>
+              <option value="urgent">Urgent</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="form-label">Start date</label>
+            <input name="start_date" type="date" class="form-input" />
+          </div>
+          <div>
+            <label class="form-label">Deadline</label>
+            <input name="deadline" type="date" class="form-input" />
+          </div>
+        </div>
+
+        <div class="flex items-center justify-end gap-2 pt-4 border-t border-gray-100">
+          <button type="button" data-action="close-modal" class="h-9 px-4 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg">
+            Cancel
+          </button>
+          <button type="submit" class="h-9 px-4 inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg shadow-sm">
+            <i data-lucide="check" class="w-4 h-4"></i>
+            Create project
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ============ TASK MODAL ============ -->
+  <div id="task-modal" class="modal hidden">
+    <div class="modal-overlay" data-action="close-modal"></div>
+    <div class="modal-panel">
+      <div class="px-6 py-5 border-b border-gray-100 flex items-center justify-between">
+        <div>
+          <h3 class="text-lg font-semibold text-gray-900">New Task</h3>
+          <p class="text-xs text-gray-500 mt-0.5">Assign a task to your team.</p>
+        </div>
+        <button data-action="close-modal" class="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center">
+          <i data-lucide="x" class="w-4 h-4 text-gray-500"></i>
+        </button>
+      </div>
+
+      <form id="task-form" class="px-6 py-5 space-y-4">
+        <div>
+          <label class="form-label">Task description <span class="text-rose-500">*</span></label>
+          <textarea name="task_info" required rows="2" class="form-input resize-none" placeholder="e.g. Draft landing page copy for Acme launch"></textarea>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="form-label">Assigned to <span class="text-rose-500">*</span></label>
+            <input name="assigned_to" required type="text" class="form-input" placeholder="e.g. Sarah K." />
+          </div>
+          <div>
+            <label class="form-label">Project</label>
+            <select name="project_id" id="task-project-select" class="form-input">
+              <option value="">— No project —</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="form-label">Status</label>
+            <select name="status" class="form-input">
+              <option value="todo" selected>To Do</option>
+              <option value="in_progress">In Progress</option>
+              <option value="review">In Review</option>
+              <option value="completed">Completed</option>
+            </select>
+          </div>
+          <div>
+            <label class="form-label">Priority</label>
+            <select name="priority" class="form-input">
+              <option value="low">Low</option>
+              <option value="medium" selected>Medium</option>
+              <option value="high">High</option>
+              <option value="urgent">Urgent</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="form-label">Start date</label>
+            <input name="start_date" type="date" class="form-input" />
+          </div>
+          <div>
+            <label class="form-label">Deadline</label>
+            <input name="deadline" type="date" class="form-input" />
+          </div>
+        </div>
+
+        <div>
+          <label class="form-label">Task link</label>
+          <input name="task_link" type="url" class="form-input" placeholder="https://…" />
+        </div>
+
+        <div class="flex items-center justify-end gap-2 pt-4 border-t border-gray-100">
+          <button type="button" data-action="close-modal" class="h-9 px-4 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg">
+            Cancel
+          </button>
+          <button type="submit" class="h-9 px-4 inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg shadow-sm">
+            <i data-lucide="check" class="w-4 h-4"></i>
+            Create task
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ============ CONFIRM DELETE MODAL ============ -->
+  <div id="confirm-modal" class="modal hidden">
+    <div class="modal-overlay" data-action="close-confirm"></div>
+    <div class="modal-panel max-w-sm">
+      <div class="px-6 py-6 text-center">
+        <div class="w-12 h-12 mx-auto rounded-full bg-rose-50 text-rose-600 flex items-center justify-center mb-4">
+          <i data-lucide="trash-2" class="w-5 h-5"></i>
+        </div>
+        <h3 class="text-base font-semibold text-gray-900">Delete this item?</h3>
+        <p id="confirm-msg" class="text-xs text-gray-500 mt-1">This action cannot be undone.</p>
+
+        <div class="flex items-center justify-center gap-2 mt-6">
+          <button data-action="close-confirm" class="h-9 px-4 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg">
+            Cancel
+          </button>
+          <button id="confirm-delete-btn" class="h-9 px-4 inline-flex items-center gap-2 bg-rose-600 hover:bg-rose-700 text-white text-sm font-medium rounded-lg shadow-sm">
+            <i data-lucide="trash-2" class="w-4 h-4"></i> Delete
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast container -->
+  <div id="toast-container" class="fixed bottom-6 right-6 z-50 flex flex-col gap-2"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
