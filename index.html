@@ -360,6 +360,43 @@
   </div>
 </div>
 
+<!-- Charts Section -->
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+
+  <!-- Project Status Chart -->
+  <div class="bg-white border border-gray-200 rounded-2xl shadow-card p-6">
+    <div class="mb-5">
+      <h3 class="text-lg font-semibold text-gray-900">
+        Project Status Distribution
+      </h3>
+      <p class="text-sm text-gray-500 mt-1">
+        Active vs On Hold vs Completed projects.
+      </p>
+    </div>
+
+    <div class="h-72">
+      <canvas id="projectsChart"></canvas>
+    </div>
+  </div>
+
+  <!-- Tasks Progress Chart -->
+  <div class="bg-white border border-gray-200 rounded-2xl shadow-card p-6">
+    <div class="mb-5">
+      <h3 class="text-lg font-semibold text-gray-900">
+        Tasks Progress
+      </h3>
+      <p class="text-sm text-gray-500 mt-1">
+        Overview of task workflow and completion.
+      </p>
+    </div>
+
+    <div class="h-72">
+      <canvas id="tasksChart"></canvas>
+    </div>
+  </div>
+
+</div>
+
           <!-- Recent panels -->
           <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
 
@@ -775,6 +812,7 @@
   <!-- Toast container -->
   <div id="toast-container" class="fixed bottom-6 right-6 z-50 flex flex-col gap-2"></div>
 
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

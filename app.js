@@ -272,6 +272,142 @@ function renderStats() {
   $('#nav-tasks-count').textContent = totalTasks;
 }
 
+let projectsChartInstance = null;
+let tasksChartInstance = null;
+
+function renderCharts() {
+
+  // -------- Projects Chart --------
+
+  const activeProjects = state.projects.filter(
+    (p) => (p.status || '').toLowerCase() === 'active'
+  ).length;
+
+  const onHoldProjects = state.projects.filter(
+    (p) => (p.status || '').toLowerCase() === 'on_hold'
+  ).length;
+
+  const completedProjects = state.projects.filter(
+    (p) => (p.status || '').toLowerCase() === 'completed'
+  ).length;
+
+  const projectsCtx = document
+    .getElementById('projectsChart')
+    ?.getContext('2d');
+
+  if (projectsChartInstance) {
+    projectsChartInstance.destroy();
+  }
+
+  if (projectsCtx) {
+    projectsChartInstance = new Chart(projectsCtx, {
+      type: 'doughnut',
+      data: {
+        labels: ['Active', 'On Hold', 'Completed'],
+        datasets: [
+          {
+            data: [
+              activeProjects,
+              onHoldProjects,
+              completedProjects
+            ],
+            backgroundColor: [
+              '#10B981',
+              '#F59E0B',
+              '#6366F1'
+            ],
+            borderWidth: 0
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        cutout: '70%',
+        plugins: {
+          legend: {
+            position: 'bottom'
+          }
+        }
+      }
+    });
+  }
+
+  // -------- Tasks Chart --------
+
+  const todoTasks = state.tasks.filter(
+    (t) => (t.status || '').toLowerCase() === 'todo'
+  ).length;
+
+  const inProgressTasks = state.tasks.filter(
+    (t) => (t.status || '').toLowerCase() === 'in_progress'
+  ).length;
+
+  const reviewTasks = state.tasks.filter(
+    (t) => (t.status || '').toLowerCase() === 'review'
+  ).length;
+
+  const completedTasks = state.tasks.filter(
+    (t) => (t.status || '').toLowerCase() === 'completed'
+  ).length;
+
+  const tasksCtx = document
+    .getElementById('tasksChart')
+    ?.getContext('2d');
+
+  if (tasksChartInstance) {
+    tasksChartInstance.destroy();
+  }
+
+  if (tasksCtx) {
+    tasksChartInstance = new Chart(tasksCtx, {
+      type: 'bar',
+      data: {
+        labels: [
+          'To Do',
+          'In Progress',
+          'Review',
+          'Completed'
+        ],
+        datasets: [
+          {
+            data: [
+              todoTasks,
+              inProgressTasks,
+              reviewTasks,
+              completedTasks
+            ],
+            backgroundColor: [
+              '#CBD5E1',
+              '#F59E0B',
+              '#8B5CF6',
+              '#10B981'
+            ],
+            borderRadius: 10
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            display: false
+          }
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            ticks: {
+              precision: 0
+            }
+          }
+        }
+      }
+    });
+  }
+}
+
 function renderRecentProjects() {
   const container = $('#recent-projects-list');
   const recent = [...state.projects].slice(0, 5);
@@ -498,6 +634,7 @@ function renderTasks() {
 
 function renderAll() {
   renderStats();
+  renderCharts();
   renderRecentProjects();
   renderRecentTasks();
   renderProjects();
