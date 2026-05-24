@@ -536,11 +536,30 @@
               <p class="text-sm text-gray-500 mt-1">Manage all client engagements in one place.</p>
             </div>
             <div class="flex items-center gap-2">
-              <div class="hidden sm:flex items-center bg-white border border-gray-200 rounded-lg p-0.5">
-                <button data-projects-filter="all" class="filter-pill active">All</button>
-                <button data-projects-filter="active" class="filter-pill">Active</button>
-                <button data-projects-filter="completed" class="filter-pill">Done</button>
-              </div>
+              <div class="hidden sm:flex items-center bg-white border border-gray-200 rounded-xl p-1">
+
+  <button data-projects-filter="all" class="filter-pill">
+    All
+  </button>
+
+  <button data-projects-filter="planning" class="filter-pill">
+    Planning
+  </button>
+
+  <button data-projects-filter="active" class="filter-pill active">
+    Active
+  </button>
+
+  <button data-projects-filter="on_hold" class="filter-pill">
+    On Hold
+  </button>
+
+  <button data-projects-filter="completed" class="filter-pill">
+    Done
+  </button>
+
+</div>
+
               <button data-action="open-project-modal" class="h-9 px-3 inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg transition shadow-sm">
                 <i data-lucide="plus" class="w-4 h-4"></i> New Project
               </button>
