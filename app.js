@@ -313,6 +313,7 @@ function renderStats() {
 
 let projectsChartInstance = null;
 let tasksChartInstance = null;
+let teamChartInstance = null;
 
 function renderCharts() {
 
@@ -445,6 +446,67 @@ function renderCharts() {
       }
     });
   }
+// -------- Team Workload Chart --------
+
+const workloadMap = {};
+
+state.tasks.forEach((task) => {
+  const member = task.assigned_to || 'Unassigned';
+
+  if (!workloadMap[member]) {
+    workloadMap[member] = 0;
+  }
+
+  workloadMap[member]++;
+});
+
+const memberLabels = Object.keys(workloadMap);
+const workloadData = Object.values(workloadMap);
+
+const teamCtx = document
+  .getElementById('teamChart')
+  ?.getContext('2d');
+
+if (teamChartInstance) {
+  teamChartInstance.destroy();
+}
+
+if (teamCtx) {
+  teamChartInstance = new Chart(teamCtx, {
+    type: 'polarArea',
+
+    data: {
+      labels: memberLabels,
+
+      datasets: [
+        {
+          data: workloadData,
+
+          backgroundColor: [
+            '#6366F1',
+            '#10B981',
+            '#F59E0B',
+            '#EC4899',
+            '#8B5CF6',
+            '#06B6D4',
+            '#EF4444'
+          ]
+        }
+      ]
+    },
+
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+
+      plugins: {
+        legend: {
+          position: 'bottom'
+        }
+      }
+    }
+  });
+}
 }
 
 function renderRecentProjects() {
