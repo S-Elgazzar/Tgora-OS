@@ -115,7 +115,7 @@ const toast = (msg, type = 'info') => {
 
 // ---------- Supabase Data Layer ----------
 async function fetchProjects() {
-  const { data, error } = await supabase
+  const { data, error } = await supabaseClient
     .from('projects')
     .select('*')
     .order('id', { ascending: false });
@@ -128,7 +128,7 @@ async function fetchProjects() {
 }
 
 async function fetchTasks() {
-  const { data, error } = await supabase
+  const { data, error } = await supabaseClient
     .from('tasks')
     .select('*')
     .order('id', { ascending: false });
