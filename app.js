@@ -1186,7 +1186,7 @@ function wireEvents() {
   });
 
   // Forms
-  $('#login-form')?.addEventListener('submit', handleLogin);
+  $('#logout-btn')?.addEventListener('click', handleLogout);
   $('#project-form').addEventListener('submit', handleProjectSubmit);
   $('#task-form').addEventListener('submit', handleTaskSubmit);
   $('#confirm-delete-btn').addEventListener('click', confirmDelete);
@@ -1253,6 +1253,11 @@ async function handleLogin(e) {
   await init();
 }
 
+async function handleLogout() {
+  await supabaseClient.auth.signOut();
+  window.location.reload();
+}
+
 async function init() {
   $('#year').textContent = new Date().getFullYear();
   refreshIcons();
@@ -1283,6 +1288,7 @@ state.teamMembers = teamMembers;
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+  $('#login-form')?.addEventListener('submit', handleLogin);
 
   const {
     data: { session },
@@ -1292,5 +1298,4 @@ document.addEventListener('DOMContentLoaded', async () => {
     $('#auth-screen').classList.add('hidden');
     await init();
   }
-
 });
