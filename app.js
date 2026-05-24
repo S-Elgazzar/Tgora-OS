@@ -450,15 +450,17 @@ function renderCharts() {
 
 const workloadMap = {};
 
-state.tasks.forEach((task) => {
-  const member = task.assigned_to || 'Unassigned';
+state.tasks
+  .filter((task) => (task.status || '').toLowerCase() !== 'completed')
+  .forEach((task) => {
+    const member = task.assigned_to || 'Unassigned';
 
-  if (!workloadMap[member]) {
-    workloadMap[member] = 0;
-  }
+    if (!workloadMap[member]) {
+      workloadMap[member] = 0;
+    }
 
-  workloadMap[member]++;
-});
+    workloadMap[member]++;
+  });
 
 const memberLabels = Object.keys(workloadMap);
 const workloadData = Object.values(workloadMap);
