@@ -618,18 +618,31 @@ function getFilteredProjects() {
 }
 
 function getFilteredTasks() {
-  const q = state.search.toLowerCase();
-  return state.tasks.filter((t) => {
-    const f = state.filters.tasks;
-    const s = (t.status || '').toLowerCase();
-    if (f !== 'all' && s !== f) return false;
-    if (q) {
-      const projectName = state.projects.find((p) => p.id === t.project_id)?.project_name || '';
-      const hay = `${t.task_info || ''} ${t.assigned_to || ''} ${projectName} ${t.status || ''} ${t.priority || ''}`.toLowerCase();
-      if (!hay.includes(q)) return false;
-    }
-    return true;
-  });
+  let data = [...state.tasks];
+
+  if (state.filters.tasks !== 'all') {
+    data = data.filter(
+      (t) => (t.status || '').toLowerCase() === state.filters.tasks
+    );
+  }
+
+  if (state.search) {
+    const q = state.search.toLowerCase();
+
+    data = data.filter((t) =>
+      [
+        t.task_info,
+        t.assigned_to,
+        t.status,
+        t.priority
+      ]
+        .join(' ')
+        .toLowerCase()
+        .includes(q)
+    );
+  }
+
+  return data;
 }
 
 function renderProjects() {
@@ -1212,6 +1225,18 @@ function wireEvents() {
     });
 
     renderProjects();
+  });
+});
+
+$$('[data-tasks-filter]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    state.filters.tasks = btn.dataset.tasksFilter;
+
+    $$('[data-tasks-filter]').forEach((b) => {
+      b.classList.toggle('active', b === btn);
+    });
+
+    renderTasks();
   });
 });
 
