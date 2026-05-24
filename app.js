@@ -19,6 +19,7 @@ const state = {
   filters: {
     projects: 'all',
     tasks: 'all',
+    selectedProjectId: null,
   },
   search: '',
   pendingDelete: null, // { type: 'project' | 'task', id }
@@ -271,7 +272,9 @@ function renderRecentProjects() {
       <div class="recent-row">
         <div class="client-avatar ${avatarColor(p.client)}">${initials(p.client || p.project_name)}</div>
         <div class="flex-1 min-w-0">
-          <p class="text-sm font-medium text-gray-900 truncate">${escapeHtml(p.project_name || 'Untitled')}</p>
+          <button class="text-sm font-medium text-gray-900 truncate hover:text-indigo-600 text-left" data-action="open-project-details" data-id="${p.id}">
+  ${escapeHtml(p.project_name || 'Untitled')}
+</button>
           <p class="text-xs text-gray-500 truncate">${escapeHtml(p.client || 'No client')}</p>
         </div>
         <span class="badge badge-${status}"><span class="dot"></span>${labelize(status)}</span>
@@ -383,7 +386,9 @@ function renderProjects() {
             <div class="flex items-center gap-3">
               <div class="client-avatar ${avatarColor(p.client || p.project_name)}">${initials(p.client || p.project_name)}</div>
               <div class="min-w-0">
-                <p class="text-sm font-medium text-gray-900 truncate">${escapeHtml(p.project_name || 'Untitled')}</p>
+                <button class="text-sm font-medium text-gray-900 truncate hover:text-indigo-600 text-left" data-action="open-project-details" data-id="${p.id}">
+  ${escapeHtml(p.project_name || 'Untitled')}
+</button>
                 <p class="text-[11px] text-gray-500">${fmtDate(p.start_date)} → ${fmtDate(p.deadline)}</p>
               </div>
             </div>
@@ -738,6 +743,86 @@ async function confirmDelete() {
 }
 
 // ---------- Event Wiring ----------
+function renderProjectDetails() {
+  const project = state.projects.find(
+    (p) => p.id === state.selectedProjectId
+  );
+
+  if (!project) return;
+
+  $('#details-project-name').textContent =
+    project.project_name || 'Untitled';
+
+  $('#details-client').textContent =
+    project.client || '—';
+
+  $('#details-start-date').textContent =
+    fmtDate(project.start_date);
+
+  $('#details-deadline').textContent =
+    fmtDate(project.deadline);
+
+  const status = (project.status || 'planning').toLowerCase();
+  const priority = (project.priority || 'medium').toLowerCase();
+
+  $('#details-status').className = `badge badge-${status}`;
+  $('#details-status').innerHTML =
+    `<span class="dot"></span>${labelize(status)}`;
+
+  $('#details-priority').className = `badge priority-${priority}`;
+  $('#details-priority').innerHTML =
+    `<span class="dot"></span>${labelize(priority)}`;
+
+  const linkEl = $('#details-project-link');
+
+  if (project.project_link) {
+    linkEl.href = project.project_link;
+    linkEl.textContent = 'Open Project Link';
+    linkEl.classList.remove('hidden');
+  } else {
+    linkEl.classList.add('hidden');
+  }
+
+  const tasks = state.tasks.filter(
+    (t) => t.project_id === project.id
+  );
+
+  $('#details-tasks-list').innerHTML = tasks.length
+    ? tasks
+        .map(
+          (t) => `
+        <div class="p-5 flex items-center justify-between">
+          <div>
+            <p class="font-medium text-gray-900">
+              ${escapeHtml(t.task_info || 'Untitled Task')}
+            </p>
+            <p class="text-sm text-gray-500 mt-1">
+              ${escapeHtml(t.assigned_to || '—')}
+            </p>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <span class="badge badge-${(t.status || 'todo').toLowerCase()}">
+              <span class="dot"></span>
+              ${labelize(t.status || 'todo')}
+            </span>
+
+            <span class="badge priority-${(t.priority || 'medium').toLowerCase()}">
+              <span class="dot"></span>
+              ${labelize(t.priority || 'medium')}
+            </span>
+          </div>
+        </div>
+      `
+        )
+        .join('')
+    : `
+      <div class="p-10 text-center text-gray-500 text-sm">
+        No tasks linked to this project yet.
+      </div>
+    `;
+}
+
 function wireEvents() {
   // Nav
   $$('.nav-item[data-view]').forEach((a) => {
@@ -769,12 +854,27 @@ function wireEvents() {
   document.addEventListener('click', (e) => {
     const trigger = e.target.closest('[data-action]');
     if (!trigger) return;
+    
     const action = trigger.dataset.action;
+
+    if (action === 'open-project-details') {
+  const id = Number(trigger.dataset.id);
+  state.selectedProjectId = id;
+  setView('project-details');
+  renderProjectDetails();
+  return;
+}
 
     if (action === 'open-project-modal') openModal('project-modal');
     if (action === 'open-task-modal') openModal('task-modal');
     if (action === 'close-modal') closeModal();
     if (action === 'close-confirm') closeConfirm();
+
+    if (action === 'back-to-projects') {
+  state.selectedProjectId = null;
+  setView('projects');
+  return;
+}
 
     if (action === 'edit-project') {
   const id = Number(trigger.dataset.id);

@@ -397,6 +397,58 @@
           </div>
         </section>
 
+        <section id="view-project-details" class="view hidden">
+  <div class="mb-6">
+    <button data-action="back-to-projects" class="text-sm text-gray-500 hover:text-gray-900 mb-4">
+      ← Back to Projects
+    </button>
+
+    <div class="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm">
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <p class="text-xs font-semibold text-indigo-600 uppercase tracking-wide">Project Details</p>
+          <h1 id="details-project-name" class="text-3xl font-bold text-gray-900 mt-2">Project Name</h1>
+          <p id="details-client" class="text-gray-500 mt-1">Client</p>
+        </div>
+
+        <div class="flex items-center gap-2">
+          <span id="details-status" class="badge"></span>
+          <span id="details-priority" class="badge"></span>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-6">
+        <div class="detail-card">
+          <p class="text-xs text-gray-500">Start Date</p>
+          <p id="details-start-date" class="font-semibold text-gray-900">—</p>
+        </div>
+        <div class="detail-card">
+          <p class="text-xs text-gray-500">Deadline</p>
+          <p id="details-deadline" class="font-semibold text-gray-900">—</p>
+        </div>
+        <div class="detail-card">
+          <p class="text-xs text-gray-500">Project Link</p>
+          <a id="details-project-link" href="#" target="_blank" class="font-semibold text-indigo-600 hover:underline">Open Link</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
+    <div class="flex items-center justify-between p-5 border-b border-gray-100">
+      <div>
+        <h2 class="font-semibold text-gray-900">Project Tasks</h2>
+        <p class="text-sm text-gray-500">Tasks linked to this project.</p>
+      </div>
+      <button data-action="open-task-modal" class="btn-primary">
+        + Add Task
+      </button>
+    </div>
+
+    <div id="details-tasks-list" class="divide-y divide-gray-100"></div>
+  </div>
+</section>
+
       </div>
 
       <footer class="px-4 sm:px-6 lg:px-8 py-5 border-t border-gray-200 text-xs text-gray-500 flex flex-col sm:flex-row items-center justify-between gap-2">
