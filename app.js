@@ -222,32 +222,54 @@ async function deleteTask(id) {
 // ---------- Rendering ----------
 function renderStats() {
   const totalProjects = state.projects.length;
-  const activeProjects = state.projects.filter((p) =>
-    ['active', 'planning'].includes((p.status || '').toLowerCase())
+
+  const activeProjects = state.projects.filter(
+    (p) => (p.status || '').toLowerCase() === 'active'
   ).length;
-  const completedTasks = state.tasks.filter((t) => (t.status || '').toLowerCase() === 'completed').length;
-  const inProgress = state.tasks.filter((t) =>
-    ['in_progress', 'review'].includes((t.status || '').toLowerCase())
+
+  const onHoldProjects = state.projects.filter(
+    (p) => (p.status || '').toLowerCase() === 'on_hold'
+  ).length;
+
+  const urgentProjects = state.projects.filter(
+    (p) => (p.priority || '').toLowerCase() === 'urgent'
+  ).length;
+
+  const totalTasks = state.tasks.length;
+
+  const completedTasks = state.tasks.filter(
+    (t) => (t.status || '').toLowerCase() === 'completed'
+  ).length;
+
+  const inProgress = state.tasks.filter(
+    (t) => ['in_progress', 'review'].includes((t.status || '').toLowerCase())
   ).length;
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
+
   const overdue = state.tasks.filter((t) => {
     if (!t.deadline) return false;
     if ((t.status || '').toLowerCase() === 'completed') return false;
+
     const d = new Date(t.deadline);
     d.setHours(0, 0, 0, 0);
+
     return d < today;
   }).length;
 
   $('#stat-total-projects').textContent = totalProjects;
   $('#stat-active-projects').textContent = activeProjects;
+  $('#stat-onhold-projects').textContent = onHoldProjects;
+  $('#stat-urgent-projects').textContent = urgentProjects;
+
+  $('#stat-total-tasks').textContent = totalTasks;
   $('#stat-completed-tasks').textContent = completedTasks;
   $('#stat-in-progress').textContent = inProgress;
   $('#stat-overdue').textContent = overdue;
 
   $('#nav-projects-count').textContent = totalProjects;
-  $('#nav-tasks-count').textContent = state.tasks.length;
+  $('#nav-tasks-count').textContent = totalTasks;
 }
 
 function renderRecentProjects() {
