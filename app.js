@@ -590,20 +590,31 @@ function renderRecentTasks() {
 }
 
 function getFilteredProjects() {
-  const q = state.search.toLowerCase();
-  return state.projects.filter((p) => {
-    // filter
-    const f = state.filters.projects;
-    const s = (p.status || '').toLowerCase();
-    if (f === 'active' && !['active', 'planning'].includes(s)) return false;
-    if (f === 'completed' && s !== 'completed') return false;
-    // search
-    if (q) {
-      const hay = `${p.project_name || ''} ${p.client || ''} ${p.status || ''} ${p.priority || ''}`.toLowerCase();
-      if (!hay.includes(q)) return false;
-    }
-    return true;
-  });
+  let data = [...state.projects];
+
+  if (state.filters.projects !== 'all') {
+    data = data.filter(
+      (p) => (p.status || '').toLowerCase() === state.filters.projects
+    );
+  }
+
+  if (state.search) {
+    const q = state.search.toLowerCase();
+
+    data = data.filter((p) =>
+      [
+        p.project_name,
+        p.client,
+        p.status,
+        p.priority
+      ]
+        .join(' ')
+        .toLowerCase()
+        .includes(q)
+    );
+  }
+
+  return data;
 }
 
 function getFilteredTasks() {
@@ -1192,20 +1203,17 @@ function wireEvents() {
   $('#confirm-delete-btn').addEventListener('click', confirmDelete);
 
   // Filters
-  $$('[data-projects-filter]').forEach((b) => {
-    b.addEventListener('click', () => {
-      state.filters.projects = b.dataset.projectsFilter;
-      $$('[data-projects-filter]').forEach((x) => x.classList.toggle('active', x === b));
-      renderProjects();
+  $$('[data-projects-filter]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    state.filters.projects = btn.dataset.projectsFilter;
+
+    $$('[data-projects-filter]').forEach((b) => {
+      b.classList.toggle('active', b === btn);
     });
+
+    renderProjects();
   });
-  $$('[data-tasks-filter]').forEach((b) => {
-    b.addEventListener('click', () => {
-      state.filters.tasks = b.dataset.tasksFilter;
-      $$('[data-tasks-filter]').forEach((x) => x.classList.toggle('active', x === b));
-      renderTasks();
-    });
-  });
+});
 
   // Search
   $('#global-search').addEventListener('input', (e) => {
