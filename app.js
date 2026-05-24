@@ -765,6 +765,28 @@ function renderProjectDetails() {
   const status = (project.status || 'planning').toLowerCase();
   const priority = (project.priority || 'medium').toLowerCase();
 
+const projectTasks = state.tasks.filter(
+  (t) => t.project_id === project.id
+);
+
+const totalTasks = projectTasks.length;
+
+const completedTasks = projectTasks.filter(
+  (t) => (t.status || '').toLowerCase() === 'completed'
+).length;
+
+const progress =
+  totalTasks === 0
+    ? 0
+    : Math.round((completedTasks / totalTasks) * 100);
+
+$('#details-total-tasks').textContent = totalTasks;
+$('#details-completed-tasks').textContent = completedTasks;
+
+$('#project-progress-text').textContent = `${progress}%`;
+
+$('#project-progress-bar').style.width = `${progress}%`;
+
   $('#details-status').className = `badge badge-${status}`;
   $('#details-status').innerHTML =
     `<span class="dot"></span>${labelize(status)}`;
