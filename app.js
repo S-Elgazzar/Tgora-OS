@@ -1130,7 +1130,7 @@ function wireEvents() {
   $('#sidebar-overlay').addEventListener('click', closeSidebar);
 
   // Topbar new -> open project modal by default
-  $('#topbar-new').addEventListener('click', () => {
+  $('#topbar-new')?.addEventListener('click', () => {
     if (state.view === 'tasks') openModal('task-modal');
     else openModal('project-modal');
   });
@@ -1186,6 +1186,7 @@ function wireEvents() {
   });
 
   // Forms
+  $('#login-form')?.addEventListener('submit', handleLogin);
   $('#project-form').addEventListener('submit', handleProjectSubmit);
   $('#task-form').addEventListener('submit', handleTaskSubmit);
   $('#confirm-delete-btn').addEventListener('click', confirmDelete);
@@ -1226,6 +1227,32 @@ function wireEvents() {
 }
 
 // ---------- Init ----------
+async function handleLogin(e) {
+  e.preventDefault();
+
+  const email = $('#login-email').value;
+  const password = $('#login-password').value;
+  const errorEl = $('#login-error');
+
+  errorEl.classList.add('hidden');
+  errorEl.textContent = '';
+
+  const { data, error } = await supabaseClient.auth.signInWithPassword({
+    email,
+    password,
+  });
+
+  if (error) {
+    errorEl.textContent = error.message || 'Login failed';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+
+  $('#auth-screen').classList.add('hidden');
+
+  await init();
+}
+
 async function init() {
   $('#year').textContent = new Date().getFullYear();
   refreshIcons();
@@ -1255,4 +1282,15 @@ state.teamMembers = teamMembers;
   renderAll();
 }
 
-document.addEventListener('DOMContentLoaded', init);
+document.addEventListener('DOMContentLoaded', async () => {
+
+  const {
+    data: { session },
+  } = await supabaseClient.auth.getSession();
+
+  if (session) {
+    $('#auth-screen').classList.add('hidden');
+    await init();
+  }
+
+});

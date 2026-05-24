@@ -61,6 +61,58 @@
 </head>
 <body class="bg-[#FAFAFA] text-gray-900 font-sans antialiased">
 
+  <!-- ================= AUTH SCREEN ================= -->
+<div id="auth-screen" class="fixed inset-0 bg-[#FAFAFA] z-[9999] flex items-center justify-center p-6">
+  <div class="w-full max-w-md bg-white border border-gray-200 rounded-3xl shadow-xl p-8">
+    
+    <div class="text-center mb-8">
+      <div class="w-16 h-16 rounded-2xl bg-indigo-600 text-white flex items-center justify-center text-2xl font-bold mx-auto mb-4">
+        T
+      </div>
+
+      <h1 class="text-3xl font-bold text-gray-900">
+        Tgora OS
+      </h1>
+
+      <p class="text-gray-500 mt-2">
+        Sign in to continue
+      </p>
+    </div>
+
+    <form id="login-form" class="space-y-4">
+      
+      <div>
+        <label class="form-label">Email</label>
+        <input
+          type="email"
+          id="login-email"
+          class="form-input"
+          placeholder="sameh@tgora.com"
+          required
+        />
+      </div>
+
+      <div>
+        <label class="form-label">Password</label>
+        <input
+          type="password"
+          id="login-password"
+          class="form-input"
+          placeholder="••••••••"
+          required
+        />
+      </div>
+
+      <button type="submit" class="btn-primary w-full justify-center h-11">
+        Sign In
+      </button>
+
+    </form>
+
+    <p id="login-error" class="text-sm text-red-500 mt-4 hidden"></p>
+  </div>
+</div>
+
   <!-- App Container -->
   <div class="flex min-h-screen">
 
@@ -163,45 +215,62 @@
           />
         </div>
 
-        <div class="flex items-center gap-2">
-          <button class="hidden sm:flex h-9 w-9 rounded-lg hover:bg-gray-100 items-center justify-center text-gray-500 transition">
-            <i data-lucide="bell" class="w-5 h-5"></i>
-          </button>
-          <button class="hidden sm:flex h-9 w-9 rounded-lg hover:bg-gray-100 items-center justify-center text-gray-500 transition">
-            <i data-lucide="moon" class="w-5 h-5"></i>
-          </button>
-          <button
-            id="topbar-new"
-            class="h-9 px-3 sm:px-4 inline-flex items-center gap-2 bg-gray-900 hover:bg-black text-white text-sm font-medium rounded-lg transition shadow-sm"
-          >
-            <i data-lucide="plus" class="w-4 h-4"></i>
-            <span class="hidden sm:inline">New</span>
-          </button>
-        </div>
+        <div class="flex items-center gap-2 ml-auto">
+
+  <button class="hidden sm:flex h-9 w-9 rounded-lg hover:bg-gray-100 items-center justify-center text-gray-500 transition">
+    <i data-lucide="bell" class="w-5 h-5"></i>
+  </button>
+
+  <button class="hidden sm:flex h-9 w-9 rounded-lg hover:bg-gray-100 items-center justify-center text-gray-500 transition">
+    <i data-lucide="moon" class="w-5 h-5"></i>
+  </button>
+
+  <button
+    id="logout-btn"
+    class="h-9 px-4 rounded-xl border border-gray-200 text-sm font-medium hover:bg-gray-100 transition"
+  >
+    Logout
+  </button>
+
+</div>
+
       </header>
 
-      <!-- Content -->
-      <div class="flex-1 px-4 sm:px-6 lg:px-8 py-6 lg:py-8">
+<!-- Content -->
+<div class="flex-1 px-4 sm:px-6 lg:px-8 py-6 lg:py-8">
 
-        <!-- ============ DASHBOARD VIEW ============ -->
-        <section id="view-dashboard" class="view">
-          <div class="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-7">
-            <div>
-              <p class="text-xs font-medium text-brand-600 uppercase tracking-wider mb-1">Overview</p>
-              <h2 class="text-2xl sm:text-3xl font-semibold tracking-tight text-gray-900">
-                Welcome back, Tgora <span class="inline-block">👋</span>
-              </h2>
-              <p class="text-sm text-gray-500 mt-1">Here's what's happening across your agency today.</p>
-            </div>
-            <div class="flex items-center gap-2">
-              <button class="h-9 px-3 inline-flex items-center gap-2 border border-gray-200 hover:border-gray-300 bg-white text-sm text-gray-700 rounded-lg transition">
-                <i data-lucide="download" class="w-4 h-4"></i> Export
-              </button>
-              <button data-action="open-project-modal" class="h-9 px-3 inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg transition shadow-sm">
-                <i data-lucide="plus" class="w-4 h-4"></i> New Project
-              </button>
-            </div>
-          </div>
+  <!-- ============ DASHBOARD VIEW ============ -->
+  <section id="view-dashboard" class="view">
+    <div class="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-7">
+      <div>
+        <p class="text-xs font-medium text-brand-600 uppercase tracking-wider mb-1">Overview</p>
+
+        <h2 class="text-2xl sm:text-3xl font-semibold tracking-tight text-gray-900">
+          Welcome back, Tgora <span class="inline-block">👋</span>
+        </h2>
+
+        <p class="text-sm text-gray-500 mt-1">
+          Here's what's happening across your agency today.
+        </p>
+      </div>
+
+      <div class="flex items-center gap-2">
+
+        <button class="h-9 px-3 inline-flex items-center gap-2 border border-gray-200 hover:border-gray-300 bg-white text-sm text-gray-700 rounded-lg transition">
+          <i data-lucide="download" class="w-4 h-4"></i>
+          Export
+        </button>
+
+        <button
+          data-action="open-project-modal"
+          class="h-9 px-3 inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg transition shadow-sm"
+        >
+          <i data-lucide="plus" class="w-4 h-4"></i>
+          New Project
+        </button>
+
+      </div>
+    </div>
 
           <!-- Stat cards -->
 <!-- ================= PROJECTS OVERVIEW ================= -->
