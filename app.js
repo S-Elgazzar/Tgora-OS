@@ -13,6 +13,7 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLI
 const state = {
   projects: [],
   tasks: [],
+  teamMembers: [],
   view: 'dashboard',
   editingTaskId: null,
   editingProjectId: null,
@@ -130,6 +131,21 @@ async function fetchProjects() {
   return data || [];
 }
 
+async function fetchTeamMembers() {
+  const { data, error } = await supabaseClient
+    .from('team_members')
+    .select('*')
+    .order('name', { ascending: true });
+
+  if (error) {
+    console.error('fetchTeamMembers', error);
+    toast('Could not load team members', 'error');
+    return [];
+  }
+
+  return data || [];
+}
+
 async function fetchTasks() {
   const { data, error } = await supabaseClient
     .from('tasks')
@@ -220,6 +236,29 @@ async function deleteTask(id) {
 }
 
 // ---------- Rendering ----------
+function populateTeamMembers() {
+  const select = $('#assigned-to-select');
+
+  if (!select) return;
+
+  const activeMembers = state.teamMembers.filter(
+    (m) => (m.status || '').toLowerCase() !== 'inactive'
+  );
+
+  select.innerHTML = `
+    <option value="">Select Team Member</option>
+    ${activeMembers
+      .map(
+        (member) => `
+        <option value="${escapeHtml(member.name)}">
+          ${escapeHtml(member.name)} — ${escapeHtml(member.role || '')}
+        </option>
+      `
+      )
+      .join('')}
+  `;
+}
+
 function renderStats() {
   const totalProjects = state.projects.length;
 
@@ -633,6 +672,7 @@ function renderTasks() {
 }
 
 function renderAll() {
+  populateTeamMembers();
   renderStats();
   renderCharts();
   renderRecentProjects();
@@ -1134,9 +1174,15 @@ async function init() {
   });
 
   try {
-    const [projects, tasks] = await Promise.all([fetchProjects(), fetchTasks()]);
-    state.projects = projects;
-    state.tasks = tasks;
+    const [projects, tasks, teamMembers] = await Promise.all([
+  fetchProjects(),
+  fetchTasks(),
+  fetchTeamMembers()
+]);
+
+state.projects = projects;
+state.tasks = tasks;
+state.teamMembers = teamMembers;
   } catch (err) {
     console.error(err);
     toast('Could not connect to supabaseClient. Check your credentials.', 'error');

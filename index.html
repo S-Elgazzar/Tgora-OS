@@ -726,8 +726,9 @@
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label class="form-label">Assigned to <span class="text-rose-500">*</span></label>
-            <input name="assigned_to" required type="text" class="form-input" placeholder="e.g. Sarah K." />
-          </div>
+<select name="assigned_to" id="assigned-to-select" class="form-input">
+  <option value="">Select Team Member</option>
+</select>          </div>
           <div>
             <label class="form-label">Project</label>
             <select name="project_id" id="task-project-select" class="form-input">
