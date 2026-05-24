@@ -14,6 +14,7 @@ const state = {
   projects: [],
   tasks: [],
   view: 'dashboard',
+  editingTaskId: null,
   filters: {
     projects: 'all',
     tasks: 'all',
@@ -157,6 +158,23 @@ async function insertTask(payload) {
     toast(error.message || 'Failed to create task', 'error');
     return null;
   }
+  return data;
+}
+
+async function updateTask(id, payload) {
+  const { data, error } = await supabaseClient
+    .from('tasks')
+    .update(payload)
+    .eq('id', id)
+    .select()
+    .single();
+
+  if (error) {
+    console.error('updateTask', error);
+    toast(error.message || 'Failed to update task', 'error');
+    return null;
+  }
+
   return data;
 }
 
@@ -416,6 +434,9 @@ function renderTasks() {
           <td class="px-5 py-3.5 text-right">
             <div class="inline-flex items-center gap-1">
               ${link}
+              <button class="icon-btn" data-action="edit-task" data-id="${t.id}" title="Edit task">
+  <i data-lucide="pencil" class="w-4 h-4"></i>
+</button>
               <button class="icon-btn danger" data-action="delete-task" data-id="${t.id}" title="Delete">
                 <i data-lucide="trash-2" class="w-4 h-4"></i>
               </button>
@@ -538,28 +559,76 @@ async function handleProjectSubmit(e) {
   }
 }
 
+function openEditTaskModal(id) {
+  const task = state.tasks.find((t) => t.id === id);
+  if (!task) {
+    toast('Task not found', 'error');
+    return;
+  }
+
+  state.editingTaskId = id;
+
+  const form = $('#task-form');
+
+  form.task_info.value = task.task_info || '';
+  form.assigned_to.value = task.assigned_to || '';
+  form.status.value = task.status || 'todo';
+  form.priority.value = task.priority || 'medium';
+  form.start_date.value = task.start_date || '';
+  form.deadline.value = task.deadline || '';
+  form.task_link.value = task.task_link || '';
+  form.project_id.value = task.project_id || '';
+
+  const title = $('#task-modal-title');
+  if (title) title.textContent = 'Edit Task';
+
+  const submitBtn = form.querySelector('button[type=submit]');
+  if (submitBtn) {
+    submitBtn.innerHTML = `<i data-lucide="check" class="w-4 h-4"></i> Update task`;
+  }
+
+  openModal('task-modal');
+}
 async function handleTaskSubmit(e) {
   e.preventDefault();
+
   const form = e.target;
   const submitBtn = form.querySelector('button[type=submit]');
+  const isEditing = state.editingTaskId !== null;
+
   submitBtn.disabled = true;
-  submitBtn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Saving…`;
+  submitBtn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> ${isEditing ? 'Updating…' : 'Saving…'}`;
   refreshIcons();
 
   const payload = normalizePayload(new FormData(form));
   if (payload.project_id) payload.project_id = Number(payload.project_id);
 
-  const created = await insertTask(payload);
+  let result = null;
+
+  if (isEditing) {
+    result = await updateTask(state.editingTaskId, payload);
+  } else {
+    result = await insertTask(payload);
+  }
 
   submitBtn.disabled = false;
   submitBtn.innerHTML = `<i data-lucide="check" class="w-4 h-4"></i> Create task`;
   refreshIcons();
 
-  if (created) {
-    state.tasks = [created, ...state.tasks];
-    renderAll();
-    toast('Task created successfully', 'success');
+  if (result) {
+    if (isEditing) {
+      state.tasks = state.tasks.map((task) =>
+        task.id === state.editingTaskId ? result : task
+      );
+      toast('Task updated successfully', 'success');
+    } else {
+      state.tasks = [result, ...state.tasks];
+      toast('Task created successfully', 'success');
+    }
+
+    state.editingTaskId = null;
     form.reset();
+    renderAll();
     closeModal();
   }
 }
@@ -640,6 +709,12 @@ function wireEvents() {
       const project = state.projects.find((p) => p.id === id);
       openConfirm('project', id, project ? `Project “${project.project_name}”` : 'This project');
     }
+    if (action === 'edit-task') {
+  const id = Number(trigger.dataset.id);
+  openEditTaskModal(id);
+  return;
+}
+    
     if (action === 'delete-task') {
       const id = Number(trigger.dataset.id);
       const task = state.tasks.find((t) => t.id === id);
