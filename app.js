@@ -15,6 +15,7 @@ const state = {
   tasks: [],
   view: 'dashboard',
   editingTaskId: null,
+  editingProjectId: null,
   filters: {
     projects: 'all',
     tasks: 'all',
@@ -148,6 +149,23 @@ async function insertProject(payload) {
     toast(error.message || 'Failed to create project', 'error');
     return null;
   }
+  return data;
+}
+
+async function updateProject(id, payload) {
+  const { data, error } = await supabaseClient
+    .from('projects')
+    .update(payload)
+    .eq('id', id)
+    .select()
+    .single();
+
+  if (error) {
+    console.error('updateProject', error);
+    toast(error.message || 'Failed to update project', 'error');
+    return null;
+  }
+
   return data;
 }
 
@@ -377,6 +395,9 @@ function renderProjects() {
           <td class="px-5 py-3.5 text-right">
             <div class="inline-flex items-center gap-1">
               ${link}
+              <button class="icon-btn" data-action="edit-project" data-id="${p.id}" title="Edit project">
+  <i data-lucide="pencil" class="w-4 h-4"></i>
+</button>
               <button class="icon-btn danger" data-action="delete-project" data-id="${p.id}" title="Delete">
                 <i data-lucide="trash-2" class="w-4 h-4"></i>
               </button>
@@ -535,26 +556,77 @@ function normalizePayload(formData) {
   return payload;
 }
 
+function openEditProjectModal(id) {
+  const project = state.projects.find((p) => p.id === id);
+
+  if (!project) {
+    toast('Project not found', 'error');
+    return;
+  }
+
+  state.editingProjectId = id;
+
+  const form = $('#project-form');
+
+  form.project_name.value = project.project_name || '';
+  form.client.value = project.client || '';
+  form.project_link.value = project.project_link || '';
+  form.status.value = project.status || 'active';
+  form.priority.value = project.priority || 'medium';
+  form.start_date.value = project.start_date || '';
+  form.deadline.value = project.deadline || '';
+
+  const title = $('#project-modal-title');
+  if (title) title.textContent = 'Edit Project';
+
+  const submitBtn = form.querySelector('button[type=submit]');
+
+  if (submitBtn) {
+    submitBtn.innerHTML = `<i data-lucide="check" class="w-4 h-4"></i> Update project`;
+  }
+
+  openModal('project-modal');
+}
+
 async function handleProjectSubmit(e) {
   e.preventDefault();
+
   const form = e.target;
   const submitBtn = form.querySelector('button[type=submit]');
+  const isEditing = state.editingProjectId !== null;
+
   submitBtn.disabled = true;
-  submitBtn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Saving…`;
+  submitBtn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> ${isEditing ? 'Updating…' : 'Saving…'}`;
   refreshIcons();
 
   const payload = normalizePayload(new FormData(form));
-  const created = await insertProject(payload);
+
+  let result = null;
+
+  if (isEditing) {
+    result = await updateProject(state.editingProjectId, payload);
+  } else {
+    result = await insertProject(payload);
+  }
 
   submitBtn.disabled = false;
   submitBtn.innerHTML = `<i data-lucide="check" class="w-4 h-4"></i> Create project`;
   refreshIcons();
 
-  if (created) {
-    state.projects = [created, ...state.projects];
-    renderAll();
-    toast('Project created successfully', 'success');
+  if (result) {
+    if (isEditing) {
+      state.projects = state.projects.map((project) =>
+        project.id === state.editingProjectId ? result : project
+      );
+      toast('Project updated successfully', 'success');
+    } else {
+      state.projects = [result, ...state.projects];
+      toast('Project created successfully', 'success');
+    }
+
+    state.editingProjectId = null;
     form.reset();
+    renderAll();
     closeModal();
   }
 }
@@ -703,6 +775,12 @@ function wireEvents() {
     if (action === 'open-task-modal') openModal('task-modal');
     if (action === 'close-modal') closeModal();
     if (action === 'close-confirm') closeConfirm();
+
+    if (action === 'edit-project') {
+  const id = Number(trigger.dataset.id);
+  openEditProjectModal(id);
+  return;
+}
 
     if (action === 'delete-project') {
       const id = Number(trigger.dataset.id);
