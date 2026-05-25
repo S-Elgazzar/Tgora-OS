@@ -15,6 +15,8 @@ const state = {
   tasks: [],
   teamMembers: [],
   view: 'dashboard',
+  currentUser: null,
+  currentRole: null,
   editingTaskId: null,
   editingProjectId: null,
   filters: {
@@ -1292,6 +1294,20 @@ async function handleLogout() {
 }
 
 async function init() {
+  const {
+  data: { user },
+} = await supabaseClient.auth.getUser();
+
+state.currentUser = user || null;
+
+if (user?.email) {
+  const matchedMember = state.teamMembers.find(
+    (member) => (member.email || '').toLowerCase() === user.email.toLowerCase()
+  );
+
+  state.currentRole = matchedMember?.role_type || 'member';
+}
+
   $('#year').textContent = new Date().getFullYear();
   refreshIcons();
   wireEvents();
@@ -1312,10 +1328,31 @@ async function init() {
 state.projects = projects;
 state.tasks = tasks;
 state.teamMembers = teamMembers;
+
+const {
+  data: { user },
+} = await supabaseClient.auth.getUser();
+
+state.currentUser = user || null;
+
+if (user?.email) {
+  const matchedMember = state.teamMembers.find(
+    (member) =>
+      (member.email || '').toLowerCase().trim() === user.email.toLowerCase().trim()
+  );
+
+  state.currentRole = matchedMember?.role_type || 'member';
+} else {
+  state.currentRole = null;
+}
+
   } catch (err) {
     console.error(err);
     toast('Could not connect to supabaseClient. Check your credentials.', 'error');
   }
+
+  console.log('Current User:', state.currentUser);
+console.log('Current Role:', state.currentRole);
 
   renderAll();
 }
