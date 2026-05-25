@@ -690,9 +690,11 @@ function renderProjects() {
               <button class="icon-btn" data-action="edit-project" data-id="${p.id}" title="Edit project">
   <i data-lucide="pencil" class="w-4 h-4"></i>
 </button>
-              <button class="icon-btn danger" data-action="delete-project" data-id="${p.id}" title="Delete">
-                <i data-lucide="trash-2" class="w-4 h-4"></i>
-              </button>
+              ${state.currentRole === 'admin' ? `
+<button class="icon-btn danger" data-action="delete-project" data-id="${p.id}">
+  <i data-lucide="trash-2" class="w-4 h-4"></i>
+</button>
+` : ''}
             </div>
           </td>
         </tr>`;
@@ -750,9 +752,13 @@ function renderTasks() {
               <button class="icon-btn" data-action="edit-task" data-id="${t.id}" title="Edit task">
   <i data-lucide="pencil" class="w-4 h-4"></i>
 </button>
-              <button class="icon-btn danger" data-action="delete-task" data-id="${t.id}" title="Delete">
-                <i data-lucide="trash-2" class="w-4 h-4"></i>
-              </button>
+
+              ${state.currentRole === 'admin' ? `
+  <button class="icon-btn danger" data-action="delete-task" data-id="${t.id}" title="Delete task">
+    <i data-lucide="trash-2" class="w-4 h-4"></i>
+  </button>
+` : ''}
+
             </div>
           </td>
         </tr>`;
