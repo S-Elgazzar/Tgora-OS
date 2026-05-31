@@ -311,6 +311,13 @@ function renderStats() {
 
   $('#nav-projects-count').textContent = totalProjects;
   $('#nav-tasks-count').textContent = totalTasks;
+  
+  const teamCount = state.teamMembers.length;
+const teamCountEl = $('#nav-team-count');
+
+if (teamCountEl) {
+  teamCountEl.textContent = teamCount;
+}
 }
 
 let projectsChartInstance = null;
@@ -714,6 +721,85 @@ function renderTasks() {
     refreshIcons();
     return;
   }
+  function renderTeam() {
+  const tbody = $('#team-table-body');
+
+  if (!tbody) return;
+
+  const data = [...state.teamMembers];
+
+  if (data.length === 0) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="4" class="px-5 py-10 text-center text-sm text-gray-500">
+          No team members yet.
+        </td>
+      </tr>
+    `;
+    return;
+  }
+
+  tbody.innerHTML = data
+    .map((member) => {
+      const status = (member.status || 'active').toLowerCase();
+
+      return `
+        <tr>
+          <td class="px-5 py-3.5">
+            <div class="flex items-center gap-3">
+              <div class="client-avatar ${avatarColor(member.name)}">
+                ${initials(member.name)}
+              </div>
+
+              <div>
+                <p class="text-sm font-medium text-gray-900">
+                  ${escapeHtml(member.name || 'Unnamed Member')}
+                </p>
+
+                <p class="text-xs text-gray-500">
+                  ${escapeHtml(member.email || 'No email')}
+                </p>
+              </div>
+            </div>
+          </td>
+
+          <td class="px-5 py-3.5 text-sm text-gray-700">
+            ${escapeHtml(member.role || '—')}
+          </td>
+
+          <td class="px-5 py-3.5">
+            <span class="badge badge-${status}">
+              <span class="dot"></span>
+              ${labelize(status)}
+            </span>
+          </td>
+
+          <td class="px-5 py-3.5 text-right">
+            ${
+              state.currentRole === 'admin'
+                ? `
+                  <div class="inline-flex items-center gap-1">
+                    <button class="icon-btn" title="Edit member">
+                      <i data-lucide="pencil" class="w-4 h-4"></i>
+                    </button>
+
+                    <button class="icon-btn danger" title="Delete member">
+                      <i data-lucide="trash-2" class="w-4 h-4"></i>
+                    </button>
+                  </div>
+                `
+                : `
+                  <span class="text-xs text-gray-400">View only</span>
+                `
+            }
+          </td>
+        </tr>
+      `;
+    })
+    .join('');
+
+  refreshIcons();
+}
   empty.classList.add('hidden');
 
   tbody.innerHTML = data
@@ -775,6 +861,7 @@ function renderAll() {
   renderRecentTasks();
   renderProjects();
   renderTasks();
+  renderTeam();
   syncTaskProjectSelect();
 }
 
@@ -799,6 +886,48 @@ function setView(view) {
   $$('.nav-item').forEach((el) => {
     el.classList.toggle('active', el.dataset.view === view);
   });
+
+  if (view === 'team') {
+  const tbody = $('#team-table-body');
+
+  if (tbody) {
+    tbody.innerHTML = state.teamMembers.map((member) => `
+      <tr>
+        <td class="px-5 py-3.5">
+          <div class="flex items-center gap-3">
+            <div class="client-avatar ${avatarColor(member.name)}">
+              ${initials(member.name)}
+            </div>
+
+            <div>
+              <p class="text-sm font-medium text-gray-900">
+                ${escapeHtml(member.name || 'Unnamed Member')}
+              </p>
+
+              <p class="text-xs text-gray-500">
+                ${escapeHtml(member.email || 'No email')}
+              </p>
+            </div>
+          </div>
+        </td>
+
+        <td class="px-5 py-3.5 text-sm text-gray-700">
+          ${escapeHtml(member.role || '—')}
+        </td>
+
+        <td class="px-5 py-3.5 text-sm text-gray-700">
+          ${escapeHtml(member.status || 'active')}
+        </td>
+
+        <td class="px-5 py-3.5 text-right text-xs text-gray-400">
+          ${state.currentRole === 'admin' ? 'Admin actions later' : 'View only'}
+        </td>
+      </tr>
+    `).join('');
+
+    refreshIcons();
+  }
+}
 
   // close mobile sidebar
   closeSidebar();
