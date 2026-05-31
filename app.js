@@ -291,7 +291,7 @@ function populateTeamMembers() {
       .map(
         (member) => `
         <option value="${escapeHtml(member.name)}">
-          ${escapeHtml(member.name)} — ${escapeHtml(member.role || '')}
+          ${escapeHtml(member.name)} — ${escapeHtml(member.job_title || '')}
         </option>
       `
       )
@@ -779,7 +779,7 @@ function renderTasks() {
 
   tbody.innerHTML = data
     .map((member) => {
-      const status = (member.status || 'active').toLowerCase();
+      const status = (member.status || 'Active').toLowerCase().replace('-', '_');
 
       return `
         <tr>
@@ -806,7 +806,7 @@ function renderTasks() {
           </td>
 
           <td class="px-5 py-3.5 text-sm text-gray-700">
-  ${escapeHtml(member.role || '—')}
+  ${escapeHtml(member.job_title || '—')}
 </td>
 
 <td class="px-5 py-3.5 text-sm text-gray-700">
@@ -814,7 +814,7 @@ function renderTasks() {
 </td>
 
 <td class="px-5 py-3.5 text-sm text-gray-700">
-  ${labelize(member.role_type || 'member')}
+  ${labelize(member.job_title_type || 'member')}
 </td>
 
 <td class="px-5 py-3.5">
@@ -937,7 +937,7 @@ function setView(view) {
     el.classList.toggle('active', el.dataset.view === view);
   });
 
-  if (view === 'team') {
+if (view === 'team') {
   const tbody = $('#team-table-body');
 
   if (tbody) {
@@ -951,12 +951,13 @@ function setView(view) {
 
             <div>
               <button
-  class="text-sm font-medium text-gray-900 hover:text-indigo-600 text-left"
-  data-action="open-member-details"
-  data-name="${escapeHtml(member.name || '')}"
->
-  ${escapeHtml(member.name || 'Unnamed Member')}
-</button>
+                type="button"
+                class="text-sm font-medium text-gray-900 hover:text-indigo-600 text-left"
+                data-action="open-member-details"
+                data-id="${member.id}"
+              >
+                ${escapeHtml(member.name || 'Unnamed Member')}
+              </button>
 
               <p class="text-xs text-gray-500">
                 ${escapeHtml(member.email || 'No email')}
@@ -966,44 +967,55 @@ function setView(view) {
         </td>
 
         <td class="px-5 py-3.5 text-sm text-gray-700">
-  ${escapeHtml(member.role || '—')}
-</td>
+          ${escapeHtml(member.job_title || '—')}
+        </td>
 
-<td class="px-5 py-3.5 text-sm text-gray-700">
-  ${escapeHtml(member.department || '—')}
-</td>
+        <td class="px-5 py-3.5 text-sm text-gray-700">
+          ${escapeHtml(member.department || '—')}
+        </td>
 
-<td class="px-5 py-3.5 text-sm text-gray-700">
-  ${labelize(member.role_type || 'member')}
-</td>
+        <td class="px-5 py-3.5 text-sm text-gray-700">
+          ${labelize(member.role_type || 'member')}
+        </td>
 
-<td class="px-5 py-3.5">
-  <span class="badge badge-${status}">
-    <span class="dot"></span>
-    ${labelize(status)}
-  </span>
-</td>
+        <td class="px-5 py-3.5 text-sm text-gray-700">
+          ${labelize(member.status || '—')}
+        </td>
 
         <td class="px-5 py-3.5 text-right text-xs text-gray-400">
-${
-  state.currentRole === 'admin'
-    ? `
-      <div class="inline-flex items-center gap-1">
-        <button class="icon-btn" title="View member details">
-          <i data-lucide="eye" class="w-4 h-4"></i>
-        </button>
+          ${
+            state.currentRole === 'admin'
+              ? `
+                <div class="inline-flex items-center gap-1">
+                  <button
+                    type="button"
+                    class="icon-btn"
+                    title="View member details"
+                    data-action="open-member-details"
+                    data-id="${member.id}"
+                  >
+                    <i data-lucide="eye" class="w-4 h-4"></i>
+                  </button>
 
-        <button class="icon-btn" title="Edit member">
-          <i data-lucide="pencil" class="w-4 h-4"></i>
-        </button>
+                  <button
+                    type="button"
+                    class="icon-btn"
+                    title="Edit member"
+                  >
+                    <i data-lucide="pencil" class="w-4 h-4"></i>
+                  </button>
 
-        <button class="icon-btn danger" title="Delete member">
-          <i data-lucide="trash-2" class="w-4 h-4"></i>
-        </button>
-      </div>
-    `
-    : '<span class="text-xs text-gray-400">View only</span>'
-}
+                  <button
+                    type="button"
+                    class="icon-btn danger"
+                    title="Delete member"
+                  >
+                    <i data-lucide="trash-2" class="w-4 h-4"></i>
+                  </button>
+                </div>
+              `
+              : '<span class="text-xs text-gray-400">View only</span>'
+          }
         </td>
       </tr>
     `).join('');
@@ -1382,11 +1394,11 @@ $('#project-progress-bar').style.width = `${progress}%`;
     `;
 }
 
-function openMemberDetails(memberName) {
+function openMemberDetails(memberId) {
   const member = state.teamMembers.find(
-    (m) => m.name === memberName
+    (m) => Number(m.id) === Number(memberId)
   );
-
+  
   if (!member) return;
 
   const memberTasks = state.tasks.filter(
@@ -1440,11 +1452,11 @@ function openMemberDetails(memberName) {
     member.name || 'Unknown Member';
 
   $('#member-details-role').textContent =
-    member.role || 'No Role';
+  member.job_title || 'No Job Title';
 
   $('#member-details-status').innerHTML = `
     <span class="dot"></span>
-    ${member.status || 'Active'}
+    ${escapeHtml(member.status || '—')}
   `;
 
   $('#member-total-tasks').textContent = totalTasks;
@@ -1554,88 +1566,95 @@ function wireEvents() {
   });
 
   // Open / close modals via delegated events
-  document.addEventListener('click', (e) => {
-    const trigger = e.target.closest('[data-action]');
-    if (!trigger) return;
+document.addEventListener('click', (e) => {
+  const trigger = e.target.closest('[data-action]');
+  if (!trigger) return;
 
-    const action = trigger.dataset.action;
+  const action = trigger.dataset.action;
+  console.log('CLICK ACTION:', action, trigger.dataset);
 
-    if (action === 'open-project-details') {
-      const id = Number(trigger.dataset.id);
-      state.selectedProjectId = id;
-      setView('project-details');
-      renderProjectDetails();
-      return;
-    }
+  if (action === 'open-project-details') {
+    const id = Number(trigger.dataset.id);
+    state.selectedProjectId = id;
+    setView('project-details');
+    renderProjectDetails();
+    return;
+  }
 
-    if (action === 'open-member-details') {
-      const memberName = trigger.dataset.name;
-      openMemberDetails(memberName);
-      return;
-    }
+  if (action === 'open-member-details') {
+  const memberId = Number(trigger.dataset.id);
 
-    if (action === 'back-to-team') {
-      setView('team');
-      return;
-    }
+  if (!memberId) {
+    toast('Member ID is missing', 'error');
+    return;
+  }
 
-    if (action === 'open-project-modal') {
-      openModal('project-modal');
-      return;
-    }
-
-    if (action === 'open-task-modal') {
-      openModal('task-modal');
-      return;
-    }
-
-    if (action === 'open-member-modal') {
-  openModal('member-modal');
+  openMemberDetails(memberId);
   return;
 }
 
-    if (action === 'close-modal') {
-      closeModal();
-      return;
-    }
+  if (action === 'back-to-team') {
+    setView('team');
+    return;
+  }
 
-    if (action === 'close-confirm') {
-      closeConfirm();
-      return;
-    }
+  if (action === 'open-project-modal') {
+    openModal('project-modal');
+    return;
+  }
 
-    if (action === 'back-to-projects') {
-      state.selectedProjectId = null;
-      setView('projects');
-      return;
-    }
+  if (action === 'open-task-modal') {
+    openModal('task-modal');
+    return;
+  }
 
-    if (action === 'edit-project') {
-      const id = Number(trigger.dataset.id);
-      openEditProjectModal(id);
-      return;
-    }
+  if (action === 'open-member-modal') {
+    openModal('member-modal');
+    return;
+  }
 
-    if (action === 'delete-project') {
-      const id = Number(trigger.dataset.id);
-      const project = state.projects.find((p) => p.id === id);
-      openConfirm('project', id, project ? `Project “${project.project_name}”` : 'This project');
-      return;
-    }
+  if (action === 'close-modal') {
+    closeModal();
+    return;
+  }
 
-    if (action === 'edit-task') {
-      const id = Number(trigger.dataset.id);
-      openEditTaskModal(id);
-      return;
-    }
+  if (action === 'close-confirm') {
+    closeConfirm();
+    return;
+  }
 
-    if (action === 'delete-task') {
-      const id = Number(trigger.dataset.id);
-      const task = state.tasks.find((t) => t.id === id);
-      openConfirm('task', id, task ? `Task “${task.task_info}”` : 'This task');
-      return;
-    }
-  });
+  if (action === 'back-to-projects') {
+    state.selectedProjectId = null;
+    setView('projects');
+    return;
+  }
+
+  if (action === 'edit-project') {
+    const id = Number(trigger.dataset.id);
+    openEditProjectModal(id);
+    return;
+  }
+
+  if (action === 'delete-project') {
+    const id = Number(trigger.dataset.id);
+    const project = state.projects.find((p) => p.id === id);
+    openConfirm('project', id, project ? `Project “${project.project_name}”` : 'This project');
+    return;
+  }
+
+  if (action === 'edit-task') {
+    const id = Number(trigger.dataset.id);
+    openEditTaskModal(id);
+    return;
+  }
+
+  if (action === 'delete-task') {
+    const id = Number(trigger.dataset.id);
+    const task = state.tasks.find((t) => t.id === id);
+    openConfirm('task', id, task ? `Task “${task.task_info}”` : 'This task');
+    return;
+  }
+});
 
   // Forms
   $('#logout-btn')?.addEventListener('click', handleLogout);
