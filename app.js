@@ -920,7 +920,25 @@ function setView(view) {
         </td>
 
         <td class="px-5 py-3.5 text-right text-xs text-gray-400">
-          ${state.currentRole === 'admin' ? 'Admin actions later' : 'View only'}
+${
+  state.currentRole === 'admin'
+    ? `
+      <div class="inline-flex items-center gap-1">
+        <button class="icon-btn" title="View member details">
+          <i data-lucide="eye" class="w-4 h-4"></i>
+        </button>
+
+        <button class="icon-btn" title="Edit member">
+          <i data-lucide="pencil" class="w-4 h-4"></i>
+        </button>
+
+        <button class="icon-btn danger" title="Delete member">
+          <i data-lucide="trash-2" class="w-4 h-4"></i>
+        </button>
+      </div>
+    `
+    : '<span class="text-xs text-gray-400">View only</span>'
+}
         </td>
       </tr>
     `).join('');
