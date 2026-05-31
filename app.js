@@ -752,9 +752,13 @@ function renderTasks() {
               </div>
 
               <div>
-                <p class="text-sm font-medium text-gray-900">
-                  ${escapeHtml(member.name || 'Unnamed Member')}
-                </p>
+               <button
+  class="text-sm font-medium text-gray-900 hover:text-indigo-600 text-left"
+  data-action="open-member-details"
+  data-name="${escapeHtml(member.name || '')}"
+>
+  ${escapeHtml(member.name || 'Unnamed Member')}
+</button>
 
                 <p class="text-xs text-gray-500">
                   ${escapeHtml(member.email || 'No email')}
@@ -900,9 +904,13 @@ function setView(view) {
             </div>
 
             <div>
-              <p class="text-sm font-medium text-gray-900">
-                ${escapeHtml(member.name || 'Unnamed Member')}
-              </p>
+              <button
+  class="text-sm font-medium text-gray-900 hover:text-indigo-600 text-left"
+  data-action="open-member-details"
+  data-name="${escapeHtml(member.name || '')}"
+>
+  ${escapeHtml(member.name || 'Unnamed Member')}
+</button>
 
               <p class="text-xs text-gray-500">
                 ${escapeHtml(member.email || 'No email')}
@@ -1318,52 +1326,81 @@ function wireEvents() {
   document.addEventListener('click', (e) => {
     const trigger = e.target.closest('[data-action]');
     if (!trigger) return;
-    
+
     const action = trigger.dataset.action;
 
     if (action === 'open-project-details') {
-  const id = Number(trigger.dataset.id);
-  state.selectedProjectId = id;
-  setView('project-details');
-  renderProjectDetails();
-  return;
-}
+      const id = Number(trigger.dataset.id);
+      state.selectedProjectId = id;
+      setView('project-details');
+      renderProjectDetails();
+      return;
+    }
 
-    if (action === 'open-project-modal') openModal('project-modal');
-    if (action === 'open-task-modal') openModal('task-modal');
-    if (action === 'close-modal') closeModal();
-    if (action === 'close-confirm') closeConfirm();
+    if (action === 'open-member-details') {
+      const memberName = trigger.dataset.name;
+      openMemberDetails(memberName);
+      return;
+    }
+
+    if (action === 'back-to-team') {
+      setView('team');
+      return;
+    }
+
+    if (action === 'open-project-modal') {
+      openModal('project-modal');
+      return;
+    }
+
+    if (action === 'open-task-modal') {
+      openModal('task-modal');
+      return;
+    }
+
+    if (action === 'close-modal') {
+      closeModal();
+      return;
+    }
+
+    if (action === 'close-confirm') {
+      closeConfirm();
+      return;
+    }
 
     if (action === 'back-to-projects') {
-  state.selectedProjectId = null;
-  setView('projects');
-  return;
-}
+      state.selectedProjectId = null;
+      setView('projects');
+      return;
+    }
 
     if (action === 'edit-project') {
-  const id = Number(trigger.dataset.id);
-  openEditProjectModal(id);
-  return;
-}
+      const id = Number(trigger.dataset.id);
+      openEditProjectModal(id);
+      return;
+    }
 
     if (action === 'delete-project') {
       const id = Number(trigger.dataset.id);
       const project = state.projects.find((p) => p.id === id);
       openConfirm('project', id, project ? `Project “${project.project_name}”` : 'This project');
+      return;
     }
+
     if (action === 'edit-task') {
-  const id = Number(trigger.dataset.id);
-  openEditTaskModal(id);
-  return;
-}
-    
+      const id = Number(trigger.dataset.id);
+      openEditTaskModal(id);
+      return;
+    }
+
     if (action === 'delete-task') {
       const id = Number(trigger.dataset.id);
       const task = state.tasks.find((t) => t.id === id);
       openConfirm('task', id, task ? `Task “${task.task_info}”` : 'This task');
+      return;
     }
   });
-
+  
   // Forms
   $('#logout-btn')?.addEventListener('click', handleLogout);
   $('#project-form').addEventListener('submit', handleProjectSubmit);
