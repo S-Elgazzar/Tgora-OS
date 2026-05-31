@@ -1295,6 +1295,92 @@ $('#project-progress-bar').style.width = `${progress}%`;
     `;
 }
 
+function openMemberDetails(memberName) {
+  const member = state.teamMembers.find(
+    (m) => m.name === memberName
+  );
+
+  if (!member) return;
+
+  const memberTasks = state.tasks.filter(
+    (t) => t.assigned_to === member.name
+  );
+
+  $('#member-details-name').textContent =
+    member.name || 'Unknown Member';
+
+  $('#member-details-role').textContent =
+    member.role || 'No Role';
+
+  $('#member-details-status').innerHTML = `
+    <span class="dot"></span>
+    ${member.status || 'Active'}
+  `;
+
+  const completedTasks = memberTasks.filter(
+    (t) => (t.status || '').toLowerCase() === 'done'
+  );
+
+  const progressTasks = memberTasks.filter(
+    (t) => (t.status || '').toLowerCase() === 'in progress'
+  );
+
+  const overdueTasks = memberTasks.filter(
+    (t) =>
+      t.deadline &&
+      new Date(t.deadline) < new Date() &&
+      (t.status || '').toLowerCase() !== 'done'
+  );
+
+  $('#member-total-tasks').textContent =
+    memberTasks.length;
+
+  $('#member-completed-tasks').textContent =
+    completedTasks.length;
+
+  $('#member-progress-tasks').textContent =
+    progressTasks.length;
+
+  $('#member-overdue-tasks').textContent =
+    overdueTasks.length;
+
+  const tbody = $('#member-tasks-table-body');
+
+  tbody.innerHTML = memberTasks
+    .map((task) => {
+      const project = state.projects.find(
+        (p) => p.id === task.project_id
+      );
+
+      return `
+        <tr>
+          <td class="px-5 py-3">
+            ${escapeHtml(task.task_info || '')}
+          </td>
+
+          <td class="px-5 py-3">
+            ${escapeHtml(project?.project_name || '—')}
+          </td>
+
+          <td class="px-5 py-3">
+            ${escapeHtml(task.status || '—')}
+          </td>
+
+          <td class="px-5 py-3">
+            ${escapeHtml(task.priority || '—')}
+          </td>
+
+          <td class="px-5 py-3">
+            ${fmtDate(task.deadline)}
+          </td>
+        </tr>
+      `;
+    })
+    .join('');
+
+  setView('team-member');
+}
+
 function wireEvents() {
   // Nav
   $$('.nav-item[data-view]').forEach((a) => {
@@ -1400,7 +1486,7 @@ function wireEvents() {
       return;
     }
   });
-  
+
   // Forms
   $('#logout-btn')?.addEventListener('click', handleLogout);
   $('#project-form').addEventListener('submit', handleProjectSubmit);
