@@ -936,14 +936,23 @@
       </div>
 
       <div>
-        <label class="form-label">Role</label>
-        <select name="role" class="form-input" required>
-  <option value="">Select Role</option>
-  <option value="admin">Admin</option>
-  <option value="manager">Manager</option>
-  <option value="member">Member</option>
-</select>
-      </div>
+  <label class="form-label">Job Title</label>
+  <input
+    name="role"
+    class="form-input"
+    placeholder="e.g. Media Buyer, Designer, CEO"
+    required
+  />
+</div>
+
+<div>
+  <label class="form-label">Role Type</label>
+  <select name="role_type" class="form-input" required>
+    <option value="member">Member</option>
+    <option value="manager">Manager</option>
+    <option value="admin">Admin</option>
+  </select>
+</div>
 
       <div>
         <label class="form-label">Status</label>
