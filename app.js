@@ -1318,19 +1318,25 @@ function openMemberDetails(memberName) {
   `;
 
   const completedTasks = memberTasks.filter(
-    (t) => (t.status || '').toLowerCase() === 'done'
-  );
+  (t) => (t.status || '').toLowerCase() === 'completed'
+);
 
-  const progressTasks = memberTasks.filter(
-    (t) => (t.status || '').toLowerCase() === 'in progress'
-  );
+const progressTasks = memberTasks.filter(
+  (t) => ['in_progress', 'review'].includes((t.status || '').toLowerCase())
+);
 
-  const overdueTasks = memberTasks.filter(
-    (t) =>
-      t.deadline &&
-      new Date(t.deadline) < new Date() &&
-      (t.status || '').toLowerCase() !== 'done'
-  );
+const overdueTasks = memberTasks.filter((t) => {
+  if (!t.deadline) return false;
+  if ((t.status || '').toLowerCase() === 'completed') return false;
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const deadline = new Date(t.deadline);
+  deadline.setHours(0, 0, 0, 0);
+
+  return deadline < today;
+});
 
   $('#member-total-tasks').textContent =
     memberTasks.length;
