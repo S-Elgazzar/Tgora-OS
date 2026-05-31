@@ -700,7 +700,11 @@
 
             <th class="px-5 py-3">Member</th>
 
-            <th class="px-5 py-3">Role</th>
+            <th class="px-5 py-3">Job Title</th>
+
+            <th class="px-5 py-3">Department</th>
+
+            <th class="px-5 py-3">Role Type</th>
 
             <th class="px-5 py-3">Status</th>
 
@@ -947,11 +951,15 @@
 
 <div>
   <label class="form-label">Department</label>
-  <input
-    name="department"
-    class="form-input"
-    placeholder="e.g. Design, Digital Marketing, Operations"
-  />
+  <select name="department" class="form-input" required>
+    <option value="">Select Department</option>
+    <option value="Management">Management</option>
+    <option value="Design">Design</option>
+    <option value="Digital Marketing">Digital Marketing</option>
+    <option value="Video Production">Video Production</option>
+    <option value="Operations">Operations</option>
+    <option value="Sales & Marketing">Sales & Marketing</option>
+  </select>
 </div>
 
 <div>

@@ -806,15 +806,23 @@ function renderTasks() {
           </td>
 
           <td class="px-5 py-3.5 text-sm text-gray-700">
-            ${escapeHtml(member.role || '—')}
-          </td>
+  ${escapeHtml(member.role || '—')}
+</td>
 
-          <td class="px-5 py-3.5">
-            <span class="badge badge-${status}">
-              <span class="dot"></span>
-              ${labelize(status)}
-            </span>
-          </td>
+<td class="px-5 py-3.5 text-sm text-gray-700">
+  ${escapeHtml(member.department || '—')}
+</td>
+
+<td class="px-5 py-3.5 text-sm text-gray-700">
+  ${labelize(member.role_type || 'member')}
+</td>
+
+<td class="px-5 py-3.5">
+  <span class="badge badge-${status}">
+    <span class="dot"></span>
+    ${labelize(status)}
+  </span>
+</td>
 
           <td class="px-5 py-3.5 text-right">
             ${
@@ -958,12 +966,23 @@ function setView(view) {
         </td>
 
         <td class="px-5 py-3.5 text-sm text-gray-700">
-          ${escapeHtml(member.role || '—')}
-        </td>
+  ${escapeHtml(member.role || '—')}
+</td>
 
-        <td class="px-5 py-3.5 text-sm text-gray-700">
-          ${escapeHtml(member.status || 'active')}
-        </td>
+<td class="px-5 py-3.5 text-sm text-gray-700">
+  ${escapeHtml(member.department || '—')}
+</td>
+
+<td class="px-5 py-3.5 text-sm text-gray-700">
+  ${labelize(member.role_type || 'member')}
+</td>
+
+<td class="px-5 py-3.5">
+  <span class="badge badge-${status}">
+    <span class="dot"></span>
+    ${labelize(status)}
+  </span>
+</td>
 
         <td class="px-5 py-3.5 text-right text-xs text-gray-400">
 ${
