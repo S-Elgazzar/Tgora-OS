@@ -62,7 +62,29 @@ const deadlineClass = (d) => {
 
 const labelize = (s) => {
   if (!s) return '—';
-  return s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+
+  const labels = {
+    todo: 'To Do',
+    in_progress: 'In Progress',
+    review: 'In Review',
+    completed: 'Completed',
+    on_hold: 'On Hold',
+    active: 'Active',
+    inactive: 'Inactive',
+    part_time: 'Part-time',
+    urgent: 'Urgent',
+    high: 'High',
+    medium: 'Medium',
+    low: 'Low',
+    qa_review: 'QA Review',
+    content_creation: 'Content Creation',
+  };
+
+  const key = String(s).toLowerCase();
+
+  return labels[key] || String(s)
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase());
 };
 
 const escapeHtml = (str) => {
@@ -1372,9 +1394,23 @@ function openMemberDetails(memberName) {
     performanceScoreEl.textContent = `${performanceScore}%`;
   }
 
-  if (performanceLabelEl) {
-    performanceLabelEl.textContent = performanceLabel;
+if (performanceLabelEl) {
+
+  let emoji = '🔴';
+
+  if (performanceScore >= 90) {
+    emoji = '🟢';
+  } else if (performanceScore >= 75) {
+    emoji = '🟢';
+  } else if (performanceScore >= 60) {
+    emoji = '🟡';
+  } else if (performanceScore >= 40) {
+    emoji = '🟠';
   }
+
+  performanceLabelEl.textContent =
+    `${emoji} ${performanceLabel}`;
+}
 
   const tbody = $('#member-tasks-table-body');
 
