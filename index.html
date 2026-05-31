@@ -678,11 +678,11 @@
       </p>
     </div>
 
-    <button
-      id="new-member-btn"
-      class="h-9 px-3 inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg transition shadow-sm"
-    >
-      <i data-lucide="plus" class="w-4 h-4"></i>
+<button
+  id="new-member-btn"
+  data-action="open-member-modal"
+  class="h-9 px-3 inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg transition shadow-sm"
+>      <i data-lucide="plus" class="w-4 h-4"></i>
       New Member
     </button>
 
@@ -893,6 +893,87 @@
       </footer>
     </main>
   </div>
+
+  <!-- ================= MEMBER MODAL ================= -->
+<div id="member-modal" class="modal hidden">
+  <div class="modal-overlay" data-action="close-modal"></div>
+
+  <div class="modal-panel">
+    <div class="p-6 border-b border-gray-100 flex items-center justify-between">
+      <div>
+        <h3 id="member-modal-title" class="text-lg font-semibold text-gray-900">
+          New Team Member
+        </h3>
+        <p class="text-sm text-gray-500 mt-1">
+          Add a member to your team.
+        </p>
+      </div>
+
+      <button data-action="close-modal" class="icon-btn">
+        <i data-lucide="x" class="w-5 h-5"></i>
+      </button>
+    </div>
+
+    <form id="member-form" class="p-6 space-y-4">
+      <div>
+        <label class="form-label">Name</label>
+        <input
+          name="name"
+          class="form-input"
+          placeholder="Member name"
+          required
+        />
+      </div>
+
+      <div>
+        <label class="form-label">Email</label>
+        <input
+          name="email"
+          type="email"
+          class="form-input"
+          placeholder="member@tgora.com"
+        />
+      </div>
+
+      <div>
+        <label class="form-label">Role</label>
+        <select name="role" class="form-input" required>
+  <option value="">Select Role</option>
+  <option value="admin">Admin</option>
+  <option value="manager">Manager</option>
+  <option value="member">Member</option>
+</select>
+      </div>
+
+      <div>
+        <label class="form-label">Status</label>
+        <select name="status" class="form-input" required>
+  <option value="active">Active</option>
+  <option value="part_time">Part-Time</option>
+  <option value="inactive">Inactive</option>
+</select>
+      </div>
+
+      <div class="flex items-center justify-end gap-3 pt-4 border-t border-gray-100">
+        <button
+          type="button"
+          data-action="close-modal"
+          class="h-10 px-4 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50"
+        >
+          Cancel
+        </button>
+
+        <button
+          type="submit"
+          class="h-10 px-4 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium inline-flex items-center gap-2"
+        >
+          <i data-lucide="check" class="w-4 h-4"></i>
+          Save Member
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
 
   <!-- ============ PROJECT MODAL ============ -->
   <div id="project-modal" class="modal hidden">

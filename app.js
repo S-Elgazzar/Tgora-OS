@@ -170,6 +170,22 @@ async function fetchTeamMembers() {
   return data || [];
 }
 
+async function insertTeamMember(payload) {
+  const { data, error } = await supabaseClient
+    .from('team_members')
+    .insert([payload])
+    .select()
+    .single();
+
+  if (error) {
+    console.error('insertTeamMember', error);
+    toast(error.message || 'Failed to create team member', 'error');
+    return null;
+  }
+
+  return data;
+}
+
 async function fetchTasks() {
   const { data, error } = await supabaseClient
     .from('tasks')
@@ -1065,6 +1081,36 @@ function openEditProjectModal(id) {
   openModal('project-modal');
 }
 
+async function handleMemberSubmit(e) {
+  e.preventDefault();
+
+  const form = e.target;
+  const submitBtn = form.querySelector('button[type=submit]');
+
+  submitBtn.disabled = true;
+  submitBtn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Saving...`;
+  refreshIcons();
+
+  const payload = normalizePayload(new FormData(form));
+
+  const result = await insertTeamMember(payload);
+
+  submitBtn.disabled = false;
+  submitBtn.innerHTML = `<i data-lucide="check" class="w-4 h-4"></i> Save Member`;
+  refreshIcons();
+
+  if (result) {
+    state.teamMembers = [...state.teamMembers, result];
+
+    form.reset();
+    closeModal();
+
+    toast('Team member added successfully', 'success');
+
+    setView('team');
+  }
+}
+
 async function handleProjectSubmit(e) {
   e.preventDefault();
 
@@ -1524,6 +1570,11 @@ function wireEvents() {
       return;
     }
 
+    if (action === 'open-member-modal') {
+  openModal('member-modal');
+  return;
+}
+
     if (action === 'close-modal') {
       closeModal();
       return;
@@ -1570,6 +1621,7 @@ function wireEvents() {
   // Forms
   $('#logout-btn')?.addEventListener('click', handleLogout);
   $('#project-form').addEventListener('submit', handleProjectSubmit);
+  $('#member-form').addEventListener('submit', handleMemberSubmit);
   $('#task-form').addEventListener('submit', handleTaskSubmit);
   $('#confirm-delete-btn').addEventListener('click', confirmDelete);
 
