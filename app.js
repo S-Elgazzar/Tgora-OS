@@ -1426,9 +1426,21 @@ if (performanceLabelEl) {
             ${escapeHtml(task.task_info || '')}
           </td>
 
-          <td class="px-5 py-3">
-            ${escapeHtml(project?.project_name || '—')}
-          </td>
+<td class="px-5 py-3">
+  ${
+    project
+      ? `
+        <button
+          class="text-brand-600 hover:text-brand-700 hover:underline font-medium"
+          data-action="open-project-details"
+          data-id="${project.id}"
+        >
+          ${escapeHtml(project.project_name)}
+        </button>
+      `
+      : '—'
+  }
+</td>
 
           <td class="px-5 py-3">
             ${labelize(task.status || '—')}
