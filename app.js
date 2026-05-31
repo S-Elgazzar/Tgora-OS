@@ -1306,6 +1306,49 @@ function openMemberDetails(memberName) {
     (t) => t.assigned_to === member.name
   );
 
+  const completedTasks = memberTasks.filter(
+    (t) => (t.status || '').toLowerCase() === 'completed'
+  );
+
+  const progressTasks = memberTasks.filter(
+    (t) => ['in_progress', 'review'].includes((t.status || '').toLowerCase())
+  );
+
+  const overdueTasks = memberTasks.filter((t) => {
+    if (!t.deadline) return false;
+    if ((t.status || '').toLowerCase() === 'completed') return false;
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const deadline = new Date(t.deadline);
+    deadline.setHours(0, 0, 0, 0);
+
+    return deadline < today;
+  });
+
+  const totalTasks = memberTasks.length;
+  const completedCount = completedTasks.length;
+  const overdueCount = overdueTasks.length;
+
+  let performanceScore =
+    Math.round((completedCount * 100) / Math.max(totalTasks, 1)) -
+    overdueCount * 10;
+
+  performanceScore = Math.max(performanceScore, 0);
+
+  let performanceLabel = 'Needs Improvement';
+
+  if (performanceScore >= 90) {
+    performanceLabel = 'Excellent';
+  } else if (performanceScore >= 75) {
+    performanceLabel = 'Very Good';
+  } else if (performanceScore >= 60) {
+    performanceLabel = 'Good';
+  } else if (performanceScore >= 40) {
+    performanceLabel = 'Average';
+  }
+
   $('#member-details-name').textContent =
     member.name || 'Unknown Member';
 
@@ -1317,38 +1360,21 @@ function openMemberDetails(memberName) {
     ${member.status || 'Active'}
   `;
 
-  const completedTasks = memberTasks.filter(
-  (t) => (t.status || '').toLowerCase() === 'completed'
-);
+  $('#member-total-tasks').textContent = totalTasks;
+  $('#member-completed-tasks').textContent = completedCount;
+  $('#member-progress-tasks').textContent = progressTasks.length;
+  $('#member-overdue-tasks').textContent = overdueCount;
 
-const progressTasks = memberTasks.filter(
-  (t) => ['in_progress', 'review'].includes((t.status || '').toLowerCase())
-);
+  const performanceScoreEl = $('#member-performance-score');
+  const performanceLabelEl = $('#member-performance-label');
 
-const overdueTasks = memberTasks.filter((t) => {
-  if (!t.deadline) return false;
-  if ((t.status || '').toLowerCase() === 'completed') return false;
+  if (performanceScoreEl) {
+    performanceScoreEl.textContent = `${performanceScore}%`;
+  }
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  const deadline = new Date(t.deadline);
-  deadline.setHours(0, 0, 0, 0);
-
-  return deadline < today;
-});
-
-  $('#member-total-tasks').textContent =
-    memberTasks.length;
-
-  $('#member-completed-tasks').textContent =
-    completedTasks.length;
-
-  $('#member-progress-tasks').textContent =
-    progressTasks.length;
-
-  $('#member-overdue-tasks').textContent =
-    overdueTasks.length;
+  if (performanceLabelEl) {
+    performanceLabelEl.textContent = performanceLabel;
+  }
 
   const tbody = $('#member-tasks-table-body');
 
@@ -1369,11 +1395,11 @@ const overdueTasks = memberTasks.filter((t) => {
           </td>
 
           <td class="px-5 py-3">
-            ${escapeHtml(task.status || '—')}
+            ${labelize(task.status || '—')}
           </td>
 
           <td class="px-5 py-3">
-            ${escapeHtml(task.priority || '—')}
+            ${labelize(task.priority || '—')}
           </td>
 
           <td class="px-5 py-3">
