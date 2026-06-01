@@ -793,7 +793,60 @@ function renderTasks() {
     return;
   }
 
-  function renderTeam() {
+  empty.classList.add('hidden');
+
+  tbody.innerHTML = data
+    .map((t) => {
+      const status = (t.status || 'todo').toLowerCase();
+      const priority = (t.priority || 'medium').toLowerCase();
+      const project = state.projects.find((p) => p.id === t.project_id);
+      const link = t.task_link
+        ? `<a href="${escapeHtml(t.task_link)}" target="_blank" rel="noopener" class="icon-btn" title="Open link"><i data-lucide="external-link" class="w-4 h-4"></i></a>`
+        : '';
+      return `
+        <tr>
+          <td class="px-5 py-3.5 max-w-sm">
+            <p class="text-sm font-medium text-gray-900 truncate">${escapeHtml(t.task_info || 'Untitled task')}</p>
+            <p class="text-[11px] text-gray-500">Start ${fmtDate(t.start_date)}</p>
+          </td>
+          <td class="px-5 py-3.5 text-sm text-gray-700">
+            ${
+              project
+                ? `<span class="inline-flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>${escapeHtml(project.project_name)}</span>`
+                : '<span class="text-gray-400">—</span>'
+            }
+          </td>
+          <td class="px-5 py-3.5">
+            <div class="flex items-center gap-2">
+              <div class="client-avatar ${avatarColor(t.assigned_to)}" style="width:1.75rem;height:1.75rem;">${initials(t.assigned_to)}</div>
+              <span class="text-sm text-gray-700">${escapeHtml(t.assigned_to || '—')}</span>
+            </div>
+          </td>
+          <td class="px-5 py-3.5"><span class="badge badge-${status}"><span class="dot"></span>${labelize(status)}</span></td>
+          <td class="px-5 py-3.5"><span class="badge priority-${priority}"><span class="dot"></span>${labelize(priority)}</span></td>
+          <td class="px-5 py-3.5 text-sm text-gray-700 ${deadlineClass(t.deadline)}">${fmtDate(t.deadline)}</td>
+          <td class="px-5 py-3.5 text-right">
+            <div class="inline-flex items-center gap-1">
+              ${link}
+              <button class="icon-btn" data-action="edit-task" data-id="${t.id}" title="Edit task">
+  <i data-lucide="pencil" class="w-4 h-4"></i>
+</button>
+
+              ${state.currentRole === 'admin' ? `
+  <button class="icon-btn danger" data-action="delete-task" data-id="${t.id}" title="Delete task">
+    <i data-lucide="trash-2" class="w-4 h-4"></i>
+  </button>
+` : ''}
+
+            </div>
+          </td>
+        </tr>`;
+    })
+    .join('');
+  refreshIcons();
+}
+
+function renderTeam() {
   const tbody = $('#team-table-body');
 
   if (!tbody) return;
@@ -903,59 +956,6 @@ function renderTasks() {
   refreshIcons();
 }
 
-  empty.classList.add('hidden');
-
-  tbody.innerHTML = data
-    .map((t) => {
-      const status = (t.status || 'todo').toLowerCase();
-      const priority = (t.priority || 'medium').toLowerCase();
-      const project = state.projects.find((p) => p.id === t.project_id);
-      const link = t.task_link
-        ? `<a href="${escapeHtml(t.task_link)}" target="_blank" rel="noopener" class="icon-btn" title="Open link"><i data-lucide="external-link" class="w-4 h-4"></i></a>`
-        : '';
-      return `
-        <tr>
-          <td class="px-5 py-3.5 max-w-sm">
-            <p class="text-sm font-medium text-gray-900 truncate">${escapeHtml(t.task_info || 'Untitled task')}</p>
-            <p class="text-[11px] text-gray-500">Start ${fmtDate(t.start_date)}</p>
-          </td>
-          <td class="px-5 py-3.5 text-sm text-gray-700">
-            ${
-              project
-                ? `<span class="inline-flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>${escapeHtml(project.project_name)}</span>`
-                : '<span class="text-gray-400">—</span>'
-            }
-          </td>
-          <td class="px-5 py-3.5">
-            <div class="flex items-center gap-2">
-              <div class="client-avatar ${avatarColor(t.assigned_to)}" style="width:1.75rem;height:1.75rem;">${initials(t.assigned_to)}</div>
-              <span class="text-sm text-gray-700">${escapeHtml(t.assigned_to || '—')}</span>
-            </div>
-          </td>
-          <td class="px-5 py-3.5"><span class="badge badge-${status}"><span class="dot"></span>${labelize(status)}</span></td>
-          <td class="px-5 py-3.5"><span class="badge priority-${priority}"><span class="dot"></span>${labelize(priority)}</span></td>
-          <td class="px-5 py-3.5 text-sm text-gray-700 ${deadlineClass(t.deadline)}">${fmtDate(t.deadline)}</td>
-          <td class="px-5 py-3.5 text-right">
-            <div class="inline-flex items-center gap-1">
-              ${link}
-              <button class="icon-btn" data-action="edit-task" data-id="${t.id}" title="Edit task">
-  <i data-lucide="pencil" class="w-4 h-4"></i>
-</button>
-
-              ${state.currentRole === 'admin' ? `
-  <button class="icon-btn danger" data-action="delete-task" data-id="${t.id}" title="Delete task">
-    <i data-lucide="trash-2" class="w-4 h-4"></i>
-  </button>
-` : ''}
-
-            </div>
-          </td>
-        </tr>`;
-    })
-    .join('');
-  refreshIcons();
-}
-
 function renderAll() {
   populateTeamMembers();
   renderStats();
@@ -977,6 +977,26 @@ function syncTaskProjectSelect() {
       .map((p) => `<option value="${p.id}">${escapeHtml(p.project_name)}</option>`)
       .join('');
   if (current) select.value = current;
+}
+
+function isAdmin() {
+  return state.currentRole === 'admin';
+}
+
+function isManager() {
+  return state.currentRole === 'manager';
+}
+
+function isMember() {
+  return state.currentRole === 'member';
+}
+
+function canEditTeamMember() {
+  return isAdmin() || isManager();
+}
+
+function canDeleteTeamMember() {
+  return isAdmin();
 }
 
 // ---------- View Switching ----------
@@ -1037,9 +1057,9 @@ if (view === 'team') {
 
         <td class="px-5 py-3.5 text-right text-xs text-gray-400">
           ${
-            state.currentRole === 'admin'
-              ? `
-                <div class="inline-flex items-center gap-1">
+  canEditTeamMember()
+    ? `
+      <div class="inline-flex items-center gap-1">
                   <button
                     type="button"
                     class="icon-btn"
@@ -1060,15 +1080,21 @@ if (view === 'team') {
   <i data-lucide="pencil" class="w-4 h-4"></i>
 </button>
 
-<button
-  type="button"
-  class="icon-btn danger"
-  title="Delete member"
-  data-action="delete-member"
-  data-id="${member.id}"
->
-  <i data-lucide="trash-2" class="w-4 h-4"></i>
-</button>
+${
+  canDeleteTeamMember()
+    ? `
+      <button
+        type="button"
+        class="icon-btn danger"
+        title="Delete member"
+        data-action="delete-member"
+        data-id="${member.id}"
+      >
+        <i data-lucide="trash-2" class="w-4 h-4"></i>
+      </button>
+    `
+    : ''
+}
                 </div>
               `
               : '<span class="text-xs text-gray-400">View only</span>'
