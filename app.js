@@ -17,6 +17,7 @@ const state = {
   view: 'dashboard',
   currentUser: null,
   currentRole: null,
+  editingMemberId: null,
   editingTaskId: null,
   editingProjectId: null,
   filters: {
@@ -186,6 +187,23 @@ async function insertTeamMember(payload) {
   return data;
 }
 
+async function updateTeamMember(id, payload) {
+  const { data, error } = await supabaseClient
+    .from('team_members')
+    .update(payload)
+    .eq('id', id)
+    .select()
+    .single();
+
+  if (error) {
+    console.error('updateTeamMember', error);
+    toast(error.message || 'Failed to update team member', 'error');
+    return null;
+  }
+
+  return data;
+}
+
 async function fetchTasks() {
   const { data, error } = await supabaseClient
     .from('tasks')
@@ -272,6 +290,21 @@ async function deleteTask(id) {
     toast('Failed to delete task', 'error');
     return false;
   }
+  return true;
+}
+
+async function deleteTeamMember(id) {
+  const { error } = await supabaseClient
+    .from('team_members')
+    .delete()
+    .eq('id', id);
+
+  if (error) {
+    console.error('deleteTeamMember', error);
+    toast('Failed to delete team member', 'error');
+    return false;
+  }
+
   return true;
 }
 
@@ -759,6 +792,7 @@ function renderTasks() {
     refreshIcons();
     return;
   }
+
   function renderTeam() {
   const tbody = $('#team-table-body');
 
@@ -769,7 +803,7 @@ function renderTasks() {
   if (data.length === 0) {
     tbody.innerHTML = `
       <tr>
-        <td colspan="4" class="px-5 py-10 text-center text-sm text-gray-500">
+        <td colspan="6" class="px-5 py-10 text-center text-sm text-gray-500">
           No team members yet.
         </td>
       </tr>
@@ -779,7 +813,7 @@ function renderTasks() {
 
   tbody.innerHTML = data
     .map((member) => {
-      const status = (member.status || 'Active').toLowerCase().replace('-', '_');
+      const status = member.status || '—';
 
       return `
         <tr>
@@ -790,13 +824,14 @@ function renderTasks() {
               </div>
 
               <div>
-               <button
-  class="text-sm font-medium text-gray-900 hover:text-indigo-600 text-left"
-  data-action="open-member-details"
-  data-name="${escapeHtml(member.name || '')}"
->
-  ${escapeHtml(member.name || 'Unnamed Member')}
-</button>
+                <button
+                  type="button"
+                  class="text-sm font-medium text-gray-900 hover:text-indigo-600 text-left"
+                  data-action="open-member-details"
+                  data-id="${member.id}"
+                >
+                  ${escapeHtml(member.name || 'Unnamed Member')}
+                </button>
 
                 <p class="text-xs text-gray-500">
                   ${escapeHtml(member.email || 'No email')}
@@ -806,41 +841,58 @@ function renderTasks() {
           </td>
 
           <td class="px-5 py-3.5 text-sm text-gray-700">
-  ${escapeHtml(member.job_title || '—')}
-</td>
+            ${escapeHtml(member.job_title || '—')}
+          </td>
 
-<td class="px-5 py-3.5 text-sm text-gray-700">
-  ${escapeHtml(member.department || '—')}
-</td>
+          <td class="px-5 py-3.5 text-sm text-gray-700">
+            ${escapeHtml(member.department || '—')}
+          </td>
 
-<td class="px-5 py-3.5 text-sm text-gray-700">
-  ${labelize(member.job_title_type || 'member')}
-</td>
+          <td class="px-5 py-3.5 text-sm text-gray-700">
+            ${labelize(member.role_type || 'member')}
+          </td>
 
-<td class="px-5 py-3.5">
-  <span class="badge badge-${status}">
-    <span class="dot"></span>
-    ${labelize(status)}
-  </span>
-</td>
+          <td class="px-5 py-3.5 text-sm text-gray-700">
+            ${labelize(status)}
+          </td>
 
           <td class="px-5 py-3.5 text-right">
             ${
               state.currentRole === 'admin'
                 ? `
                   <div class="inline-flex items-center gap-1">
-                    <button class="icon-btn" title="Edit member">
+                    <button
+                      type="button"
+                      class="icon-btn"
+                      title="View member details"
+                      data-action="open-member-details"
+                      data-id="${member.id}"
+                    >
+                      <i data-lucide="eye" class="w-4 h-4"></i>
+                    </button>
+
+                    <button
+                      type="button"
+                      class="icon-btn"
+                      title="Edit member"
+                      data-action="edit-member"
+                      data-id="${member.id}"
+                    >
                       <i data-lucide="pencil" class="w-4 h-4"></i>
                     </button>
 
-                    <button class="icon-btn danger" title="Delete member">
+                    <button
+                      type="button"
+                      class="icon-btn danger"
+                      title="Delete member"
+                      data-action="delete-member"
+                      data-id="${member.id}"
+                    >
                       <i data-lucide="trash-2" class="w-4 h-4"></i>
                     </button>
                   </div>
                 `
-                : `
-                  <span class="text-xs text-gray-400">View only</span>
-                `
+                : `<span class="text-xs text-gray-400">View only</span>`
             }
           </td>
         </tr>
@@ -850,6 +902,7 @@ function renderTasks() {
 
   refreshIcons();
 }
+
   empty.classList.add('hidden');
 
   tbody.innerHTML = data
@@ -998,20 +1051,24 @@ if (view === 'team') {
                   </button>
 
                   <button
-                    type="button"
-                    class="icon-btn"
-                    title="Edit member"
-                  >
-                    <i data-lucide="pencil" class="w-4 h-4"></i>
-                  </button>
+  type="button"
+  class="icon-btn"
+  title="Edit member"
+  data-action="edit-member"
+  data-id="${member.id}"
+>
+  <i data-lucide="pencil" class="w-4 h-4"></i>
+</button>
 
-                  <button
-                    type="button"
-                    class="icon-btn danger"
-                    title="Delete member"
-                  >
-                    <i data-lucide="trash-2" class="w-4 h-4"></i>
-                  </button>
+<button
+  type="button"
+  class="icon-btn danger"
+  title="Delete member"
+  data-action="delete-member"
+  data-id="${member.id}"
+>
+  <i data-lucide="trash-2" class="w-4 h-4"></i>
+</button>
                 </div>
               `
               : '<span class="text-xs text-gray-400">View only</span>'
@@ -1118,27 +1175,61 @@ async function handleMemberSubmit(e) {
   const form = e.target;
   const submitBtn = form.querySelector('button[type=submit]');
 
+  const isEditing = state.editingMemberId !== null;
+
   submitBtn.disabled = true;
-  submitBtn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Saving...`;
+  submitBtn.innerHTML =
+    `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i>
+    ${isEditing ? 'Updating...' : 'Saving...'}`;
+
   refreshIcons();
 
   const payload = normalizePayload(new FormData(form));
 
-  const result = await insertTeamMember(payload);
+  let result = null;
+
+  if (isEditing) {
+    result = await updateTeamMember(
+      state.editingMemberId,
+      payload
+    );
+  } else {
+    result = await insertTeamMember(payload);
+  }
 
   submitBtn.disabled = false;
-  submitBtn.innerHTML = `<i data-lucide="check" class="w-4 h-4"></i> Save Member`;
+  submitBtn.innerHTML =
+    `<i data-lucide="check" class="w-4 h-4"></i>
+    Save Member`;
+
   refreshIcons();
 
   if (result) {
-    state.teamMembers = [...state.teamMembers, result];
+
+    if (isEditing) {
+
+      state.teamMembers = state.teamMembers.map((member) =>
+        Number(member.id) === Number(state.editingMemberId)
+          ? result
+          : member
+      );
+
+      toast('Member updated successfully', 'success');
+
+    } else {
+
+      state.teamMembers = [...state.teamMembers, result];
+
+      toast('Team member added successfully', 'success');
+    }
+
+    state.editingMemberId = null;
 
     form.reset();
     closeModal();
 
-    toast('Team member added successfully', 'success');
-
     setView('team');
+    renderAll();
   }
 }
 
@@ -1183,6 +1274,36 @@ async function handleProjectSubmit(e) {
     renderAll();
     closeModal();
   }
+}
+
+function openEditMemberModal(id) {
+  const member = state.teamMembers.find((m) => Number(m.id) === Number(id));
+
+  if (!member) {
+    toast('Member not found', 'error');
+    return;
+  }
+
+  state.editingMemberId = id;
+
+  const form = $('#member-form');
+
+  form.name.value = member.name || '';
+  form.email.value = member.email || '';
+  form.job_title.value = member.job_title || '';
+  form.department.value = member.department || '';
+  form.role_type.value = member.role_type || 'member';
+  form.status.value = member.status || 'Active';
+
+  const title = $('#member-modal-title');
+  if (title) title.textContent = 'Edit Team Member';
+
+  const submitBtn = form.querySelector('button[type=submit]');
+  if (submitBtn) {
+    submitBtn.innerHTML = `<i data-lucide="check" class="w-4 h-4"></i> Update Member`;
+  }
+
+  openModal('member-modal');
 }
 
 function openEditTaskModal(id) {
@@ -1262,22 +1383,41 @@ async function handleTaskSubmit(e) {
 // ---------- Delete Handlers ----------
 async function confirmDelete() {
   if (!state.pendingDelete) return;
+
   const { type, id } = state.pendingDelete;
   const btn = $('#confirm-delete-btn');
+
   btn.disabled = true;
   btn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Deleting…`;
   refreshIcons();
 
   let ok = false;
+
   if (type === 'project') {
     ok = await deleteProject(id);
+
     if (ok) {
       state.projects = state.projects.filter((p) => p.id !== id);
       state.tasks = state.tasks.filter((t) => t.project_id !== id);
     }
-  } else if (type === 'task') {
+  }
+
+  if (type === 'task') {
     ok = await deleteTask(id);
-    if (ok) state.tasks = state.tasks.filter((t) => t.id !== id);
+
+    if (ok) {
+      state.tasks = state.tasks.filter((t) => t.id !== id);
+    }
+  }
+
+  if (type === 'member') {
+    ok = await deleteTeamMember(id);
+
+    if (ok) {
+      state.teamMembers = state.teamMembers.filter(
+        (member) => Number(member.id) !== Number(id)
+      );
+    }
   }
 
   btn.disabled = false;
@@ -1288,6 +1428,7 @@ async function confirmDelete() {
     toast(`${labelize(type)} deleted`, 'success');
     renderAll();
   }
+
   closeConfirm();
 }
 
@@ -1630,30 +1771,43 @@ document.addEventListener('click', (e) => {
   }
 
   if (action === 'edit-project') {
-    const id = Number(trigger.dataset.id);
-    openEditProjectModal(id);
-    return;
-  }
+  const id = Number(trigger.dataset.id);
+  openEditProjectModal(id);
+  return;
+}
 
-  if (action === 'delete-project') {
-    const id = Number(trigger.dataset.id);
-    const project = state.projects.find((p) => p.id === id);
-    openConfirm('project', id, project ? `Project “${project.project_name}”` : 'This project');
-    return;
-  }
+if (action === 'delete-project') {
+  const id = Number(trigger.dataset.id);
+  const project = state.projects.find((p) => p.id === id);
+  openConfirm('project', id, project ? `Project “${project.project_name}”` : 'This project');
+  return;
+}
 
-  if (action === 'edit-task') {
-    const id = Number(trigger.dataset.id);
-    openEditTaskModal(id);
-    return;
-  }
+if (action === 'edit-task') {
+  const id = Number(trigger.dataset.id);
+  openEditTaskModal(id);
+  return;
+}
 
-  if (action === 'delete-task') {
-    const id = Number(trigger.dataset.id);
-    const task = state.tasks.find((t) => t.id === id);
-    openConfirm('task', id, task ? `Task “${task.task_info}”` : 'This task');
-    return;
-  }
+if (action === 'delete-task') {
+  const id = Number(trigger.dataset.id);
+  const task = state.tasks.find((t) => t.id === id);
+  openConfirm('task', id, task ? `Task “${task.task_info}”` : 'This task');
+  return;
+}
+
+if (action === 'edit-member') {
+  const id = Number(trigger.dataset.id);
+  openEditMemberModal(id);
+  return;
+}
+
+if (action === 'delete-member') {
+  const id = Number(trigger.dataset.id);
+  const member = state.teamMembers.find((m) => Number(m.id) === id);
+  openConfirm('member', id, member ? `Member “${member.name}”` : 'This member');
+  return;
+}
 });
 
   // Forms
