@@ -964,7 +964,7 @@ function renderAll() {
   renderRecentTasks();
   renderProjects();
   renderTasks();
-  renderTeam();
+  setView(state.view || 'dashboard');
   syncTaskProjectSelect();
 }
 
@@ -1425,11 +1425,16 @@ async function confirmDelete() {
   refreshIcons();
 
   if (ok) {
-    toast(`${labelize(type)} deleted`, 'success');
-    renderAll();
-  }
-
   closeConfirm();
+
+  toast(`${labelize(type)} deleted`, 'success');
+
+  setView('team');
+
+  return;
+}
+
+closeConfirm();
 }
 
 // ---------- Event Wiring ----------
