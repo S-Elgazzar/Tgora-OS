@@ -902,7 +902,7 @@ function renderTasks() {
   <i data-lucide="pencil" class="w-4 h-4"></i>
 </button>
 
-              ${state.currentRole === 'admin' ? `
+              ${isAdmin() || isManager() ? `
   <button class="icon-btn danger" data-action="delete-task" data-id="${t.id}" title="Delete task">
     <i data-lucide="trash-2" class="w-4 h-4"></i>
   </button>
@@ -1062,7 +1062,7 @@ function isMember() {
 }
 
 function canEditTeamMember() {
-  return isAdmin() || isManager();
+  return isAdmin();
 }
 
 function canDeleteTeamMember() {
@@ -1203,6 +1203,18 @@ ${
     refreshIcons();
   }
 }
+
+  $$('[data-action="open-project-modal"]').forEach((btn) => {
+    btn.classList.toggle('hidden', !(isAdmin() || isManager()));
+  });
+
+  $$('[data-action="open-member-modal"]').forEach((btn) => {
+    btn.classList.toggle('hidden', !isAdmin());
+  });
+
+    $$('[data-action="open-task-modal"]').forEach((btn) => {
+    btn.classList.toggle('hidden', isMember());
+  });
 
   // close mobile sidebar
   closeSidebar();
@@ -1560,6 +1572,7 @@ async function confirmDelete() {
   if (!state.pendingDelete) return;
 
   const { type, id } = state.pendingDelete;
+  const currentView = state.view;
   const btn = $('#confirm-delete-btn');
 
   btn.disabled = true;
@@ -1572,8 +1585,8 @@ async function confirmDelete() {
     ok = await deleteProject(id);
 
     if (ok) {
-      state.projects = state.projects.filter((p) => p.id !== id);
-      state.tasks = state.tasks.filter((t) => t.project_id !== id);
+      state.projects = state.projects.filter((p) => Number(p.id) !== Number(id));
+      state.tasks = state.tasks.filter((t) => Number(t.project_id) !== Number(id));
     }
   }
 
@@ -1581,7 +1594,7 @@ async function confirmDelete() {
     ok = await deleteTask(id);
 
     if (ok) {
-      state.tasks = state.tasks.filter((t) => t.id !== id);
+      state.tasks = state.tasks.filter((t) => Number(t.id) !== Number(id));
     }
   }
 
@@ -1599,17 +1612,21 @@ async function confirmDelete() {
   btn.innerHTML = `<i data-lucide="trash-2" class="w-4 h-4"></i> Delete`;
   refreshIcons();
 
-  if (ok) {
   closeConfirm();
 
-  toast(`${labelize(type)} deleted`, 'success');
+  if (ok) {
+    toast(`${labelize(type)} deleted`, 'success');
 
-  setView('team');
-
-  return;
-}
-
-closeConfirm();
+    if (currentView === 'projects') {
+      renderProjects();
+    } else if (currentView === 'tasks') {
+      renderTasks();
+    } else if (currentView === 'team') {
+      setView('team');
+    } else {
+      renderAll();
+    }
+  }
 }
 
 // ---------- Event Wiring ----------
