@@ -700,6 +700,20 @@ function getFilteredProjects() {
 function getFilteredTasks() {
   let data = [...state.tasks];
 
+  if (isMember()) {
+    const currentMember = getCurrentMember();
+
+    if (!currentMember) {
+      return [];
+    }
+
+    data = data.filter(
+      (t) =>
+        (t.assigned_to || '').toLowerCase().trim() ===
+        (currentMember.name || '').toLowerCase().trim()
+    );
+  }
+
   if (state.filters.tasks !== 'all') {
     data = data.filter(
       (t) => (t.status || '').toLowerCase() === state.filters.tasks
@@ -736,48 +750,104 @@ function renderProjects() {
     refreshIcons();
     return;
   }
+
   empty.classList.add('hidden');
 
   tbody.innerHTML = data
     .map((p) => {
       const status = (p.status || 'planning').toLowerCase();
       const priority = (p.priority || 'medium').toLowerCase();
+
       const link = p.project_link
         ? `<a href="${escapeHtml(p.project_link)}" target="_blank" rel="noopener" class="icon-btn" title="Open link"><i data-lucide="external-link" class="w-4 h-4"></i></a>`
         : '';
+
       return `
         <tr>
           <td class="px-5 py-3.5">
             <div class="flex items-center gap-3">
-              <div class="client-avatar ${avatarColor(p.client || p.project_name)}">${initials(p.client || p.project_name)}</div>
+              <div class="client-avatar ${avatarColor(p.client || p.project_name)}">
+                ${initials(p.client || p.project_name)}
+              </div>
+
               <div class="min-w-0">
-                <button class="text-sm font-medium text-gray-900 truncate hover:text-indigo-600 text-left" data-action="open-project-details" data-id="${p.id}">
-  ${escapeHtml(p.project_name || 'Untitled')}
-</button>
-                <p class="text-[11px] text-gray-500">${fmtDate(p.start_date)} → ${fmtDate(p.deadline)}</p>
+                <button
+                  class="text-sm font-medium text-gray-900 truncate hover:text-indigo-600 text-left"
+                  data-action="open-project-details"
+                  data-id="${p.id}"
+                >
+                  ${escapeHtml(p.project_name || 'Untitled')}
+                </button>
+
+                <p class="text-[11px] text-gray-500">
+                  ${fmtDate(p.start_date)} → ${fmtDate(p.deadline)}
+                </p>
               </div>
             </div>
           </td>
-          <td class="px-5 py-3.5 text-sm text-gray-700">${escapeHtml(p.client || '—')}</td>
-          <td class="px-5 py-3.5"><span class="badge badge-${status}"><span class="dot"></span>${labelize(status)}</span></td>
-          <td class="px-5 py-3.5"><span class="badge priority-${priority}"><span class="dot"></span>${labelize(priority)}</span></td>
-          <td class="px-5 py-3.5 text-sm text-gray-700 ${deadlineClass(p.deadline)}">${fmtDate(p.deadline)}</td>
+
+          <td class="px-5 py-3.5 text-sm text-gray-700">
+            ${escapeHtml(p.client || '—')}
+          </td>
+
+          <td class="px-5 py-3.5">
+            <span class="badge badge-${status}">
+              <span class="dot"></span>
+              ${labelize(status)}
+            </span>
+          </td>
+
+          <td class="px-5 py-3.5">
+            <span class="badge priority-${priority}">
+              <span class="dot"></span>
+              ${labelize(priority)}
+            </span>
+          </td>
+
+          <td class="px-5 py-3.5 text-sm text-gray-700 ${deadlineClass(p.deadline)}">
+            ${fmtDate(p.deadline)}
+          </td>
+
           <td class="px-5 py-3.5 text-right">
             <div class="inline-flex items-center gap-1">
               ${link}
-              <button class="icon-btn" data-action="edit-project" data-id="${p.id}" title="Edit project">
-  <i data-lucide="pencil" class="w-4 h-4"></i>
-</button>
-              ${state.currentRole === 'admin' ? `
-<button class="icon-btn danger" data-action="delete-project" data-id="${p.id}">
-  <i data-lucide="trash-2" class="w-4 h-4"></i>
-</button>
-` : ''}
+
+              ${
+                isAdmin() || isManager()
+                  ? `
+                    <button
+                      class="icon-btn"
+                      data-action="edit-project"
+                      data-id="${p.id}"
+                      title="Edit project"
+                    >
+                      <i data-lucide="pencil" class="w-4 h-4"></i>
+                    </button>
+                  `
+                  : ''
+              }
+
+              ${
+                isAdmin()
+                  ? `
+                    <button
+                      class="icon-btn danger"
+                      data-action="delete-project"
+                      data-id="${p.id}"
+                      title="Delete project"
+                    >
+                      <i data-lucide="trash-2" class="w-4 h-4"></i>
+                    </button>
+                  `
+                  : ''
+              }
             </div>
           </td>
-        </tr>`;
+        </tr>
+      `;
     })
     .join('');
+
   refreshIcons();
 }
 
@@ -997,6 +1067,33 @@ function canEditTeamMember() {
 
 function canDeleteTeamMember() {
   return isAdmin();
+}
+
+function getCurrentMember() {
+  if (!state.currentUser?.email) return null;
+
+  return state.teamMembers.find(
+    (member) =>
+      (member.email || '').toLowerCase().trim() ===
+      state.currentUser.email.toLowerCase().trim()
+  );
+}
+
+function isOwnTask(task) {
+  const currentMember = getCurrentMember();
+
+  if (!currentMember) return false;
+
+  return (task.assigned_to || '').toLowerCase().trim() ===
+    (currentMember.name || '').toLowerCase().trim();
+}
+
+function canFullyEditTask() {
+  return isAdmin() || isManager();
+}
+
+function canLimitedEditTask(task) {
+  return isMember() && isOwnTask(task);
 }
 
 // ---------- View Switching ----------
@@ -1333,9 +1430,15 @@ function openEditMemberModal(id) {
 }
 
 function openEditTaskModal(id) {
-  const task = state.tasks.find((t) => t.id === id);
+  const task = state.tasks.find((t) => Number(t.id) === Number(id));
+
   if (!task) {
     toast('Task not found', 'error');
+    return;
+  }
+
+  if (!canFullyEditTask() && !canLimitedEditTask(task)) {
+    toast('You do not have permission to edit this task', 'error');
     return;
   }
 
@@ -1352,16 +1455,35 @@ function openEditTaskModal(id) {
   form.task_link.value = task.task_link || '';
   form.project_id.value = task.project_id || '';
 
+  const isLimited = canLimitedEditTask(task) && !canFullyEditTask();
+
+  form.task_info.disabled = isLimited;
+  form.assigned_to.disabled = isLimited;
+  form.priority.disabled = isLimited;
+  form.start_date.disabled = isLimited;
+  form.deadline.disabled = isLimited;
+  form.project_id.disabled = isLimited;
+
+  form.status.disabled = false;
+  form.task_link.disabled = false;
+
   const title = $('#task-modal-title');
-  if (title) title.textContent = 'Edit Task';
+  if (title) {
+    title.textContent = isLimited
+      ? 'Update Task Status'
+      : 'Edit Task';
+  }
 
   const submitBtn = form.querySelector('button[type=submit]');
   if (submitBtn) {
-    submitBtn.innerHTML = `<i data-lucide="check" class="w-4 h-4"></i> Update task`;
+    submitBtn.innerHTML = `<i data-lucide="check" class="w-4 h-4"></i> ${
+      isLimited ? 'Update Status' : 'Update Task'
+    }`;
   }
 
   openModal('task-modal');
 }
+
 async function handleTaskSubmit(e) {
   e.preventDefault();
 
@@ -1373,7 +1495,29 @@ async function handleTaskSubmit(e) {
   submitBtn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> ${isEditing ? 'Updating…' : 'Saving…'}`;
   refreshIcons();
 
-  const payload = normalizePayload(new FormData(form));
+  let payload = normalizePayload(new FormData(form));
+
+  if (isEditing) {
+    const existingTask = state.tasks.find(
+      (task) => Number(task.id) === Number(state.editingTaskId)
+    );
+
+    if (!existingTask) {
+      toast('Task not found', 'error');
+      submitBtn.disabled = false;
+      return;
+    }
+
+    const limitedEdit = canLimitedEditTask(existingTask) && !canFullyEditTask();
+
+    if (limitedEdit) {
+      payload = {
+        status: form.status.value,
+        task_link: form.task_link.value || null
+      };
+    }
+  }
+
   if (payload.project_id) payload.project_id = Number(payload.project_id);
 
   let result = null;
@@ -1391,7 +1535,7 @@ async function handleTaskSubmit(e) {
   if (result) {
     if (isEditing) {
       state.tasks = state.tasks.map((task) =>
-        task.id === state.editingTaskId ? result : task
+        Number(task.id) === Number(state.editingTaskId) ? result : task
       );
       toast('Task updated successfully', 'success');
     } else {
@@ -1401,6 +1545,11 @@ async function handleTaskSubmit(e) {
 
     state.editingTaskId = null;
     form.reset();
+
+    Array.from(form.elements).forEach((field) => {
+      field.disabled = false;
+    });
+
     renderAll();
     closeModal();
   }
