@@ -870,9 +870,13 @@ function renderTasks() {
       const status = (t.status || 'todo').toLowerCase();
       const priority = (t.priority || 'medium').toLowerCase();
       const project = state.projects.find((p) => p.id === t.project_id);
-      const link = t.task_link
-        ? `<a href="${escapeHtml(t.task_link)}" target="_blank" rel="noopener" class="icon-btn" title="Open link"><i data-lucide="external-link" class="w-4 h-4"></i></a>`
-        : '';
+      const materialsLink = t.materials_link
+  ? `<a href="${escapeHtml(t.materials_link)}" target="_blank" rel="noopener" class="icon-btn" title="Open materials"><i data-lucide="paperclip" class="w-4 h-4"></i></a>`
+  : '';
+
+const link = t.task_link
+  ? `<a href="${escapeHtml(t.task_link)}" target="_blank" rel="noopener" class="icon-btn" title="Open task link"><i data-lucide="external-link" class="w-4 h-4"></i></a>`
+  : '';
       return `
         <tr>
           <td class="px-5 py-3.5 max-w-sm">
@@ -897,7 +901,8 @@ function renderTasks() {
           <td class="px-5 py-3.5 text-sm text-gray-700 ${deadlineClass(t.deadline)}">${fmtDate(t.deadline)}</td>
           <td class="px-5 py-3.5 text-right">
             <div class="inline-flex items-center gap-1">
-              ${link}
+              ${materialsLink}
+${link}
               <button class="icon-btn" data-action="edit-task" data-id="${t.id}" title="Edit task">
   <i data-lucide="pencil" class="w-4 h-4"></i>
 </button>
@@ -1464,6 +1469,7 @@ function openEditTaskModal(id) {
   form.priority.value = task.priority || 'medium';
   form.start_date.value = task.start_date || '';
   form.deadline.value = task.deadline || '';
+  form.materials_link.value = task.materials_link || '';
   form.task_link.value = task.task_link || '';
   form.project_id.value = task.project_id || '';
 
@@ -1477,6 +1483,7 @@ function openEditTaskModal(id) {
   form.project_id.disabled = isLimited;
 
   form.status.disabled = false;
+  form.materials_link.disabled = false;
   form.task_link.disabled = false;
 
   const title = $('#task-modal-title');
