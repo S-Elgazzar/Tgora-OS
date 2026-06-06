@@ -870,19 +870,38 @@ function renderTasks() {
       const status = (t.status || 'todo').toLowerCase();
       const priority = (t.priority || 'medium').toLowerCase();
       const project = state.projects.find((p) => p.id === t.project_id);
-      const materialsLink = t.materials_link
-  ? `<a href="${escapeHtml(t.materials_link)}" target="_blank" rel="noopener" class="icon-btn" title="Open materials"><i data-lucide="paperclip" class="w-4 h-4"></i></a>`
-  : '';
 
-const link = t.task_link
-  ? `<a href="${escapeHtml(t.task_link)}" target="_blank" rel="noopener" class="icon-btn" title="Open task link"><i data-lucide="external-link" class="w-4 h-4"></i></a>`
-  : '';
+      const taskNotesIcon = t.notes
+        ? `
+          <span class="relative inline-flex items-center group shrink-0">
+            <i data-lucide="message-square" class="w-3.5 h-3.5 text-amber-500 cursor-help"></i>
+
+            <span class="absolute left-0 top-6 z-50 hidden group-hover:block w-72 p-3 text-xs text-white bg-gray-900 rounded-lg shadow-xl whitespace-normal leading-relaxed">
+              ${escapeHtml(t.notes)}
+            </span>
+          </span>
+        `
+        : '';
+
+      const materialsLink = t.materials_link
+        ? `<a href="${escapeHtml(t.materials_link)}" target="_blank" rel="noopener" class="icon-btn" title="Open materials"><i data-lucide="paperclip" class="w-4 h-4"></i></a>`
+        : '';
+
+      const link = t.task_link
+        ? `<a href="${escapeHtml(t.task_link)}" target="_blank" rel="noopener" class="icon-btn" title="Open task link"><i data-lucide="external-link" class="w-4 h-4"></i></a>`
+        : '';
+
       return `
         <tr>
-          <td class="px-5 py-3.5 max-w-sm">
-            <p class="text-sm font-medium text-gray-900 truncate">${escapeHtml(t.task_info || 'Untitled task')}</p>
+          <td class="px-5 py-3.5 max-w-sm overflow-visible">
+            <div class="text-sm font-medium text-gray-900 flex items-center gap-1.5 overflow-visible">
+              <span class="truncate">${escapeHtml(t.task_info || 'Untitled task')}</span>
+              ${taskNotesIcon}
+            </div>
+
             <p class="text-[11px] text-gray-500">Start ${fmtDate(t.start_date)}</p>
           </td>
+
           <td class="px-5 py-3.5 text-sm text-gray-700">
             ${
               project
@@ -890,34 +909,59 @@ const link = t.task_link
                 : '<span class="text-gray-400">—</span>'
             }
           </td>
+
           <td class="px-5 py-3.5">
             <div class="flex items-center gap-2">
-              <div class="client-avatar ${avatarColor(t.assigned_to)}" style="width:1.75rem;height:1.75rem;">${initials(t.assigned_to)}</div>
+              <div class="client-avatar ${avatarColor(t.assigned_to)}" style="width:1.75rem;height:1.75rem;">
+                ${initials(t.assigned_to)}
+              </div>
+
               <span class="text-sm text-gray-700">${escapeHtml(t.assigned_to || '—')}</span>
             </div>
           </td>
-          <td class="px-5 py-3.5"><span class="badge badge-${status}"><span class="dot"></span>${labelize(status)}</span></td>
-          <td class="px-5 py-3.5"><span class="badge priority-${priority}"><span class="dot"></span>${labelize(priority)}</span></td>
-          <td class="px-5 py-3.5 text-sm text-gray-700 ${deadlineClass(t.deadline)}">${fmtDate(t.deadline)}</td>
+
+          <td class="px-5 py-3.5">
+            <span class="badge badge-${status}">
+              <span class="dot"></span>
+              ${labelize(status)}
+            </span>
+          </td>
+
+          <td class="px-5 py-3.5">
+            <span class="badge priority-${priority}">
+              <span class="dot"></span>
+              ${labelize(priority)}
+            </span>
+          </td>
+
+          <td class="px-5 py-3.5 text-sm text-gray-700 ${deadlineClass(t.deadline)}">
+            ${fmtDate(t.deadline)}
+          </td>
+
           <td class="px-5 py-3.5 text-right">
             <div class="inline-flex items-center gap-1">
               ${materialsLink}
-${link}
+              ${link}
+
               <button class="icon-btn" data-action="edit-task" data-id="${t.id}" title="Edit task">
-  <i data-lucide="pencil" class="w-4 h-4"></i>
-</button>
+                <i data-lucide="pencil" class="w-4 h-4"></i>
+              </button>
 
-              ${isAdmin() || isManager() ? `
-  <button class="icon-btn danger" data-action="delete-task" data-id="${t.id}" title="Delete task">
-    <i data-lucide="trash-2" class="w-4 h-4"></i>
-  </button>
-` : ''}
-
+              ${
+                isAdmin() || isManager()
+                  ? `
+                    <button class="icon-btn danger" data-action="delete-task" data-id="${t.id}" title="Delete task">
+                      <i data-lucide="trash-2" class="w-4 h-4"></i>
+                    </button>
+                  `
+                  : ''
+              }
             </div>
           </td>
         </tr>`;
     })
     .join('');
+
   refreshIcons();
 }
 
@@ -1469,6 +1513,7 @@ function openEditTaskModal(id) {
   form.priority.value = task.priority || 'medium';
   form.start_date.value = task.start_date || '';
   form.deadline.value = task.deadline || '';
+  form.notes.value = task.notes || '';
   form.materials_link.value = task.materials_link || '';
   form.task_link.value = task.task_link || '';
   form.project_id.value = task.project_id || '';
@@ -1483,14 +1528,13 @@ function openEditTaskModal(id) {
   form.project_id.disabled = isLimited;
 
   form.status.disabled = false;
+  form.notes.disabled = false;
   form.materials_link.disabled = false;
   form.task_link.disabled = false;
 
   const title = $('#task-modal-title');
   if (title) {
-    title.textContent = isLimited
-      ? 'Update Task Status'
-      : 'Edit Task';
+    title.textContent = isLimited ? 'Update Task Status' : 'Edit Task';
   }
 
   const submitBtn = form.querySelector('button[type=submit]');

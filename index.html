@@ -1078,99 +1078,122 @@
   </div>
 
   <!-- ============ TASK MODAL ============ -->
-  <div id="task-modal" class="modal hidden">
-    <div class="modal-overlay" data-action="close-modal"></div>
-    <div class="modal-panel">
-      <div class="px-6 py-5 border-b border-gray-100 flex items-center justify-between">
-        <div>
-          <h3 class="text-lg font-semibold text-gray-900">New Task</h3>
-          <p class="text-xs text-gray-500 mt-0.5">Assign a task to your team.</p>
-        </div>
-        <button data-action="close-modal" class="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center">
-          <i data-lucide="x" class="w-4 h-4 text-gray-500"></i>
-        </button>
+<div id="task-modal" class="modal hidden">
+  <div class="modal-overlay" data-action="close-modal"></div>
+
+  <div class="modal-panel">
+    <div class="px-6 py-5 border-b border-gray-100 flex items-center justify-between">
+      <div>
+        <h3 class="text-lg font-semibold text-gray-900" id="task-modal-title">New Task</h3>
+        <p class="text-xs text-gray-500 mt-0.5">Assign a task to your team.</p>
       </div>
 
-      <form id="task-form" class="px-6 py-5 space-y-4">
-        <div>
-          <label class="form-label">Task description <span class="text-rose-500">*</span></label>
-          <textarea name="task_info" required rows="2" class="form-input resize-none" placeholder="e.g. Draft landing page copy for Acme launch"></textarea>
-        </div>
-
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <label class="form-label">Assigned to <span class="text-rose-500">*</span></label>
-<select name="assigned_to" id="assigned-to-select" class="form-input">
-  <option value="">Select Team Member</option>
-</select>          </div>
-          <div>
-            <label class="form-label">Project</label>
-            <select name="project_id" id="task-project-select" class="form-input">
-              <option value="">— No project —</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <label class="form-label">Status</label>
-            <select name="status" class="form-input">
-              <option value="todo" selected>To Do</option>
-              <option value="in_progress">In Progress</option>
-              <option value="review">In Review</option>
-              <option value="completed">Completed</option>
-            </select>
-          </div>
-          <div>
-            <label class="form-label">Priority</label>
-            <select name="priority" class="form-input">
-              <option value="low">Low</option>
-              <option value="medium" selected>Medium</option>
-              <option value="high">High</option>
-              <option value="urgent">Urgent</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <label class="form-label">Start date</label>
-            <input name="start_date" type="date" class="form-input" />
-          </div>
-          <div>
-            <label class="form-label">Deadline</label>
-            <input name="deadline" type="date" class="form-input" />
-          </div>
-        </div>
-
-        <div>
-  <label class="form-label">Materials Link</label>
-
-  <input
-  name="materials_link"
-  type="url"
-  id="task-materials-link"
-  class="form-input"
-  placeholder="https://..."
-/>
-
-        <div>
-          <label class="form-label">Task link</label>
-          <input name="task_link" type="url" class="form-input" placeholder="https://…" />
-        </div>
-
-        <div class="flex items-center justify-end gap-2 pt-4 border-t border-gray-100">
-          <button type="button" data-action="close-modal" class="h-9 px-4 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg">
-            Cancel
-          </button>
-          <button type="submit" class="h-9 px-4 inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg shadow-sm">
-            <i data-lucide="check" class="w-4 h-4"></i>
-            Create task
-          </button>
-        </div>
-      </form>
+      <button data-action="close-modal" class="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center">
+        <i data-lucide="x" class="w-4 h-4 text-gray-500"></i>
+      </button>
     </div>
+
+    <form id="task-form" class="px-6 py-5 space-y-4">
+      <div>
+        <label class="form-label">Task description <span class="text-rose-500">*</span></label>
+        <textarea name="task_info" required rows="2" class="form-input resize-none" placeholder="e.g. Draft landing page copy for Acme launch"></textarea>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <label class="form-label">Assigned to <span class="text-rose-500">*</span></label>
+          <select name="assigned_to" id="assigned-to-select" class="form-input">
+            <option value="">Select Team Member</option>
+          </select>
+        </div>
+
+        <div>
+          <label class="form-label">Project</label>
+          <select name="project_id" id="task-project-select" class="form-input">
+            <option value="">— No project —</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <label class="form-label">Status</label>
+          <select name="status" class="form-input">
+            <option value="todo" selected>To Do</option>
+            <option value="in_progress">In Progress</option>
+            <option value="review">In Review</option>
+            <option value="completed">Completed</option>
+          </select>
+        </div>
+
+        <div>
+          <label class="form-label">Priority</label>
+          <select name="priority" class="form-input">
+            <option value="low">Low</option>
+            <option value="medium" selected>Medium</option>
+            <option value="high">High</option>
+            <option value="urgent">Urgent</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <label class="form-label">Start date</label>
+          <input name="start_date" type="date" class="form-input" />
+        </div>
+
+        <div>
+          <label class="form-label">Deadline</label>
+          <input name="deadline" type="date" class="form-input" />
+        </div>
+      </div>
+
+      <div>
+        <label class="form-label">Notes</label>
+        <textarea
+          name="notes"
+          id="task-notes"
+          class="form-input"
+          rows="4"
+          placeholder="Add task notes, instructions, comments, or important details..."
+        ></textarea>
+      </div>
+
+      <div>
+        <label class="form-label">Materials Link</label>
+        <input
+          name="materials_link"
+          type="url"
+          id="task-materials-link"
+          class="form-input"
+          placeholder="https://..."
+        />
+      </div>
+
+      <div>
+        <label class="form-label">Task link</label>
+        <input
+          name="task_link"
+          type="url"
+          class="form-input"
+          placeholder="https://..."
+        />
+      </div>
+
+      <div class="flex items-center justify-end gap-2 pt-4 border-t border-gray-100">
+        <button type="button" data-action="close-modal" class="h-9 px-4 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg">
+          Cancel
+        </button>
+
+        <button type="submit" class="h-9 px-4 inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg shadow-sm">
+          <i data-lucide="check" class="w-4 h-4"></i>
+          Create task
+        </button>
+      </div>
+    </form>
   </div>
+</div>
 
   <!-- ============ CONFIRM DELETE MODAL ============ -->
   <div id="confirm-modal" class="modal hidden">
