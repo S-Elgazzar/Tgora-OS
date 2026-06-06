@@ -895,7 +895,14 @@ function renderTasks() {
         <tr>
           <td class="px-5 py-3.5 max-w-sm overflow-visible">
             <div class="text-sm font-medium text-gray-900 flex items-center gap-1.5 overflow-visible">
-              <span class="truncate">${escapeHtml(t.task_info || 'Untitled task')}</span>
+              <button
+  type="button"
+  class="truncate text-left hover:text-indigo-600"
+  data-action="open-task-details"
+  data-id="${t.id}"
+>
+  ${escapeHtml(t.task_info || 'Untitled task')}
+</button>
               ${taskNotesIcon}
             </div>
 
@@ -963,6 +970,144 @@ function renderTasks() {
     .join('');
 
   refreshIcons();
+}
+
+function openTaskDetailsModal(id) {
+  const task = state.tasks.find((t) => Number(t.id) === Number(id));
+
+  if (!task) {
+    toast('Task not found', 'error');
+    return;
+  }
+
+  const project = state.projects.find((p) => Number(p.id) === Number(task.project_id));
+  const status = (task.status || 'todo').toLowerCase();
+  const priority = (task.priority || 'medium').toLowerCase();
+
+  const materialsLink = task.materials_link
+    ? `
+      <a href="${escapeHtml(task.materials_link)}" target="_blank" rel="noopener"
+        class="inline-flex items-center gap-2 h-9 px-3 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50 transition">
+        <i data-lucide="paperclip" class="w-4 h-4"></i>
+        Open Materials
+      </a>
+    `
+    : `<span class="text-sm text-gray-400">No materials link</span>`;
+
+  const taskLink = task.task_link
+    ? `
+      <a href="${escapeHtml(task.task_link)}" target="_blank" rel="noopener"
+        class="inline-flex items-center gap-2 h-9 px-3 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50 transition">
+        <i data-lucide="external-link" class="w-4 h-4"></i>
+        Open Task Link
+      </a>
+    `
+    : `<span class="text-sm text-gray-400">No task link</span>`;
+
+  $('#task-details-content').innerHTML = `
+    <div class="space-y-5">
+
+      <div class="pb-4 border-b border-gray-100">
+        <p class="text-xs font-medium text-gray-500 mb-1">Task</p>
+        <h4 class="text-xl font-semibold text-gray-900 leading-snug">
+          ${escapeHtml(task.task_info || 'Untitled task')}
+        </h4>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div class="bg-gray-50 border border-gray-100 rounded-xl p-3">
+          <p class="text-xs text-gray-500 mb-1">Project</p>
+          <p class="text-sm font-medium text-gray-900">
+            ${escapeHtml(project?.project_name || '—')}
+          </p>
+        </div>
+
+        <div class="bg-gray-50 border border-gray-100 rounded-xl p-3">
+          <p class="text-xs text-gray-500 mb-1">Assigned To</p>
+          <p class="text-sm font-medium text-gray-900">
+            ${escapeHtml(task.assigned_to || '—')}
+          </p>
+        </div>
+
+        <div class="bg-gray-50 border border-gray-100 rounded-xl p-3">
+          <p class="text-xs text-gray-500 mb-2">Status</p>
+          <span class="badge badge-${status}">
+            <span class="dot"></span>
+            ${labelize(status)}
+          </span>
+        </div>
+
+        <div class="bg-gray-50 border border-gray-100 rounded-xl p-3">
+          <p class="text-xs text-gray-500 mb-2">Priority</p>
+          <span class="badge priority-${priority}">
+            <span class="dot"></span>
+            ${labelize(priority)}
+          </span>
+        </div>
+
+        <div class="bg-gray-50 border border-gray-100 rounded-xl p-3">
+          <p class="text-xs text-gray-500 mb-1">Start Date</p>
+          <p class="text-sm font-medium text-gray-900">
+            ${fmtDate(task.start_date)}
+          </p>
+        </div>
+
+        <div class="bg-gray-50 border border-gray-100 rounded-xl p-3">
+          <p class="text-xs text-gray-500 mb-1">Deadline</p>
+          <p class="text-sm font-medium text-gray-900 ${deadlineClass(task.deadline)}">
+            ${fmtDate(task.deadline)}
+          </p>
+        </div>
+      </div>
+
+      <div>
+        <div class="flex items-center gap-2 mb-2">
+          <i data-lucide="message-square" class="w-4 h-4 text-amber-500"></i>
+          <p class="text-sm font-semibold text-gray-900">Notes</p>
+        </div>
+
+        <div class="min-h-[96px] max-h-56 overflow-y-auto text-sm text-gray-800 bg-white border border-gray-200 rounded-xl p-4 whitespace-pre-wrap leading-relaxed">
+          ${task.notes ? escapeHtml(task.notes) : '<span class="text-gray-400">No notes</span>'}
+        </div>
+      </div>
+
+      <div class="pt-4 border-t border-gray-100 grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <p class="text-xs text-gray-500 mb-2">Materials Link</p>
+          ${materialsLink}
+        </div>
+
+        <div>
+          <p class="text-xs text-gray-500 mb-2">Task Link</p>
+          ${taskLink}
+        </div>
+      </div>
+
+      <div class="pt-4 border-t border-gray-100 flex items-center justify-end gap-2">
+        <button
+          type="button"
+          class="h-9 px-4 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg"
+          data-action="close-modal"
+        >
+          Close
+        </button>
+
+        <button
+          type="button"
+          class="h-9 px-4 inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg shadow-sm"
+          data-action="edit-task"
+          data-id="${task.id}"
+        >
+          <i data-lucide="pencil" class="w-4 h-4"></i>
+          Edit Task
+        </button>
+      </div>
+
+    </div>
+  `;
+
+  refreshIcons();
+  openModal('task-details-modal');
 }
 
 function renderTeam() {
@@ -2028,6 +2173,12 @@ if (action === 'delete-project') {
   const id = Number(trigger.dataset.id);
   const project = state.projects.find((p) => p.id === id);
   openConfirm('project', id, project ? `Project “${project.project_name}”` : 'This project');
+  return;
+}
+
+if (action === 'open-task-details') {
+  const id = Number(trigger.dataset.id);
+  openTaskDetailsModal(id);
   return;
 }
 
