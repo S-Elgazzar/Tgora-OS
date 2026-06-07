@@ -1649,7 +1649,49 @@ async function handleMemberSubmit(e) {
       payload
     );
   } else {
-    result = await insertTeamMember(payload);
+    if (!payload.email || !password) {
+      toast('Email and password are required to create a member account', 'error');
+
+      submitBtn.disabled = false;
+      submitBtn.innerHTML =
+        `<i data-lucide="check" class="w-4 h-4"></i>
+        Save Member`;
+
+      refreshIcons();
+      return;
+    }
+
+    const {
+      data: { session },
+    } = await supabaseClient.auth.getSession();
+
+    const response = await fetch('/api/create-member', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({
+        ...payload,
+        password,
+      }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      toast(data.error || 'Failed to create member account', 'error');
+
+      submitBtn.disabled = false;
+      submitBtn.innerHTML =
+        `<i data-lucide="check" class="w-4 h-4"></i>
+        Save Member`;
+
+      refreshIcons();
+      return;
+    }
+
+    result = data.member;
   }
 
   submitBtn.disabled = false;
@@ -1671,7 +1713,7 @@ async function handleMemberSubmit(e) {
     } else {
       state.teamMembers = [...state.teamMembers, result];
 
-      toast('Team member added successfully', 'success');
+      toast('Team member account created successfully', 'success');
     }
 
     state.editingMemberId = null;
