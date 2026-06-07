@@ -1940,55 +1940,42 @@ async function confirmDelete() {
 // ---------- Event Wiring ----------
 function renderProjectDetails() {
   const project = state.projects.find(
-    (p) => p.id === state.selectedProjectId
+    (p) => Number(p.id) === Number(state.selectedProjectId)
   );
 
   if (!project) return;
 
-  $('#details-project-name').textContent =
-    project.project_name || 'Untitled';
-
-  $('#details-client').textContent =
-    project.client || '—';
-
-  $('#details-start-date').textContent =
-    fmtDate(project.start_date);
-
-  $('#details-deadline').textContent =
-    fmtDate(project.deadline);
+  $('#details-project-name').textContent = project.project_name || 'Untitled';
+  $('#details-project-code').textContent = project.project_code || '—';
+  $('#details-client').textContent = project.client || '—';
+  $('#details-start-date').textContent = fmtDate(project.start_date);
+  $('#details-deadline').textContent = fmtDate(project.deadline);
 
   const status = (project.status || 'planning').toLowerCase();
   const priority = (project.priority || 'medium').toLowerCase();
 
-const projectTasks = state.tasks.filter(
-  (t) => t.project_id === project.id
-);
+  const tasks = state.tasks.filter(
+    (t) => Number(t.project_id) === Number(project.id)
+  );
 
-const totalTasks = projectTasks.length;
+  const totalTasks = tasks.length;
+  const completedTasks = tasks.filter(
+    (t) => (t.status || '').toLowerCase() === 'completed'
+  ).length;
 
-const completedTasks = projectTasks.filter(
-  (t) => (t.status || '').toLowerCase() === 'completed'
-).length;
+  const progress =
+    totalTasks === 0 ? 0 : Math.round((completedTasks / totalTasks) * 100);
 
-const progress =
-  totalTasks === 0
-    ? 0
-    : Math.round((completedTasks / totalTasks) * 100);
-
-$('#details-total-tasks').textContent = totalTasks;
-$('#details-completed-tasks').textContent = completedTasks;
-
-$('#project-progress-text').textContent = `${progress}%`;
-
-$('#project-progress-bar').style.width = `${progress}%`;
+  $('#details-total-tasks').textContent = totalTasks;
+  $('#details-completed-tasks').textContent = completedTasks;
+  $('#project-progress-text').textContent = `${progress}%`;
+  $('#project-progress-bar').style.width = `${progress}%`;
 
   $('#details-status').className = `badge badge-${status}`;
-  $('#details-status').innerHTML =
-    `<span class="dot"></span>${labelize(status)}`;
+  $('#details-status').innerHTML = `<span class="dot"></span>${labelize(status)}`;
 
   $('#details-priority').className = `badge priority-${priority}`;
-  $('#details-priority').innerHTML =
-    `<span class="dot"></span>${labelize(priority)}`;
+  $('#details-priority').innerHTML = `<span class="dot"></span>${labelize(priority)}`;
 
   const linkEl = $('#details-project-link');
 
@@ -2000,44 +1987,117 @@ $('#project-progress-bar').style.width = `${progress}%`;
     linkEl.classList.add('hidden');
   }
 
-  const tasks = state.tasks.filter(
-    (t) => t.project_id === project.id
-  );
-
   $('#details-tasks-list').innerHTML = tasks.length
-    ? tasks
-        .map(
-          (t) => `
-        <div class="p-5 flex items-center justify-between">
-          <div>
-            <p class="font-medium text-gray-900">
-              ${escapeHtml(t.task_info || 'Untitled Task')}
-            </p>
-            <p class="text-sm text-gray-500 mt-1">
-              ${escapeHtml(t.assigned_to || '—')}
-            </p>
-          </div>
+    ? `
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-50 border-b border-gray-100">
+            <tr class="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <th class="px-5 py-3">Task</th>
+              <th class="px-5 py-3">Assigned</th>
+              <th class="px-5 py-3">Status</th>
+              <th class="px-5 py-3">Priority</th>
+              <th class="px-5 py-3">Deadline</th>
+              <th class="px-5 py-3 text-right">Actions</th>
+            </tr>
+          </thead>
 
-          <div class="flex items-center gap-2">
-            <span class="badge badge-${(t.status || 'todo').toLowerCase()}">
-              <span class="dot"></span>
-              ${labelize(t.status || 'todo')}
-            </span>
+          <tbody class="divide-y divide-gray-100">
+            ${tasks
+              .map((t) => {
+                const taskStatus = (t.status || 'todo').toLowerCase();
+                const taskPriority = (t.priority || 'medium').toLowerCase();
 
-            <span class="badge priority-${(t.priority || 'medium').toLowerCase()}">
-              <span class="dot"></span>
-              ${labelize(t.priority || 'medium')}
-            </span>
-          </div>
-        </div>
-      `
-        )
-        .join('')
+                const materialsLink = t.materials_link
+                  ? `<a href="${escapeHtml(t.materials_link)}" target="_blank" rel="noopener" class="icon-btn" title="Open materials"><i data-lucide="paperclip" class="w-4 h-4"></i></a>`
+                  : '';
+
+                const taskLink = t.task_link
+                  ? `<a href="${escapeHtml(t.task_link)}" target="_blank" rel="noopener" class="icon-btn" title="Open task link"><i data-lucide="external-link" class="w-4 h-4"></i></a>`
+                  : '';
+
+                return `
+                  <tr class="hover:bg-gray-50 transition">
+                    <td class="px-5 py-3.5 max-w-sm">
+                      <button
+                        type="button"
+                        class="text-sm font-medium text-gray-900 truncate hover:text-indigo-600 text-left"
+                        data-action="open-task-details"
+                        data-id="${t.id}"
+                      >
+                        ${escapeHtml(t.task_info || 'Untitled Task')}
+                      </button>
+
+                      <p class="text-[11px] text-gray-500">
+                        Start ${fmtDate(t.start_date)}
+                      </p>
+                    </td>
+
+                    <td class="px-5 py-3.5">
+                      <div class="flex items-center gap-2">
+                        <div class="client-avatar ${avatarColor(t.assigned_to)}" style="width:1.75rem;height:1.75rem;">
+                          ${initials(t.assigned_to)}
+                        </div>
+
+                        <span class="text-sm text-gray-700">
+                          ${escapeHtml(t.assigned_to || '—')}
+                        </span>
+                      </div>
+                    </td>
+
+                    <td class="px-5 py-3.5">
+                      <span class="badge badge-${taskStatus}">
+                        <span class="dot"></span>
+                        ${labelize(taskStatus)}
+                      </span>
+                    </td>
+
+                    <td class="px-5 py-3.5">
+                      <span class="badge priority-${taskPriority}">
+                        <span class="dot"></span>
+                        ${labelize(taskPriority)}
+                      </span>
+                    </td>
+
+                    <td class="px-5 py-3.5 text-sm text-gray-700 ${deadlineClass(t.deadline)}">
+                      ${fmtDate(t.deadline)}
+                    </td>
+
+                    <td class="px-5 py-3.5 text-right">
+                      <div class="inline-flex items-center gap-1">
+                        ${materialsLink}
+                        ${taskLink}
+
+                        <button class="icon-btn" data-action="edit-task" data-id="${t.id}" title="Edit task">
+                          <i data-lucide="pencil" class="w-4 h-4"></i>
+                        </button>
+
+                        ${
+                          isAdmin() || isManager()
+                            ? `
+                              <button class="icon-btn danger" data-action="delete-task" data-id="${t.id}" title="Delete task">
+                                <i data-lucide="trash-2" class="w-4 h-4"></i>
+                              </button>
+                            `
+                            : ''
+                        }
+                      </div>
+                    </td>
+                  </tr>
+                `;
+              })
+              .join('')}
+          </tbody>
+        </table>
+      </div>
+    `
     : `
       <div class="p-10 text-center text-gray-500 text-sm">
         No tasks linked to this project yet.
       </div>
     `;
+
+  refreshIcons();
 }
 
 function openMemberDetails(memberId) {
