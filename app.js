@@ -1461,6 +1461,28 @@ async function handleMemberSubmit(e) {
   }
 }
 
+function generateProjectCode() {
+  const now = new Date();
+
+  const year = String(now.getFullYear()).slice(-2);
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+
+  const prefix = `TG-${year}${month}`;
+
+  const existingCodes = state.projects
+    .map((project) => project.project_code)
+    .filter(Boolean)
+    .filter((code) => code.startsWith(prefix));
+
+  const numbers = existingCodes
+    .map((code) => Number(code.split('-').pop()))
+    .filter((num) => !isNaN(num));
+
+  const nextNumber = numbers.length > 0 ? Math.max(...numbers) + 1 : 1;
+
+  return `${prefix}-${String(nextNumber).padStart(3, '0')}`;
+}
+
 async function handleProjectSubmit(e) {
   e.preventDefault();
 
@@ -1473,6 +1495,10 @@ async function handleProjectSubmit(e) {
   refreshIcons();
 
   const payload = normalizePayload(new FormData(form));
+
+  if (!isEditing) {
+  payload.project_code = generateProjectCode();
+}
 
   let result = null;
 
