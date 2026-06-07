@@ -2704,20 +2704,6 @@ async function handleLogout() {
 }
 
 async function init() {
-  const {
-  data: { user },
-} = await supabaseClient.auth.getUser();
-
-state.currentUser = user || null;
-
-if (user?.email) {
-  const matchedMember = state.teamMembers.find(
-    (member) => (member.email || '').toLowerCase() === user.email.toLowerCase()
-  );
-
-  state.currentRole = matchedMember?.role_type || 'member';
-}
-
   $('#year').textContent = new Date().getFullYear();
   refreshIcons();
   wireEvents();
@@ -2730,31 +2716,30 @@ if (user?.email) {
 
   try {
     const [projects, tasks, teamMembers] = await Promise.all([
-  fetchProjects(),
-  fetchTasks(),
-  fetchTeamMembers()
-]);
+      fetchProjects(),
+      fetchTasks(),
+      fetchTeamMembers()
+    ]);
 
-state.projects = projects;
-state.tasks = tasks;
-state.teamMembers = teamMembers;
+    state.projects = projects;
+    state.tasks = tasks;
+    state.teamMembers = teamMembers;
 
-const {
-  data: { user },
-} = await supabaseClient.auth.getUser();
+    const {
+      data: { user },
+    } = await supabaseClient.auth.getUser();
 
-state.currentUser = user || null;
+    state.currentUser = user || null;
 
-if (user?.email) {
-  const matchedMember = state.teamMembers.find(
-    (member) =>
-      (member.email || '').toLowerCase().trim() === user.email.toLowerCase().trim()
-  );
+    if (user?.id) {
+      const matchedMember = state.teamMembers.find(
+        (member) => String(member.auth_user_id || '') === String(user.id)
+      );
 
-  state.currentRole = matchedMember?.role_type || 'member';
-} else {
-  state.currentRole = null;
-}
+      state.currentRole = matchedMember?.role_type || 'member';
+    } else {
+      state.currentRole = null;
+    }
 
   } catch (err) {
     console.error(err);
@@ -2762,10 +2747,10 @@ if (user?.email) {
   }
 
   console.log('Current User:', state.currentUser);
-console.log('Current Role:', state.currentRole);
+  console.log('Current Role:', state.currentRole);
 
   renderAll();
-updateSidebarUserCard();
+  updateSidebarUserCard();
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
