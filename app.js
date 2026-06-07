@@ -771,6 +771,12 @@ function renderProjects() {
               </div>
 
               <div class="min-w-0">
+                ${
+                  p.project_code
+                    ? `<p class="text-[11px] font-medium text-gray-500 mb-0.5">${escapeHtml(p.project_code)}</p>`
+                    : ''
+                }
+
                 <button
                   class="text-sm font-medium text-gray-900 truncate hover:text-indigo-600 text-left"
                   data-action="open-project-details"
