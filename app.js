@@ -972,143 +972,6 @@ function renderTasks() {
   refreshIcons();
 }
 
-function openTaskDetailsModal(id) {
-  const task = state.tasks.find((t) => Number(t.id) === Number(id));
-
-  if (!task) {
-    toast('Task not found', 'error');
-    return;
-  }
-
-  const project = state.projects.find((p) => Number(p.id) === Number(task.project_id));
-  const status = (task.status || 'todo').toLowerCase();
-  const priority = (task.priority || 'medium').toLowerCase();
-
-  const materialsLink = task.materials_link
-    ? `
-      <a href="${escapeHtml(task.materials_link)}" target="_blank" rel="noopener"
-        class="inline-flex items-center gap-2 h-9 px-3 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50 transition">
-        <i data-lucide="paperclip" class="w-4 h-4"></i>
-        Open Materials
-      </a>
-    `
-    : `<span class="text-sm text-gray-400">No materials link</span>`;
-
-  const taskLink = task.task_link
-    ? `
-      <a href="${escapeHtml(task.task_link)}" target="_blank" rel="noopener"
-        class="inline-flex items-center gap-2 h-9 px-3 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50 transition">
-        <i data-lucide="external-link" class="w-4 h-4"></i>
-        Open Task Link
-      </a>
-    `
-    : `<span class="text-sm text-gray-400">No task link</span>`;
-
-  $('#task-details-content').innerHTML = `
-    <div class="space-y-5">
-
-      <div class="pb-4 border-b border-gray-100">
-        <p class="text-xs font-medium text-gray-500 mb-1">Task</p>
-        <h4 class="text-xl font-semibold text-gray-900 leading-snug">
-          ${escapeHtml(task.task_info || 'Untitled task')}
-        </h4>
-      </div>
-
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div class="bg-gray-50 border border-gray-100 rounded-xl p-3">
-          <p class="text-xs text-gray-500 mb-1">Project</p>
-          <p class="text-sm font-medium text-gray-900">
-            ${escapeHtml(project?.project_name || '—')}
-          </p>
-        </div>
-
-        <div class="bg-gray-50 border border-gray-100 rounded-xl p-3">
-          <p class="text-xs text-gray-500 mb-1">Assigned To</p>
-          <p class="text-sm font-medium text-gray-900">
-            ${escapeHtml(task.assigned_to || '—')}
-          </p>
-        </div>
-
-        <div class="bg-gray-50 border border-gray-100 rounded-xl p-3">
-          <p class="text-xs text-gray-500 mb-2">Status</p>
-          <span class="badge badge-${status}">
-            <span class="dot"></span>
-            ${labelize(status)}
-          </span>
-        </div>
-
-        <div class="bg-gray-50 border border-gray-100 rounded-xl p-3">
-          <p class="text-xs text-gray-500 mb-2">Priority</p>
-          <span class="badge priority-${priority}">
-            <span class="dot"></span>
-            ${labelize(priority)}
-          </span>
-        </div>
-
-        <div class="bg-gray-50 border border-gray-100 rounded-xl p-3">
-          <p class="text-xs text-gray-500 mb-1">Start Date</p>
-          <p class="text-sm font-medium text-gray-900">
-            ${fmtDate(task.start_date)}
-          </p>
-        </div>
-
-        <div class="bg-gray-50 border border-gray-100 rounded-xl p-3">
-          <p class="text-xs text-gray-500 mb-1">Deadline</p>
-          <p class="text-sm font-medium text-gray-900 ${deadlineClass(task.deadline)}">
-            ${fmtDate(task.deadline)}
-          </p>
-        </div>
-      </div>
-
-      <div>
-        <div class="flex items-center gap-2 mb-2">
-          <i data-lucide="message-square" class="w-4 h-4 text-amber-500"></i>
-          <p class="text-sm font-semibold text-gray-900">Notes</p>
-        </div>
-
-        <div class="min-h-[96px] max-h-56 overflow-y-auto text-sm text-gray-800 bg-white border border-gray-200 rounded-xl p-4 whitespace-pre-wrap leading-relaxed">
-          ${task.notes ? escapeHtml(task.notes) : '<span class="text-gray-400">No notes</span>'}
-        </div>
-      </div>
-
-      <div class="pt-4 border-t border-gray-100 grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div>
-          <p class="text-xs text-gray-500 mb-2">Materials Link</p>
-          ${materialsLink}
-        </div>
-
-        <div>
-          <p class="text-xs text-gray-500 mb-2">Task Link</p>
-          ${taskLink}
-        </div>
-      </div>
-
-      <div class="pt-4 border-t border-gray-100 flex items-center justify-end gap-2">
-        <button
-          type="button"
-          class="h-9 px-4 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg"
-          data-action="close-modal"
-        >
-          Close
-        </button>
-
-        <button
-          type="button"
-          class="h-9 px-4 inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg shadow-sm"
-          data-action="edit-task"
-          data-id="${task.id}"
-        >
-          <i data-lucide="pencil" class="w-4 h-4"></i>
-          Edit Task
-        </button>
-      </div>
-
-    </div>
-  `;
-
-  refreshIcons();
-  openModal('task-details-modal');
-}
 
 function renderTeam() {
   const tbody = $('#team-table-body');
@@ -1271,6 +1134,42 @@ function getCurrentMember() {
       (member.email || '').toLowerCase().trim() ===
       state.currentUser.email.toLowerCase().trim()
   );
+}
+
+function updateSidebarUserCard() {
+  try {
+    const currentMember = getCurrentMember();
+
+    const displayName =
+      currentMember?.name ||
+      state.currentUser?.email ||
+      'Tgora User';
+
+    const displayEmail =
+      state.currentUser?.email ||
+      currentMember?.email ||
+      'No email';
+
+    const sidebar = document.querySelector('#sidebar');
+
+    if (!sidebar) return;
+
+    const nameEl = Array.from(sidebar.querySelectorAll('p'))
+      .find((el) => el.textContent.trim() === 'Tgora Team');
+
+    const emailEl = Array.from(sidebar.querySelectorAll('p'))
+      .find((el) => el.textContent.trim() === 'hello@tgora.com');
+
+    const avatarEl = Array.from(sidebar.querySelectorAll('div'))
+      .find((el) => el.textContent.trim() === 'TG');
+
+    if (nameEl) nameEl.textContent = displayName;
+    if (emailEl) emailEl.textContent = displayEmail;
+    if (avatarEl) avatarEl.textContent = initials(displayName);
+
+  } catch (err) {
+    console.error('updateSidebarUserCard error:', err);
+  }
 }
 
 function isOwnTask(task) {
@@ -2176,12 +2075,6 @@ if (action === 'delete-project') {
   return;
 }
 
-if (action === 'open-task-details') {
-  const id = Number(trigger.dataset.id);
-  openTaskDetailsModal(id);
-  return;
-}
-
 if (action === 'edit-task') {
   const id = Number(trigger.dataset.id);
   openEditTaskModal(id);
@@ -2354,6 +2247,7 @@ if (user?.email) {
 console.log('Current Role:', state.currentRole);
 
   renderAll();
+updateSidebarUserCard();
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
