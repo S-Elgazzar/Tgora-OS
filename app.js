@@ -16,6 +16,7 @@ const state = {
   teamMembers: [],
   view: localStorage.getItem('tgora_current_view') || 'dashboard',
   currentUser: null,
+  currentMember: null,
   currentRole: null,
   editingMemberId: null,
   editingTaskId: null,
@@ -2732,14 +2733,16 @@ async function init() {
     state.currentUser = user || null;
 
     if (user?.id) {
-      const matchedMember = state.teamMembers.find(
-        (member) => String(member.auth_user_id || '') === String(user.id)
-      );
+  const matchedMember = state.teamMembers.find(
+    (member) => String(member.auth_user_id || '') === String(user.id)
+  );
 
-      state.currentRole = matchedMember?.role_type || 'member';
-    } else {
-      state.currentRole = null;
-    }
+  state.currentMember = matchedMember || null;
+  state.currentRole = matchedMember?.role_type || 'member';
+} else {
+  state.currentMember = null;
+  state.currentRole = null;
+}
 
   } catch (err) {
     console.error(err);
@@ -2747,7 +2750,8 @@ async function init() {
   }
 
   console.log('Current User:', state.currentUser);
-  console.log('Current Role:', state.currentRole);
+console.log('Current Member:', state.currentMember);
+console.log('Current Role:', state.currentRole);
 
   renderAll();
   updateSidebarUserCard();
