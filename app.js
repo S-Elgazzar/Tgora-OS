@@ -1305,13 +1305,7 @@ function canDeleteTeamMember() {
 }
 
 function getCurrentMember() {
-  if (!state.currentUser?.email) return null;
-
-  return state.teamMembers.find(
-    (member) =>
-      (member.email || '').toLowerCase().trim() ===
-      state.currentUser.email.toLowerCase().trim()
-  );
+  return state.currentMember || null;
 }
 
 function updateSidebarUserCard() {
@@ -1631,7 +1625,6 @@ async function handleMemberSubmit(e) {
 
   const form = e.target;
   const submitBtn = form.querySelector('button[type=submit]');
-
   const isEditing = state.editingMemberId !== null;
 
   submitBtn.disabled = true;
@@ -1641,7 +1634,12 @@ async function handleMemberSubmit(e) {
 
   refreshIcons();
 
-  const payload = normalizePayload(new FormData(form));
+  const formData = new FormData(form);
+  const password = formData.get('password');
+
+  formData.delete('password');
+
+  const payload = normalizePayload(formData);
 
   let result = null;
 
@@ -1662,9 +1660,7 @@ async function handleMemberSubmit(e) {
   refreshIcons();
 
   if (result) {
-
     if (isEditing) {
-
       state.teamMembers = state.teamMembers.map((member) =>
         Number(member.id) === Number(state.editingMemberId)
           ? result
@@ -1672,9 +1668,7 @@ async function handleMemberSubmit(e) {
       );
 
       toast('Member updated successfully', 'success');
-
     } else {
-
       state.teamMembers = [...state.teamMembers, result];
 
       toast('Team member added successfully', 'success');
@@ -1757,6 +1751,33 @@ async function handleProjectSubmit(e) {
     renderAll();
     closeModal();
   }
+}
+
+function openCreateMemberModal() {
+  state.editingMemberId = null;
+
+  const form = $('#member-form');
+
+  if (form) {
+    form.reset();
+
+    if (form.password) {
+      form.password.disabled = false;
+      form.password.required = true;
+      form.password.placeholder = 'Enter password';
+      form.password.classList.remove('bg-gray-100', 'text-gray-500', 'cursor-not-allowed');
+    }
+  }
+
+  const title = $('#member-modal-title');
+  if (title) title.textContent = 'New Team Member';
+
+  const submitBtn = form.querySelector('button[type=submit]');
+  if (submitBtn) {
+    submitBtn.innerHTML = `<i data-lucide="check" class="w-4 h-4"></i> Save Member`;
+  }
+
+  openModal('member-modal');
 }
 
 function openEditMemberModal(id) {
@@ -2549,9 +2570,9 @@ document.addEventListener('click', (e) => {
   }
 
   if (action === 'open-member-modal') {
-    openModal('member-modal');
-    return;
-  }
+  openCreateMemberModal();
+  return;
+}
 
   if (action === 'close-modal') {
     closeModal();
