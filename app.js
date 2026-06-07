@@ -902,13 +902,13 @@ function renderTasks() {
           <td class="px-5 py-3.5 max-w-sm overflow-visible">
             <div class="text-sm font-medium text-gray-900 flex items-center gap-1.5 overflow-visible">
               <button
-  type="button"
-  class="truncate text-left hover:text-indigo-600"
-  data-action="open-task-details"
-  data-id="${t.id}"
->
-  ${escapeHtml(t.task_info || 'Untitled task')}
-</button>
+                type="button"
+                class="truncate text-left hover:text-indigo-600"
+                data-action="open-task-details"
+                data-id="${t.id}"
+              >
+                ${escapeHtml(t.task_info || 'Untitled task')}
+              </button>
               ${taskNotesIcon}
             </div>
 
@@ -918,7 +918,20 @@ function renderTasks() {
           <td class="px-5 py-3.5 text-sm text-gray-700">
             ${
               project
-                ? `<span class="inline-flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>${escapeHtml(project.project_name)}</span>`
+                ? `
+                  <button
+                    type="button"
+                    class="inline-flex items-center gap-1.5 text-left hover:text-indigo-600 transition"
+                    data-action="open-project-details"
+                    data-id="${project.id}"
+                    title="Open project details"
+                  >
+                    <span class="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
+                    <span class="truncate">
+                      ${escapeHtml(project.project_name)}
+                    </span>
+                  </button>
+                `
                 : '<span class="text-gray-400">—</span>'
             }
           </td>
