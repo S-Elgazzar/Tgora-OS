@@ -877,6 +877,12 @@ function renderTasks() {
       const priority = (t.priority || 'medium').toLowerCase();
       const project = state.projects.find((p) => p.id === t.project_id);
 
+      const assignedMember = state.teamMembers.find(
+        (m) =>
+          (m.name || '').toLowerCase().trim() ===
+          (t.assigned_to || '').toLowerCase().trim()
+      );
+
       const taskNotesIcon = t.notes
         ? `
           <span class="relative inline-flex items-center group shrink-0">
@@ -937,13 +943,35 @@ function renderTasks() {
           </td>
 
           <td class="px-5 py-3.5">
-            <div class="flex items-center gap-2">
-              <div class="client-avatar ${avatarColor(t.assigned_to)}" style="width:1.75rem;height:1.75rem;">
-                ${initials(t.assigned_to)}
-              </div>
+            ${
+              assignedMember
+                ? `
+                  <button
+                    type="button"
+                    class="flex items-center gap-2 group"
+                    data-action="open-member-details"
+                    data-id="${assignedMember.id}"
+                    title="Open member details"
+                  >
+                    <div class="client-avatar ${avatarColor(t.assigned_to)}" style="width:1.75rem;height:1.75rem;">
+                      ${initials(t.assigned_to)}
+                    </div>
 
-              <span class="text-sm text-gray-700">${escapeHtml(t.assigned_to || '—')}</span>
-            </div>
+                    <span class="text-sm text-gray-700 group-hover:text-indigo-600 transition">
+                      ${escapeHtml(t.assigned_to || '—')}
+                    </span>
+                  </button>
+                `
+                : `
+                  <div class="flex items-center gap-2">
+                    <div class="client-avatar ${avatarColor(t.assigned_to)}" style="width:1.75rem;height:1.75rem;">
+                      ${initials(t.assigned_to)}
+                    </div>
+
+                    <span class="text-sm text-gray-700">${escapeHtml(t.assigned_to || '—')}</span>
+                  </div>
+                `
+            }
           </td>
 
           <td class="px-5 py-3.5">
@@ -1799,8 +1827,17 @@ function openEditTaskModal(id) {
 
   form.status.disabled = false;
   form.notes.disabled = false;
-  form.materials_link.disabled = false;
+
+  form.materials_link.disabled = isLimited;
   form.task_link.disabled = false;
+
+  if (isLimited) {
+    form.materials_link.classList.add('bg-gray-100', 'text-gray-500', 'cursor-not-allowed');
+    form.materials_link.title = 'Members can view this link but cannot edit it';
+  } else {
+    form.materials_link.classList.remove('bg-gray-100', 'text-gray-500', 'cursor-not-allowed');
+    form.materials_link.title = '';
+  }
 
   const title = $('#task-modal-title');
   if (title) {
@@ -2021,6 +2058,12 @@ function renderProjectDetails() {
                 const taskStatus = (t.status || 'todo').toLowerCase();
                 const taskPriority = (t.priority || 'medium').toLowerCase();
 
+                const assignedMember = state.teamMembers.find(
+                  (m) =>
+                    (m.name || '').toLowerCase().trim() ===
+                    (t.assigned_to || '').toLowerCase().trim()
+                );
+
                 const materialsLink = t.materials_link
                   ? `<a href="${escapeHtml(t.materials_link)}" target="_blank" rel="noopener" class="icon-btn" title="Open materials"><i data-lucide="paperclip" class="w-4 h-4"></i></a>`
                   : '';
@@ -2047,15 +2090,37 @@ function renderProjectDetails() {
                     </td>
 
                     <td class="px-5 py-3.5">
-                      <div class="flex items-center gap-2">
-                        <div class="client-avatar ${avatarColor(t.assigned_to)}" style="width:1.75rem;height:1.75rem;">
-                          ${initials(t.assigned_to)}
-                        </div>
+                      ${
+                        assignedMember
+                          ? `
+                            <button
+                              type="button"
+                              class="flex items-center gap-2 group"
+                              data-action="open-member-details"
+                              data-id="${assignedMember.id}"
+                              title="Open member details"
+                            >
+                              <div class="client-avatar ${avatarColor(t.assigned_to)}" style="width:1.75rem;height:1.75rem;">
+                                ${initials(t.assigned_to)}
+                              </div>
 
-                        <span class="text-sm text-gray-700">
-                          ${escapeHtml(t.assigned_to || '—')}
-                        </span>
-                      </div>
+                              <span class="text-sm text-gray-700 group-hover:text-indigo-600 transition">
+                                ${escapeHtml(t.assigned_to || '—')}
+                              </span>
+                            </button>
+                          `
+                          : `
+                            <div class="flex items-center gap-2">
+                              <div class="client-avatar ${avatarColor(t.assigned_to)}" style="width:1.75rem;height:1.75rem;">
+                                ${initials(t.assigned_to)}
+                              </div>
+
+                              <span class="text-sm text-gray-700">
+                                ${escapeHtml(t.assigned_to || '—')}
+                              </span>
+                            </div>
+                          `
+                      }
                     </td>
 
                     <td class="px-5 py-3.5">
@@ -2117,11 +2182,13 @@ function openMemberDetails(memberId) {
   const member = state.teamMembers.find(
     (m) => Number(m.id) === Number(memberId)
   );
-  
+
   if (!member) return;
 
   const memberTasks = state.tasks.filter(
-    (t) => t.assigned_to === member.name
+    (t) =>
+      (t.assigned_to || '').toLowerCase().trim() ===
+      (member.name || '').toLowerCase().trim()
   );
 
   const completedTasks = memberTasks.filter(
@@ -2167,11 +2234,8 @@ function openMemberDetails(memberId) {
     performanceLabel = 'Average';
   }
 
-  $('#member-details-name').textContent =
-    member.name || 'Unknown Member';
-
-  $('#member-details-role').textContent =
-  member.job_title || 'No Job Title';
+  $('#member-details-name').textContent = member.name || 'Unknown Member';
+  $('#member-details-role').textContent = member.job_title || 'No Job Title';
 
   $('#member-details-status').innerHTML = `
     <span class="dot"></span>
@@ -2190,69 +2254,194 @@ function openMemberDetails(memberId) {
     performanceScoreEl.textContent = `${performanceScore}%`;
   }
 
-if (performanceLabelEl) {
+  if (performanceLabelEl) {
+    let emoji = '🔴';
 
-  let emoji = '🔴';
+    if (performanceScore >= 90) {
+      emoji = '🟢';
+    } else if (performanceScore >= 75) {
+      emoji = '🟢';
+    } else if (performanceScore >= 60) {
+      emoji = '🟡';
+    } else if (performanceScore >= 40) {
+      emoji = '🟠';
+    }
 
-  if (performanceScore >= 90) {
-    emoji = '🟢';
-  } else if (performanceScore >= 75) {
-    emoji = '🟢';
-  } else if (performanceScore >= 60) {
-    emoji = '🟡';
-  } else if (performanceScore >= 40) {
-    emoji = '🟠';
+    performanceLabelEl.textContent = `${emoji} ${performanceLabel}`;
   }
-
-  performanceLabelEl.textContent =
-    `${emoji} ${performanceLabel}`;
-}
 
   const tbody = $('#member-tasks-table-body');
 
-  tbody.innerHTML = memberTasks
-    .map((task) => {
-      const project = state.projects.find(
-        (p) => p.id === task.project_id
-      );
+  function renderMemberTasksTable(tasks) {
+    if (!tbody) return;
 
-      return `
+    if (tasks.length === 0) {
+      tbody.innerHTML = `
         <tr>
-          <td class="px-5 py-3">
-            ${escapeHtml(task.task_info || '')}
-          </td>
-
-<td class="px-5 py-3">
-  ${
-    project
-      ? `
-        <button
-          class="text-brand-600 hover:text-brand-700 hover:underline font-medium"
-          data-action="open-project-details"
-          data-id="${project.id}"
-        >
-          ${escapeHtml(project.project_name)}
-        </button>
-      `
-      : '—'
-  }
-</td>
-
-          <td class="px-5 py-3">
-            ${labelize(task.status || '—')}
-          </td>
-
-          <td class="px-5 py-3">
-            ${labelize(task.priority || '—')}
-          </td>
-
-          <td class="px-5 py-3">
-            ${fmtDate(task.deadline)}
+          <td colspan="6" class="px-5 py-10 text-center text-sm text-gray-400">
+            No tasks found for this filter.
           </td>
         </tr>
       `;
-    })
-    .join('');
+      return;
+    }
+
+    tbody.innerHTML = tasks
+      .map((task) => {
+        const project = state.projects.find(
+          (p) => Number(p.id) === Number(task.project_id)
+        );
+
+        const taskStatus = (task.status || 'todo').toLowerCase();
+        const taskPriority = (task.priority || 'medium').toLowerCase();
+
+        const materialsLink = task.materials_link
+          ? `<a href="${escapeHtml(task.materials_link)}" target="_blank" rel="noopener" class="icon-btn" title="Open materials"><i data-lucide="paperclip" class="w-4 h-4"></i></a>`
+          : '';
+
+        const taskLink = task.task_link
+          ? `<a href="${escapeHtml(task.task_link)}" target="_blank" rel="noopener" class="icon-btn" title="Open task link"><i data-lucide="external-link" class="w-4 h-4"></i></a>`
+          : '';
+
+        return `
+          <tr class="hover:bg-gray-50 transition">
+            <td class="px-5 py-3.5 max-w-sm">
+              <button
+                type="button"
+                class="text-sm font-medium text-gray-900 truncate hover:text-indigo-600 text-left"
+                data-action="open-task-details"
+                data-id="${task.id}"
+              >
+                ${escapeHtml(task.task_info || 'Untitled Task')}
+              </button>
+
+              <p class="text-[11px] text-gray-500">
+                Start ${fmtDate(task.start_date)}
+              </p>
+            </td>
+
+            <td class="px-5 py-3.5">
+              ${
+                project
+                  ? `
+                    <button
+                      type="button"
+                      class="text-brand-600 hover:text-brand-700 hover:underline font-medium text-left"
+                      data-action="open-project-details"
+                      data-id="${project.id}"
+                    >
+                      ${escapeHtml(project.project_name)}
+                    </button>
+                  `
+                  : '—'
+              }
+            </td>
+
+            <td class="px-5 py-3.5">
+              <span class="badge badge-${taskStatus}">
+                <span class="dot"></span>
+                ${labelize(taskStatus)}
+              </span>
+            </td>
+
+            <td class="px-5 py-3.5">
+              <span class="badge priority-${taskPriority}">
+                <span class="dot"></span>
+                ${labelize(taskPriority)}
+              </span>
+            </td>
+
+            <td class="px-5 py-3.5 text-sm text-gray-700 ${deadlineClass(task.deadline)}">
+              ${fmtDate(task.deadline)}
+            </td>
+
+            <td class="px-5 py-3.5 text-right">
+              <div class="inline-flex items-center gap-1">
+                ${materialsLink}
+                ${taskLink}
+
+                <button class="icon-btn" data-action="edit-task" data-id="${task.id}" title="Edit task">
+                  <i data-lucide="pencil" class="w-4 h-4"></i>
+                </button>
+
+                ${
+                  isAdmin() || isManager()
+                    ? `
+                      <button class="icon-btn danger" data-action="delete-task" data-id="${task.id}" title="Delete task">
+                        <i data-lucide="trash-2" class="w-4 h-4"></i>
+                      </button>
+                    `
+                    : ''
+                }
+              </div>
+            </td>
+          </tr>
+        `;
+      })
+      .join('');
+
+    refreshIcons();
+  }
+
+
+  function activateCard(cardEl) {
+    const cards = [
+      $('#member-total-tasks'),
+      $('#member-completed-tasks'),
+      $('#member-progress-tasks'),
+      $('#member-overdue-tasks')
+    ]
+      .map((el) => el?.closest('.stat-card'))
+      .filter(Boolean);
+
+    cards.forEach((card) => {
+      card.classList.remove('ring-2', 'ring-brand-500', 'border-brand-500');
+    });
+
+    if (cardEl) {
+      cardEl.classList.add('ring-2', 'ring-brand-500', 'border-brand-500');
+    }
+  }
+
+  const totalCard = $('#member-total-tasks')?.closest('.stat-card');
+  const completedCard = $('#member-completed-tasks')?.closest('.stat-card');
+  const progressCard = $('#member-progress-tasks')?.closest('.stat-card');
+  const overdueCard = $('#member-overdue-tasks')?.closest('.stat-card');
+
+  if (totalCard) {
+    totalCard.classList.add('cursor-pointer');
+    totalCard.onclick = () => {
+      activateCard(totalCard);
+      renderMemberTasksTable(memberTasks);
+    };
+  }
+
+  if (completedCard) {
+    completedCard.classList.add('cursor-pointer');
+    completedCard.onclick = () => {
+      activateCard(completedCard);
+      renderMemberTasksTable(completedTasks);
+    };
+  }
+
+  if (progressCard) {
+    progressCard.classList.add('cursor-pointer');
+    progressCard.onclick = () => {
+      activateCard(progressCard);
+      renderMemberTasksTable(progressTasks);
+    };
+  }
+
+  if (overdueCard) {
+    overdueCard.classList.add('cursor-pointer');
+    overdueCard.onclick = () => {
+      activateCard(overdueCard);
+      renderMemberTasksTable(overdueTasks);
+    };
+  }
+
+  renderMemberTasksTable(memberTasks);
+  activateCard(totalCard);
 
   setView('team-member');
 }
