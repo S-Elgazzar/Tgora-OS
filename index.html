@@ -142,7 +142,7 @@
       <!-- Nav -->
       <nav class="flex-1 px-3 py-5 space-y-1 overflow-y-auto">
         <p class="px-3 mb-2 text-[10px] uppercase tracking-wider text-zinc-500 font-medium">Workspace</p>
-        <a href="#" data-view="dashboard" class="nav-item active">
+        <a href="#" data-view="dashboard" class="nav-item">
           <i data-lucide="layout-dashboard" class="w-4 h-4"></i>
           <span>Dashboard</span>
         </a>
@@ -247,7 +247,7 @@
 <div class="flex-1 px-4 sm:px-6 lg:px-8 py-6 lg:py-8">
 
   <!-- ============ DASHBOARD VIEW ============ -->
-  <section id="view-dashboard" class="view">
+  <section id="view-dashboard" class="view hidden">
     <div class="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-7">
       <div>
         <p class="text-xs font-medium text-brand-600 uppercase tracking-wider mb-1">Overview</p>
@@ -538,17 +538,17 @@
             <div class="flex items-center gap-2">
               <div class="hidden sm:flex items-center bg-white border border-gray-200 rounded-xl p-1">
 
-  <button data-projects-filter="all" class="filter-pill">
-    All
-  </button>
+  <button data-projects-filter="all" class="filter-pill active">
+  All
+</button>
 
   <button data-projects-filter="planning" class="filter-pill">
     Planning
   </button>
 
-  <button data-projects-filter="active" class="filter-pill active">
-    Active
-  </button>
+  <button data-projects-filter="active" class="filter-pill">
+  Active
+</button>
 
   <button data-projects-filter="on_hold" class="filter-pill">
     On Hold

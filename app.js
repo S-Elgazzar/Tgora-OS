@@ -14,7 +14,7 @@ const state = {
   projects: [],
   tasks: [],
   teamMembers: [],
-  view: 'dashboard',
+  view: localStorage.getItem('tgora_current_view') || 'dashboard',
   currentUser: null,
   currentRole: null,
   editingMemberId: null,
@@ -1097,7 +1097,13 @@ function renderAll() {
   renderRecentTasks();
   renderProjects();
   renderTasks();
+  const savedView = localStorage.getItem('tgora_current_view');
+
+if (savedView && $(`#view-${savedView}`)) {
+  setView(savedView);
+} else {
   setView(state.view || 'dashboard');
+}
   syncTaskProjectSelect();
 }
 
@@ -1208,6 +1214,8 @@ function canLimitedEditTask(task) {
 // ---------- View Switching ----------
 function setView(view) {
   state.view = view;
+  localStorage.setItem('tgora_current_view', view);
+
   $$('.view').forEach((el) => el.classList.add('hidden'));
   const target = $(`#view-${view}`);
   if (target) target.classList.remove('hidden');
@@ -2065,19 +2073,47 @@ if (performanceLabelEl) {
 function wireEvents() {
   // Nav
   $$('.nav-item[data-view]').forEach((a) => {
-    a.addEventListener('click', (e) => {
-      e.preventDefault();
-      setView(a.dataset.view);
-    });
+  a.addEventListener('click', (e) => {
+    e.preventDefault();
+
+    const view = a.dataset.view;
+
+    window.history.pushState(
+      { view },
+      '',
+      `#${view}`
+    );
+
+    setView(view);
   });
+});
+
+window.addEventListener('popstate', () => {
+  const viewFromHash = window.location.hash.replace('#', '');
+
+  if (viewFromHash && $(`#view-${viewFromHash}`)) {
+    setView(viewFromHash);
+  } else {
+    setView('dashboard');
+  }
+});
 
   // Dashboard "View all" links
   $$('[data-action="goto-view"]').forEach((b) => {
-    b.addEventListener('click', (e) => {
-      e.preventDefault();
-      setView(b.dataset.view);
-    });
+  b.addEventListener('click', (e) => {
+    e.preventDefault();
+
+    const view = b.dataset.view;
+
+    window.history.pushState(
+      { view },
+      '',
+      `#${view}`
+    );
+
+    setView(view);
   });
+});
 
   // Sidebar mobile
   $('#sidebar-toggle').addEventListener('click', openSidebar);
