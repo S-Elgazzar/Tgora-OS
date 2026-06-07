@@ -1104,12 +1104,22 @@ function renderAll() {
 function syncTaskProjectSelect() {
   const select = $('#task-project-select');
   const current = select.value;
+
   select.innerHTML =
     '<option value="">— No project —</option>' +
     state.projects
-      .map((p) => `<option value="${p.id}">${escapeHtml(p.project_name)}</option>`)
+      .map((p) => {
+        const label = p.project_code
+          ? `${p.project_code} - ${p.project_name}`
+          : p.project_name;
+
+        return `<option value="${p.id}">${escapeHtml(label)}</option>`;
+      })
       .join('');
-  if (current) select.value = current;
+
+  if (current) {
+    select.value = current;
+  }
 }
 
 function isAdmin() {
@@ -1371,6 +1381,41 @@ function normalizePayload(formData) {
   return payload;
 }
 
+function openCreateProjectModal() {
+  state.editingProjectId = null;
+
+  const form = $('#project-form');
+
+  if (form) {
+    form.reset();
+  }
+
+  const codeField = $('#project-code-field');
+
+  if (codeField) {
+    codeField.classList.add('hidden');
+  }
+
+  if (form?.project_code) {
+    form.project_code.value = '';
+  }
+
+  const title = $('#project-modal-title');
+
+  if (title) {
+    title.textContent = 'New Project';
+  }
+
+  const submitBtn = form?.querySelector('button[type=submit]');
+
+  if (submitBtn) {
+    submitBtn.innerHTML = `<i data-lucide="check" class="w-4 h-4"></i> Create project`;
+  }
+
+  refreshIcons();
+  openModal('project-modal');
+}
+
 function openEditProjectModal(id) {
   const project = state.projects.find((p) => p.id === id);
 
@@ -1391,8 +1436,22 @@ function openEditProjectModal(id) {
   form.start_date.value = project.start_date || '';
   form.deadline.value = project.deadline || '';
 
+  // Project Code
+  const codeField = $('#project-code-field');
+
+  if (codeField) {
+    codeField.classList.remove('hidden');
+  }
+
+  if (form.project_code) {
+    form.project_code.value = project.project_code || '';
+  }
+
   const title = $('#project-modal-title');
-  if (title) title.textContent = 'Edit Project';
+
+  if (title) {
+    title.textContent = 'Edit Project';
+  }
 
   const submitBtn = form.querySelector('button[type=submit]');
 
@@ -1521,8 +1580,8 @@ async function handleProjectSubmit(e) {
   if (result) {
     if (isEditing) {
       state.projects = state.projects.map((project) =>
-        project.id === state.editingProjectId ? result : project
-      );
+  Number(project.id) === Number(state.editingProjectId) ? result : project
+);
       toast('Project updated successfully', 'success');
     } else {
       state.projects = [result, ...state.projects];
@@ -2026,9 +2085,12 @@ function wireEvents() {
 
   // Topbar new -> open project modal by default
   $('#topbar-new')?.addEventListener('click', () => {
-    if (state.view === 'tasks') openModal('task-modal');
-    else openModal('project-modal');
-  });
+  if (state.view === 'tasks') {
+    openModal('task-modal');
+  } else {
+    openCreateProjectModal();
+  }
+});
 
   // Open / close modals via delegated events
 document.addEventListener('click', (e) => {
@@ -2064,9 +2126,9 @@ document.addEventListener('click', (e) => {
   }
 
   if (action === 'open-project-modal') {
-    openModal('project-modal');
-    return;
-  }
+  openCreateProjectModal();
+  return;
+}
 
   if (action === 'open-task-modal') {
     openModal('task-modal');

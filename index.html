@@ -1007,7 +1007,7 @@
     <div class="modal-panel">
       <div class="px-6 py-5 border-b border-gray-100 flex items-center justify-between">
         <div>
-          <h3 class="text-lg font-semibold text-gray-900">New Project</h3>
+          <h3 id="project-modal-title" class="text-lg font-semibold text-gray-900">New Project</h3>
           <p class="text-xs text-gray-500 mt-0.5">Create a new client engagement.</p>
         </div>
         <button data-action="close-modal" class="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center">
@@ -1016,6 +1016,16 @@
       </div>
 
       <form id="project-form" class="px-6 py-5 space-y-4">
+        <div id="project-code-field" class="hidden">
+  <label class="form-label">Project Code</label>
+  <input
+    name="project_code"
+    type="text"
+    class="form-input bg-gray-50 text-gray-500 cursor-not-allowed"
+    readonly
+  />
+</div>
+
         <div>
           <label class="form-label">Project name <span class="text-rose-500">*</span></label>
           <input name="project_name" required type="text" class="form-input" placeholder="e.g. Acme Q3 Campaign" />
