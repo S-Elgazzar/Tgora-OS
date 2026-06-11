@@ -2833,7 +2833,8 @@ function subscribeToRealtimeChanges() {
         schema: 'public',
         table: 'tasks',
       },
-      async () => {
+      async (payload) => {
+        console.log('Realtime tasks change:', payload);
         await refreshDataAndRender();
       }
     )
@@ -2844,7 +2845,8 @@ function subscribeToRealtimeChanges() {
         schema: 'public',
         table: 'projects',
       },
-      async () => {
+      async (payload) => {
+        console.log('Realtime projects change:', payload);
         await refreshDataAndRender();
       }
     )
@@ -2855,11 +2857,14 @@ function subscribeToRealtimeChanges() {
         schema: 'public',
         table: 'team_members',
       },
-      async () => {
+      async (payload) => {
+        console.log('Realtime team_members change:', payload);
         await refreshDataAndRender();
       }
     )
-    .subscribe();
+    .subscribe((status) => {
+      console.log('Realtime subscription status:', status);
+    });
 }
 
 async function init() {
