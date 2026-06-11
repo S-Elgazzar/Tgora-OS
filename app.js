@@ -2919,8 +2919,9 @@ function subscribeToRealtimeChanges() {
 
 async function init() {
   $('#year').textContent = new Date().getFullYear();
-  refreshIcons();
-  wireEvents();
+
+refreshIcons();
+wireEvents();
 
   // Show skeleton placeholders for stat numbers initially
   ['stat-total-projects', 'stat-completed-tasks', 'stat-in-progress', 'stat-overdue'].forEach((id) => {
