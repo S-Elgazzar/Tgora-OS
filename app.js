@@ -1248,8 +1248,7 @@ function renderTeam() {
 }
 
 async function refreshDataAndRender() {
-  console.log('refreshDataAndRender started');
-
+  
   const [projects, tasks, teamMembers] = await Promise.all([
     fetchProjects(),
     fetchTasks(),
@@ -1262,8 +1261,7 @@ async function refreshDataAndRender() {
 
   renderAll();
   updateSidebarUserCard();
-
-  console.log('refreshDataAndRender completed');
+  
 }
 
 function renderAll() {
@@ -2589,6 +2587,19 @@ window.addEventListener('popstate', () => {
   // Topbar new -> open project modal by default
   $('#topbar-new')?.addEventListener('click', () => {
   if (state.view === 'tasks') {
+    state.editingTaskId = null;
+
+    const form = $('#task-form');
+
+    if (form) {
+      form.reset();
+
+      Array.from(form.elements).forEach((field) => {
+        field.disabled = false;
+      });
+    }
+
+    syncTaskProjectSelect();
     openModal('task-modal');
   } else {
     openCreateProjectModal();
@@ -2653,9 +2664,22 @@ document.addEventListener('click', (e) => {
 }
 
   if (action === 'open-task-modal') {
-    openModal('task-modal');
-    return;
+  state.editingTaskId = null;
+
+  const form = $('#task-form');
+
+  if (form) {
+    form.reset();
+
+    Array.from(form.elements).forEach((field) => {
+      field.disabled = false;
+    });
   }
+
+  syncTaskProjectSelect();
+  openModal('task-modal');
+  return;
+}
 
   if (action === 'open-member-modal') {
   openCreateMemberModal();
@@ -2828,8 +2852,7 @@ async function handleLogout() {
 }
 
 function subscribeToRealtimeChanges() {
-  console.log('Starting realtime subscription...');
-
+  
   const channel = supabaseClient.channel(
     'tgora-os-realtime',
     {
@@ -2851,8 +2874,7 @@ function subscribeToRealtimeChanges() {
       },
       async (payload) => {
         console.log('Realtime tasks change:', payload);
-        console.log('Refreshing data after tasks change...');
-
+        
         await refreshDataAndRender();
 
         console.log('Tasks realtime refresh completed');
