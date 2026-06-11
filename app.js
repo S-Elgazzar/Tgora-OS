@@ -1777,8 +1777,8 @@ async function handleProjectSubmit(e) {
   const payload = normalizePayload(new FormData(form));
 
   if (!isEditing) {
-  payload.project_code = generateProjectCode();
-}
+    payload.project_code = generateProjectCode();
+  }
 
   let result = null;
 
@@ -1793,20 +1793,19 @@ async function handleProjectSubmit(e) {
   refreshIcons();
 
   if (result) {
-    if (isEditing) {
-      state.projects = state.projects.map((project) =>
-  Number(project.id) === Number(state.editingProjectId) ? result : project
-);
-      toast('Project updated successfully', 'success');
-    } else {
-      state.projects = [result, ...state.projects];
-      toast('Project created successfully', 'success');
-    }
+    toast(
+      isEditing
+        ? 'Project updated successfully'
+        : 'Project created successfully',
+      'success'
+    );
 
     state.editingProjectId = null;
     form.reset();
-    renderAll();
     closeModal();
+
+    await refreshDataAndRender();
+    setView('projects');
   }
 }
 
@@ -1954,6 +1953,8 @@ async function handleTaskSubmit(e) {
     if (!existingTask) {
       toast('Task not found', 'error');
       submitBtn.disabled = false;
+      submitBtn.innerHTML = `<i data-lucide="check" class="w-4 h-4"></i> Create task`;
+      refreshIcons();
       return;
     }
 
@@ -1982,15 +1983,12 @@ async function handleTaskSubmit(e) {
   refreshIcons();
 
   if (result) {
-    if (isEditing) {
-      state.tasks = state.tasks.map((task) =>
-        Number(task.id) === Number(state.editingTaskId) ? result : task
-      );
-      toast('Task updated successfully', 'success');
-    } else {
-      state.tasks = [result, ...state.tasks];
-      toast('Task created successfully', 'success');
-    }
+    toast(
+      isEditing
+        ? 'Task updated successfully'
+        : 'Task created successfully',
+      'success'
+    );
 
     state.editingTaskId = null;
     form.reset();
@@ -1999,8 +1997,10 @@ async function handleTaskSubmit(e) {
       field.disabled = false;
     });
 
-    renderAll();
     closeModal();
+
+    await refreshDataAndRender();
+    setView('tasks');
   }
 }
 
@@ -2020,29 +2020,14 @@ async function confirmDelete() {
 
   if (type === 'project') {
     ok = await deleteProject(id);
-
-    if (ok) {
-      state.projects = state.projects.filter((p) => Number(p.id) !== Number(id));
-      state.tasks = state.tasks.filter((t) => Number(t.project_id) !== Number(id));
-    }
   }
 
   if (type === 'task') {
     ok = await deleteTask(id);
-
-    if (ok) {
-      state.tasks = state.tasks.filter((t) => Number(t.id) !== Number(id));
-    }
   }
 
   if (type === 'member') {
     ok = await deleteTeamMember(id);
-
-    if (ok) {
-      state.teamMembers = state.teamMembers.filter(
-        (member) => Number(member.id) !== Number(id)
-      );
-    }
   }
 
   btn.disabled = false;
@@ -2054,14 +2039,16 @@ async function confirmDelete() {
   if (ok) {
     toast(`${labelize(type)} deleted`, 'success');
 
+    await refreshDataAndRender();
+
     if (currentView === 'projects') {
-      renderProjects();
+      setView('projects');
     } else if (currentView === 'tasks') {
-      renderTasks();
+      setView('tasks');
     } else if (currentView === 'team') {
       setView('team');
     } else {
-      renderAll();
+      setView(currentView || 'dashboard');
     }
   }
 }
