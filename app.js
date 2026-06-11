@@ -2780,6 +2780,8 @@ $$('[data-tasks-filter]').forEach((btn) => {
 // ---------- Init ----------
 async function handleLogin(e) {
   e.preventDefault();
+  
+  console.log('LOGIN BUTTON CLICKED');
 
   const email = $('#login-email').value;
   const password = $('#login-password').value;
@@ -2788,25 +2790,76 @@ async function handleLogin(e) {
   errorEl.classList.add('hidden');
   errorEl.textContent = '';
 
-  const { data, error } = await supabaseClient.auth.signInWithPassword({
-    email,
-    password,
-  });
+  try {
+    const { data, error } = await supabaseClient.auth.signInWithPassword({
+      email,
+      password,
+    });
 
-  if (error) {
-    errorEl.textContent = error.message || 'Login failed';
+    if (error) {
+      errorEl.textContent = error.message || 'Login failed';
+      errorEl.classList.remove('hidden');
+      return;
+    }
+
+    console.log('Login success:', data);
+
+    $('#auth-screen').classList.add('hidden');
+
+    await init();
+
+  } catch (err) {
+    console.error('Login/init error:', err);
+
+    errorEl.textContent = err.message || 'Something went wrong after login';
     errorEl.classList.remove('hidden');
-    return;
+
+    $('#auth-screen').classList.remove('hidden');
   }
-
-  $('#auth-screen').classList.add('hidden');
-
-  await init();
 }
 
 async function handleLogout() {
   await supabaseClient.auth.signOut();
   window.location.reload();
+}
+
+function subscribeToRealtimeChanges() {
+  supabaseClient
+    .channel('tgora-os-realtime')
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'tasks',
+      },
+      async () => {
+        await refreshDataAndRender();
+      }
+    )
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'projects',
+      },
+      async () => {
+        await refreshDataAndRender();
+      }
+    )
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'team_members',
+      },
+      async () => {
+        await refreshDataAndRender();
+      }
+    )
+    .subscribe();
 }
 
 async function init() {
@@ -2838,16 +2891,16 @@ async function init() {
     state.currentUser = user || null;
 
     if (user?.id) {
-  const matchedMember = state.teamMembers.find(
-    (member) => String(member.auth_user_id || '') === String(user.id)
-  );
+      const matchedMember = state.teamMembers.find(
+        (member) => String(member.auth_user_id || '') === String(user.id)
+      );
 
-  state.currentMember = matchedMember || null;
-  state.currentRole = matchedMember?.role_type || 'member';
-} else {
-  state.currentMember = null;
-  state.currentRole = null;
-}
+      state.currentMember = matchedMember || null;
+      state.currentRole = matchedMember?.role_type || 'member';
+    } else {
+      state.currentMember = null;
+      state.currentRole = null;
+    }
 
   } catch (err) {
     console.error(err);
@@ -2855,15 +2908,23 @@ async function init() {
   }
 
   console.log('Current User:', state.currentUser);
-console.log('Current Member:', state.currentMember);
-console.log('Current Role:', state.currentRole);
+  console.log('Current Member:', state.currentMember);
+  console.log('Current Role:', state.currentRole);
 
   renderAll();
   updateSidebarUserCard();
+  subscribeToRealtimeChanges();
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-  $('#login-form')?.addEventListener('submit', handleLogin);
+  const loginForm = $('#login-form');
+
+  if (loginForm) {
+    loginForm.addEventListener('submit', handleLogin);
+    console.log('Login form listener attached');
+  } else {
+    console.error('Login form not found');
+  }
 
   const {
     data: { session },
