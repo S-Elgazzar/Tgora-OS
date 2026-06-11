@@ -19,6 +19,7 @@ const state = {
   currentMember: null,
   currentRole: null,
   selectedMemberId: Number(localStorage.getItem('tgora_selected_member_id')) || null,
+  selectedProjectId: Number(localStorage.getItem('tgora_selected_project_id')) || null,
   editingMemberId: null,
   editingTaskId: null,
   editingProjectId: null,
@@ -1269,19 +1270,26 @@ function renderAll() {
   renderRecentTasks();
   renderProjects();
   renderTasks();
+
   const savedView = localStorage.getItem('tgora_current_view');
 
-if (
-  savedView === 'team-member' &&
-  state.selectedMemberId
-) {
-  openMemberDetails(state.selectedMemberId);
-} else if (savedView && $(`#view-${savedView}`)) {
-  setView(savedView);
-} else {
-  setView(state.view || 'dashboard');
-}
-  syncTaskProjectSelect();
+  if (
+    savedView === 'team-member' &&
+    state.selectedMemberId
+  ) {
+    openMemberDetails(state.selectedMemberId);
+  } else if (
+    savedView === 'project-details' &&
+    state.selectedProjectId
+  ) {
+    state.selectedProjectId = Number(state.selectedProjectId);
+    setView('project-details');
+    renderProjectDetails();
+  } else if (savedView && $(`#view-${savedView}`)) {
+    setView(savedView);
+  } else {
+    setView(state.view || 'dashboard');
+  }
 }
 
 function syncTaskProjectSelect() {
@@ -2595,6 +2603,11 @@ document.addEventListener('click', (e) => {
   const id = Number(trigger.dataset.id);
 
   state.selectedProjectId = id;
+
+  localStorage.setItem(
+    'tgora_selected_project_id',
+    id
+  );
 
   window.history.pushState(
     { view: 'project-details', projectId: id },
