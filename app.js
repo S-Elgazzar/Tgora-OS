@@ -1245,6 +1245,21 @@ function renderTeam() {
   refreshIcons();
 }
 
+async function refreshDataAndRender() {
+  const [projects, tasks, teamMembers] = await Promise.all([
+    fetchProjects(),
+    fetchTasks(),
+    fetchTeamMembers()
+  ]);
+
+  state.projects = projects;
+  state.tasks = tasks;
+  state.teamMembers = teamMembers;
+
+  renderAll();
+  updateSidebarUserCard();
+}
+
 function renderAll() {
   populateTeamMembers();
   renderStats();
@@ -1721,8 +1736,8 @@ async function handleMemberSubmit(e) {
     form.reset();
     closeModal();
 
-    setView('team');
-    renderAll();
+    await refreshDataAndRender();
+setView('team');
   }
 }
 
