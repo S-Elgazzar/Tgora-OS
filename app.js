@@ -2607,6 +2607,12 @@ document.addEventListener('click', (e) => {
     return;
   }
 
+  window.history.pushState(
+    { view: 'team-member', memberId },
+    '',
+    `#team-member-${memberId}`
+  );
+
   openMemberDetails(memberId);
   return;
 }
