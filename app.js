@@ -1248,6 +1248,8 @@ function renderTeam() {
 }
 
 async function refreshDataAndRender() {
+  console.log('refreshDataAndRender started');
+
   const [projects, tasks, teamMembers] = await Promise.all([
     fetchProjects(),
     fetchTasks(),
@@ -1260,6 +1262,8 @@ async function refreshDataAndRender() {
 
   renderAll();
   updateSidebarUserCard();
+
+  console.log('refreshDataAndRender completed');
 }
 
 function renderAll() {
@@ -2847,7 +2851,11 @@ function subscribeToRealtimeChanges() {
       },
       async (payload) => {
         console.log('Realtime tasks change:', payload);
+        console.log('Refreshing data after tasks change...');
+
         await refreshDataAndRender();
+
+        console.log('Tasks realtime refresh completed');
       }
     )
     .on(
@@ -2859,7 +2867,11 @@ function subscribeToRealtimeChanges() {
       },
       async (payload) => {
         console.log('Realtime projects change:', payload);
+        console.log('Refreshing data after projects change...');
+
         await refreshDataAndRender();
+
+        console.log('Projects realtime refresh completed');
       }
     )
     .on(
@@ -2871,7 +2883,11 @@ function subscribeToRealtimeChanges() {
       },
       async (payload) => {
         console.log('Realtime team_members change:', payload);
+        console.log('Refreshing data after team_members change...');
+
         await refreshDataAndRender();
+
+        console.log('Team members realtime refresh completed');
       }
     )
     .subscribe((status) => {
