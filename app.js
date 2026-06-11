@@ -2592,12 +2592,20 @@ document.addEventListener('click', (e) => {
   console.log('CLICK ACTION:', action, trigger.dataset);
 
   if (action === 'open-project-details') {
-    const id = Number(trigger.dataset.id);
-    state.selectedProjectId = id;
-    setView('project-details');
-    renderProjectDetails();
-    return;
-  }
+  const id = Number(trigger.dataset.id);
+
+  state.selectedProjectId = id;
+
+  window.history.pushState(
+    { view: 'project-details', projectId: id },
+    '',
+    `#project-details-${id}`
+  );
+
+  setView('project-details');
+  renderProjectDetails();
+  return;
+}
 
   if (action === 'open-member-details') {
   const memberId = Number(trigger.dataset.id);
