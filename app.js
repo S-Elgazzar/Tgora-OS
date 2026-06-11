@@ -2824,6 +2824,8 @@ async function handleLogout() {
 }
 
 function subscribeToRealtimeChanges() {
+  console.log('Starting realtime subscription...');
+
   supabaseClient
     .channel('tgora-os-realtime')
     .on(
@@ -2862,8 +2864,12 @@ function subscribeToRealtimeChanges() {
         await refreshDataAndRender();
       }
     )
-    .subscribe((status) => {
+    .subscribe((status, err) => {
       console.log('Realtime subscription status:', status);
+
+      if (err) {
+        console.error('Realtime subscription error:', err);
+      }
     });
 }
 
