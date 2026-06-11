@@ -2824,6 +2824,7 @@ async function handleLogout() {
 }
 
 function subscribeToRealtimeChanges() {
+
   console.log('Starting realtime subscription...');
 
   supabaseClient
@@ -2864,13 +2865,9 @@ function subscribeToRealtimeChanges() {
         await refreshDataAndRender();
       }
     )
-    .subscribe((status, err) => {
-      console.log('Realtime subscription status:', status);
-
-      if (err) {
-        console.error('Realtime subscription error:', err);
-      }
-    });
+    .subscribe((status) => {
+  console.log('Realtime status:', status);
+});
 }
 
 async function init() {
