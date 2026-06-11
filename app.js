@@ -2824,11 +2824,20 @@ async function handleLogout() {
 }
 
 function subscribeToRealtimeChanges() {
-
   console.log('Starting realtime subscription...');
 
-  supabaseClient
-    .channel('tgora-os-realtime')
+  const channel = supabaseClient.channel(
+    'tgora-os-realtime',
+    {
+      config: {
+        broadcast: {
+          self: true
+        }
+      }
+    }
+  );
+
+  channel
     .on(
       'postgres_changes',
       {
@@ -2866,8 +2875,8 @@ function subscribeToRealtimeChanges() {
       }
     )
     .subscribe((status) => {
-  console.log('Realtime status:', status);
-});
+      console.log('Realtime status:', status);
+    });
 }
 
 async function init() {
