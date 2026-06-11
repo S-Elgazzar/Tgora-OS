@@ -224,9 +224,42 @@
 
         <div class="flex items-center gap-2 ml-auto">
 
-  <button class="hidden sm:flex h-9 w-9 rounded-lg hover:bg-gray-100 items-center justify-center text-gray-500 transition">
+  <div class="relative">
+
+  <button
+    id="notifications-btn"
+    class="h-9 w-9 rounded-lg hover:bg-gray-100 flex items-center justify-center text-gray-500 transition relative"
+  >
     <i data-lucide="bell" class="w-5 h-5"></i>
+
+    <span
+      id="notifications-count"
+      class="hidden absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 bg-red-500 text-white text-[10px] rounded-full flex items-center justify-center font-semibold"
+    >
+      0
+    </span>
   </button>
+
+  <div
+    id="notifications-dropdown"
+    class="hidden absolute right-0 mt-2 w-96 bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden z-50"
+  >
+
+    <div class="px-4 py-3 border-b border-gray-200">
+      <h3 class="font-semibold text-sm">
+        Notifications
+      </h3>
+    </div>
+
+    <div
+      id="notifications-list"
+      class="max-h-[500px] overflow-y-auto"
+    >
+    </div>
+
+  </div>
+
+</div>
 
   <button
     id="logout-btn"

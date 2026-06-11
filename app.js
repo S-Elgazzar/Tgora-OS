@@ -14,6 +14,7 @@ const state = {
   projects: [],
   tasks: [],
   teamMembers: [],
+  notifications: [],
   view: localStorage.getItem('tgora_current_view') || 'dashboard',
   currentUser: null,
   currentMember: null,
@@ -174,6 +175,173 @@ async function fetchTeamMembers() {
   return data || [];
 }
 
+async function insertNotification(payload) {
+  const { data, error } = await supabaseClient
+    .from('notifications')
+    .insert([payload])
+    .select()
+    .single();
+
+  if (error) {
+    console.error('insertNotification', error);
+    return null;
+  }
+
+  return data;
+}
+
+function getAdminMembers() {
+  return state.teamMembers.filter(
+    (member) =>
+      (member.role_type || '').toLowerCase() === 'admin' &&
+      member.auth_user_id
+  );
+}
+
+function getMemberByName(name) {
+  if (!name) return null;
+
+  return state.teamMembers.find(
+    (member) =>
+      (member.name || '').toLowerCase().trim() ===
+      String(name).toLowerCase().trim()
+  );
+}
+
+async function notifyAdmins({
+  title,
+  message,
+  type,
+  entityType,
+  entityId,
+}) {
+  const admins = getAdminMembers();
+
+  if (admins.length === 0) return;
+
+  const notifications = admins.map((admin) => ({
+    user_id: admin.auth_user_id,
+    title,
+    message,
+    type,
+    entity_type: entityType,
+    entity_id: entityId || null,
+    is_read: false,
+  }));
+
+  const { error } = await supabaseClient
+    .from('notifications')
+    .insert(notifications);
+
+  if (error) {
+    console.error('notifyAdmins', error);
+  }
+}
+
+async function notifyAssignedMember({
+  assignedTo,
+  title,
+  message,
+  type,
+  entityType,
+  entityId,
+}) {
+  const member = getMemberByName(assignedTo);
+
+  if (!member?.auth_user_id) return;
+
+  await insertNotification({
+    user_id: member.auth_user_id,
+    title,
+    message,
+    type,
+    entity_type: entityType,
+    entity_id: entityId || null,
+    is_read: false,
+  });
+}
+
+async function fetchNotifications() {
+  if (!state.currentUser?.id) return [];
+
+  const { data, error } = await supabaseClient
+    .from('notifications')
+    .select('*')
+    .eq('user_id', state.currentUser.id)
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    console.error('fetchNotifications', error);
+    return [];
+  }
+
+  return data || [];
+}
+
+async function markNotificationAsRead(id) {
+  const { error } = await supabaseClient
+    .from('notifications')
+    .update({ is_read: true })
+    .eq('id', id);
+
+  if (error) {
+    console.error('markNotificationAsRead', error);
+  }
+}
+
+function renderNotifications() {
+  const list = $('#notifications-list');
+  const badge = $('#notifications-count');
+
+  if (!list || !badge) return;
+
+  const unreadCount = state.notifications.filter(
+    (notification) => !notification.is_read
+  ).length;
+
+  if (unreadCount > 0) {
+    badge.classList.remove('hidden');
+    badge.textContent = unreadCount;
+  } else {
+    badge.classList.add('hidden');
+  }
+
+  if (state.notifications.length === 0) {
+    list.innerHTML = `
+      <div class="p-6 text-center text-sm text-gray-500">
+        No notifications
+      </div>
+    `;
+    return;
+  }
+
+  list.innerHTML = state.notifications
+    .slice(0, 20)
+    .map((notification) => `
+      <div
+        class="notification-item p-4 border-b border-gray-100 cursor-pointer hover:bg-gray-50 ${
+          !notification.is_read ? 'bg-blue-50' : ''
+        }"
+        data-id="${notification.id}"
+data-entity-type="${notification.entity_type || ''}"
+data-entity-id="${notification.entity_id || ''}"
+      >
+        <div class="font-medium text-sm text-gray-900">
+          ${escapeHtml(notification.title)}
+        </div>
+
+        <div class="text-xs text-gray-600 mt-1">
+          ${escapeHtml(notification.message || '')}
+        </div>
+
+        <div class="text-[11px] text-gray-400 mt-2">
+          ${fmtDate(notification.created_at)}
+        </div>
+      </div>
+    `)
+    .join('');
+}
+
 async function insertTeamMember(payload) {
   const { data, error } = await supabaseClient
     .from('team_members')
@@ -186,6 +354,14 @@ async function insertTeamMember(payload) {
     toast(error.message || 'Failed to create team member', 'error');
     return null;
   }
+
+  await notifyAdmins({
+    title: 'New team member added',
+    message: `${data.name || 'A team member'} was added to the team.`,
+    type: 'team_member_created',
+    entityType: 'team_member',
+    entityId: data.id,
+  });
 
   return data;
 }
@@ -204,6 +380,14 @@ async function updateTeamMember(id, payload) {
     return null;
   }
 
+  await notifyAdmins({
+    title: 'Team member updated',
+    message: `${data.name || 'A team member'} profile was updated.`,
+    type: 'team_member_updated',
+    entityType: 'team_member',
+    entityId: data.id,
+  });
+
   return data;
 }
 
@@ -212,21 +396,37 @@ async function fetchTasks() {
     .from('tasks')
     .select('*')
     .order('id', { ascending: false });
+
   if (error) {
     console.error('fetchTasks', error);
     toast('Could not load tasks', 'error');
     return [];
   }
+
   return data || [];
 }
 
 async function insertProject(payload) {
-  const { data, error } = await supabaseClient.from('projects').insert([payload]).select().single();
+  const { data, error } = await supabaseClient
+    .from('projects')
+    .insert([payload])
+    .select()
+    .single();
+
   if (error) {
     console.error('insertProject', error);
     toast(error.message || 'Failed to create project', 'error');
     return null;
   }
+
+  await notifyAdmins({
+    title: 'New project created',
+    message: `${data.project_name || 'A project'} was created.`,
+    type: 'project_created',
+    entityType: 'project',
+    entityId: data.id,
+  });
+
   return data;
 }
 
@@ -244,20 +444,55 @@ async function updateProject(id, payload) {
     return null;
   }
 
+  await notifyAdmins({
+    title: 'Project updated',
+    message: `${data.project_name || 'A project'} was updated.`,
+    type: 'project_updated',
+    entityType: 'project',
+    entityId: data.id,
+  });
+
   return data;
 }
 
 async function insertTask(payload) {
-  const { data, error } = await supabaseClient.from('tasks').insert([payload]).select().single();
+  const { data, error } = await supabaseClient
+    .from('tasks')
+    .insert([payload])
+    .select()
+    .single();
+
   if (error) {
     console.error('insertTask', error);
     toast(error.message || 'Failed to create task', 'error');
     return null;
   }
+
+  await notifyAdmins({
+    title: 'New task created',
+    message: `${data.task_info || 'A task'} was created and assigned to ${data.assigned_to || 'someone'}.`,
+    type: 'task_created',
+    entityType: 'task',
+    entityId: data.id,
+  });
+
+  await notifyAssignedMember({
+    assignedTo: data.assigned_to,
+    title: 'New task assigned to you',
+    message: data.task_info || 'You have a new task.',
+    type: 'task_assigned',
+    entityType: 'task',
+    entityId: data.id,
+  });
+
   return data;
 }
 
 async function updateTask(id, payload) {
+  const oldTask = state.tasks.find(
+    (task) => Number(task.id) === Number(id)
+  );
+
   const { data, error } = await supabaseClient
     .from('tasks')
     .update(payload)
@@ -271,32 +506,123 @@ async function updateTask(id, payload) {
     return null;
   }
 
+  await notifyAdmins({
+    title: 'Task updated',
+    message: `${data.task_info || 'A task'} was updated.`,
+    type: 'task_updated',
+    entityType: 'task',
+    entityId: data.id,
+  });
+
+  if (
+    payload.assigned_to &&
+    oldTask &&
+    (oldTask.assigned_to || '') !== (payload.assigned_to || '')
+  ) {
+    await notifyAssignedMember({
+      assignedTo: payload.assigned_to,
+      title: 'Task assigned to you',
+      message: data.task_info || 'A task was assigned to you.',
+      type: 'task_assigned',
+      entityType: 'task',
+      entityId: data.id,
+    });
+  }
+
+  if (
+    payload.status &&
+    oldTask &&
+    (oldTask.status || '') !== (payload.status || '')
+  ) {
+    await notifyAssignedMember({
+      assignedTo: data.assigned_to,
+      title: 'Task status updated',
+      message: `${data.task_info || 'A task'} status changed to ${labelize(data.status)}.`,
+      type: 'task_status_updated',
+      entityType: 'task',
+      entityId: data.id,
+    });
+  }
+
+  if (
+    payload.deadline &&
+    oldTask &&
+    String(oldTask.deadline || '') !== String(payload.deadline || '')
+  ) {
+    await notifyAssignedMember({
+      assignedTo: data.assigned_to,
+      title: 'Task deadline updated',
+      message: `${data.task_info || 'A task'} deadline changed to ${fmtDate(data.deadline)}.`,
+      type: 'task_deadline_updated',
+      entityType: 'task',
+      entityId: data.id,
+    });
+  }
+
   return data;
 }
 
 async function deleteProject(id) {
-  // Best-effort cascade: tasks tied to this project
+  const project = state.projects.find(
+    (p) => Number(p.id) === Number(id)
+  );
+
   await supabaseClient.from('tasks').delete().eq('project_id', id);
-  const { error } = await supabaseClient.from('projects').delete().eq('id', id);
+
+  const { error } = await supabaseClient
+    .from('projects')
+    .delete()
+    .eq('id', id);
+
   if (error) {
     console.error('deleteProject', error);
     toast('Failed to delete project', 'error');
     return false;
   }
+
+  await notifyAdmins({
+    title: 'Project deleted',
+    message: `${project?.project_name || 'A project'} was deleted.`,
+    type: 'project_deleted',
+    entityType: 'project',
+    entityId: id,
+  });
+
   return true;
 }
 
 async function deleteTask(id) {
-  const { error } = await supabaseClient.from('tasks').delete().eq('id', id);
+  const task = state.tasks.find(
+    (t) => Number(t.id) === Number(id)
+  );
+
+  const { error } = await supabaseClient
+    .from('tasks')
+    .delete()
+    .eq('id', id);
+
   if (error) {
     console.error('deleteTask', error);
     toast('Failed to delete task', 'error');
     return false;
   }
+
+  await notifyAdmins({
+    title: 'Task deleted',
+    message: `${task?.task_info || 'A task'} was deleted.`,
+    type: 'task_deleted',
+    entityType: 'task',
+    entityId: id,
+  });
+
   return true;
 }
 
 async function deleteTeamMember(id) {
+  const member = state.teamMembers.find(
+    (m) => Number(m.id) === Number(id)
+  );
+
   const { error } = await supabaseClient
     .from('team_members')
     .delete()
@@ -307,6 +633,14 @@ async function deleteTeamMember(id) {
     toast('Failed to delete team member', 'error');
     return false;
   }
+
+  await notifyAdmins({
+    title: 'Team member deleted',
+    message: `${member?.name || 'A team member'} was deleted.`,
+    type: 'team_member_deleted',
+    entityType: 'team_member',
+    entityId: id,
+  });
 
   return true;
 }
@@ -1248,20 +1582,30 @@ function renderTeam() {
 }
 
 async function refreshDataAndRender() {
-  
-  const [projects, tasks, teamMembers] = await Promise.all([
+  console.log('refreshDataAndRender started');
+
+  const [
+    projects,
+    tasks,
+    teamMembers,
+    notifications
+  ] = await Promise.all([
     fetchProjects(),
     fetchTasks(),
-    fetchTeamMembers()
+    fetchTeamMembers(),
+    fetchNotifications()
   ]);
 
   state.projects = projects;
   state.tasks = tasks;
   state.teamMembers = teamMembers;
+  state.notifications = notifications;
 
   renderAll();
+  renderNotifications();
   updateSidebarUserCard();
-  
+
+  console.log('refreshDataAndRender completed');
 }
 
 function renderAll() {
@@ -2761,6 +3105,60 @@ if (action === 'delete-member') {
   $('#task-form').addEventListener('submit', handleTaskSubmit);
   $('#confirm-delete-btn').addEventListener('click', confirmDelete);
 
+document.addEventListener('click', async (e) => {
+  const notificationsBtn = e.target.closest('#notifications-btn');
+  const notificationsDropdown = $('#notifications-dropdown');
+
+  if (notificationsBtn) {
+    e.stopPropagation();
+
+    notificationsDropdown?.classList.toggle('hidden');
+    return;
+  }
+
+  const item = e.target.closest('.notification-item');
+
+if (item) {
+  const id = Number(item.dataset.id);
+  const entityType = item.dataset.entityType;
+  const entityId = Number(item.dataset.entityId);
+
+  await markNotificationAsRead(id);
+  await refreshDataAndRender();
+
+  $('#notifications-dropdown')?.classList.add('hidden');
+
+  if (entityType === 'task' && entityId) {
+    openTaskDetailsModal(entityId);
+    return;
+  }
+
+  if (entityType === 'project' && entityId) {
+    state.selectedProjectId = entityId;
+
+    localStorage.setItem(
+      'tgora_selected_project_id',
+      entityId
+    );
+
+    setView('project-details');
+    renderProjectDetails();
+    return;
+  }
+
+  if (entityType === 'team_member' && entityId) {
+    openMemberDetails(entityId);
+    return;
+  }
+
+  return;
+}
+
+  if (!e.target.closest('#notifications-dropdown')) {
+    notificationsDropdown?.classList.add('hidden');
+  }
+});
+
   // Filters
   $$('[data-projects-filter]').forEach((btn) => {
   btn.addEventListener('click', () => {
@@ -2968,8 +3366,9 @@ wireEvents();
   console.log('Current Role:', state.currentRole);
 
   renderAll();
-  updateSidebarUserCard();
-  subscribeToRealtimeChanges();
+renderNotifications();
+updateSidebarUserCard();
+subscribeToRealtimeChanges();
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
