@@ -18,6 +18,7 @@ const state = {
   currentUser: null,
   currentMember: null,
   currentRole: null,
+  selectedMemberId: Number(localStorage.getItem('tgora_selected_member_id')) || null,
   editingMemberId: null,
   editingTaskId: null,
   editingProjectId: null,
@@ -1270,7 +1271,12 @@ function renderAll() {
   renderTasks();
   const savedView = localStorage.getItem('tgora_current_view');
 
-if (savedView && $(`#view-${savedView}`)) {
+if (
+  savedView === 'team-member' &&
+  state.selectedMemberId
+) {
+  openMemberDetails(state.selectedMemberId);
+} else if (savedView && $(`#view-${savedView}`)) {
   setView(savedView);
 } else {
   setView(state.view || 'dashboard');
@@ -2250,6 +2256,13 @@ function openMemberDetails(memberId) {
   );
 
   if (!member) return;
+
+state.selectedMemberId = Number(memberId);
+
+localStorage.setItem(
+  'tgora_selected_member_id',
+  memberId
+);
 
   const memberTasks = state.tasks.filter(
     (t) =>
