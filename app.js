@@ -3025,6 +3025,141 @@ function renderProjectDetails() {
   refreshIcons();
 }
 
+function calculateMemberPerformance(memberTasks) {
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth();
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const isSameMonth = (dateStr) => {
+    if (!dateStr) return false;
+    const d = new Date(dateStr);
+    return d.getFullYear() === currentYear && d.getMonth() === currentMonth;
+  };
+
+  const isOverdueIncomplete = (task) => {
+    if (!task.deadline) return false;
+    if ((task.status || '').toLowerCase() === 'completed') return false;
+
+    const deadline = new Date(task.deadline);
+    deadline.setHours(0, 0, 0, 0);
+
+    return deadline < today;
+  };
+
+  const monthlyTasks = memberTasks.filter((t) => {
+    const status = (t.status || '').toLowerCase();
+
+    if (status === 'completed' && isSameMonth(t.completed_at)) return true;
+    if (isSameMonth(t.deadline)) return true;
+    if (isOverdueIncomplete(t)) return true;
+
+    return false;
+  });
+
+  const breakdown = {
+    completedEarly: [],
+    completedOnTime: [],
+    completedLate: [],
+    completedNoDeadline: [],
+    overdueIncomplete: [],
+    inReview: [],
+    inProgress: [],
+    todo: [],
+  };
+
+  let totalPoints = 0;
+
+  const taskDetails = monthlyTasks.map((t) => {
+    const status = (t.status || '').toLowerCase();
+    let category;
+    let points;
+    let reason;
+
+    if (status === 'completed') {
+      if (t.deadline && t.completed_at) {
+        const deadline = new Date(t.deadline);
+        deadline.setHours(0, 0, 0, 0);
+
+        const completedAt = new Date(t.completed_at);
+        completedAt.setHours(0, 0, 0, 0);
+
+        if (completedAt < deadline) {
+          category = 'completedEarly';
+          points = 120;
+          reason = 'Completed before deadline';
+        } else if (completedAt.getTime() === deadline.getTime()) {
+          category = 'completedOnTime';
+          points = 100;
+          reason = 'Completed on deadline';
+        } else {
+          category = 'completedLate';
+          points = 60;
+          reason = 'Completed after deadline';
+        }
+      } else {
+        category = 'completedNoDeadline';
+        points = 80;
+        reason = 'Completed with no deadline set';
+      }
+    } else if (isOverdueIncomplete(t)) {
+      category = 'overdueIncomplete';
+      points = -40;
+      reason = 'Overdue and not completed';
+    } else if (status === 'review') {
+      category = 'inReview';
+      points = 20;
+      reason = 'In review, not overdue';
+    } else if (status === 'in_progress') {
+      category = 'inProgress';
+      points = 10;
+      reason = 'In progress, not overdue';
+    } else {
+      category = 'todo';
+      points = 0;
+      reason = 'To do, counted for this month';
+    }
+
+    totalPoints += points;
+    breakdown[category].push(t);
+
+    return { task: t, category, points, reason };
+  });
+
+  const maxPoints = monthlyTasks.length * 120;
+
+  let performanceScore = maxPoints > 0
+    ? Math.round((totalPoints / maxPoints) * 100)
+    : 0;
+
+  performanceScore = Math.min(Math.max(performanceScore, 0), 100);
+
+  let performanceLabel = 'Needs Improvement';
+
+  if (performanceScore >= 90) {
+    performanceLabel = 'Excellent';
+  } else if (performanceScore >= 75) {
+    performanceLabel = 'Very Good';
+  } else if (performanceScore >= 60) {
+    performanceLabel = 'Good';
+  } else if (performanceScore >= 40) {
+    performanceLabel = 'Average';
+  }
+
+  return {
+    currentYear,
+    currentMonth,
+    monthlyTasks,
+    taskDetails,
+    breakdown,
+    totalPoints,
+    maxPoints,
+    performanceScore,
+    performanceLabel,
+  };
+}
+
 function openMemberDetails(memberId) {
   const member = state.teamMembers.find(
     (m) => Number(m.id) === Number(memberId)
@@ -3078,85 +3213,7 @@ localStorage.setItem(
   const completedCount = completedTasks.length;
   const overdueCount = overdueTasks.length;
 
-  const now = new Date();
-  const currentYear = now.getFullYear();
-  const currentMonth = now.getMonth();
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  const isSameMonth = (dateStr) => {
-    if (!dateStr) return false;
-    const d = new Date(dateStr);
-    return d.getFullYear() === currentYear && d.getMonth() === currentMonth;
-  };
-
-  const isOverdueIncomplete = (task) => {
-    if (!task.deadline) return false;
-    if ((task.status || '').toLowerCase() === 'completed') return false;
-
-    const deadline = new Date(task.deadline);
-    deadline.setHours(0, 0, 0, 0);
-
-    return deadline < today;
-  };
-
-  const monthlyTasks = memberTasks.filter((t) => {
-    const status = (t.status || '').toLowerCase();
-
-    if (status === 'completed' && isSameMonth(t.completed_at)) return true;
-    if (isSameMonth(t.deadline)) return true;
-    if (isOverdueIncomplete(t)) return true;
-
-    return false;
-  });
-
-  let totalPoints = 0;
-
-  monthlyTasks.forEach((t) => {
-    const status = (t.status || '').toLowerCase();
-
-    if (status === 'completed') {
-      if (t.deadline && t.completed_at) {
-        const deadline = new Date(t.deadline);
-        deadline.setHours(0, 0, 0, 0);
-
-        const completedAt = new Date(t.completed_at);
-        completedAt.setHours(0, 0, 0, 0);
-
-        if (completedAt < deadline) totalPoints += 120;
-        else if (completedAt.getTime() === deadline.getTime()) totalPoints += 100;
-        else totalPoints += 60;
-      } else {
-        totalPoints += 80;
-      }
-    } else if (isOverdueIncomplete(t)) {
-      totalPoints -= 40;
-    } else if (status === 'review') {
-      totalPoints += 20;
-    } else if (status === 'in_progress') {
-      totalPoints += 10;
-    }
-  });
-
-  const maxPoints = monthlyTasks.length * 120;
-
-  let performanceScore = maxPoints > 0
-    ? Math.round((totalPoints / maxPoints) * 100)
-    : 0;
-
-  performanceScore = Math.min(Math.max(performanceScore, 0), 100);
-
-  let performanceLabel = 'Needs Improvement';
-
-  if (performanceScore >= 90) {
-    performanceLabel = 'Excellent';
-  } else if (performanceScore >= 75) {
-    performanceLabel = 'Very Good';
-  } else if (performanceScore >= 60) {
-    performanceLabel = 'Good';
-  } else if (performanceScore >= 40) {
-    performanceLabel = 'Average';
-  }
+  const { performanceScore, performanceLabel } = calculateMemberPerformance(memberTasks);
 
   $('#member-details-name').textContent = member.name || 'Unknown Member';
   $('#member-details-role').textContent = member.job_title || 'No Job Title';
@@ -3386,10 +3443,169 @@ localStorage.setItem(
     };
   }
 
+  const performanceCard = $('#member-performance-score')?.closest('.stat-card');
+
+  if (performanceCard) {
+    performanceCard.classList.add('cursor-pointer');
+    performanceCard.onclick = () => {
+      openPerformanceDetailsModal();
+    };
+  }
+
   renderMemberTasksTable(memberTasks);
   activateCard(totalCard);
 
   setView('team-member');
+}
+
+const PERFORMANCE_MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+function openPerformanceDetailsModal() {
+  const member = state.teamMembers.find(
+    (m) => Number(m.id) === Number(state.selectedMemberId)
+  );
+
+  if (!member) return;
+
+  const memberTasks = state.tasks.filter(
+    (t) =>
+      (t.assigned_to || '').toLowerCase().trim() ===
+      (member.name || '').toLowerCase().trim()
+  );
+
+  const perf = calculateMemberPerformance(memberTasks);
+
+  const titleEl = $('#performance-details-title');
+  if (titleEl) {
+    titleEl.textContent = `Performance Details — ${member.name || 'Unknown Member'}`;
+  }
+
+  const content = $('#performance-details-content');
+  if (!content) return;
+
+  const monthLabel = `${PERFORMANCE_MONTH_NAMES[perf.currentMonth]} ${perf.currentYear}`;
+
+  const breakdownItems = [
+    { label: 'Completed Early', count: perf.breakdown.completedEarly.length, points: '+120' },
+    { label: 'Completed On Time', count: perf.breakdown.completedOnTime.length, points: '+100' },
+    { label: 'Completed Late', count: perf.breakdown.completedLate.length, points: '+60' },
+    { label: 'Completed (No Deadline)', count: perf.breakdown.completedNoDeadline.length, points: '+80' },
+    { label: 'Overdue Incomplete', count: perf.breakdown.overdueIncomplete.length, points: '-40' },
+    { label: 'In Review', count: perf.breakdown.inReview.length, points: '+20' },
+    { label: 'In Progress', count: perf.breakdown.inProgress.length, points: '+10' },
+    { label: 'To Do', count: perf.breakdown.todo.length, points: '0' },
+  ];
+
+  const tableRows = perf.taskDetails.length
+    ? perf.taskDetails
+      .map(({ task, points, reason }) => {
+        const taskStatus = (task.status || 'todo').toLowerCase();
+        const pointsClass = points > 0 ? 'text-green-600' : (points < 0 ? 'text-red-600' : 'text-gray-500');
+        const pointsLabel = points > 0 ? `+${points}` : `${points}`;
+
+        return `
+          <tr class="border-b border-gray-100">
+            <td class="px-4 py-2.5 text-sm text-gray-900">${escapeHtml(task.task_info || 'Untitled Task')}</td>
+            <td class="px-4 py-2.5">
+              <span class="badge badge-${taskStatus}">
+                <span class="dot"></span>
+                ${labelize(taskStatus)}
+              </span>
+            </td>
+            <td class="px-4 py-2.5 text-sm text-gray-600">${fmtDate(task.deadline)}</td>
+            <td class="px-4 py-2.5 text-sm text-gray-600">${task.completed_at ? fmtDate(task.completed_at) : '—'}</td>
+            <td class="px-4 py-2.5 text-sm font-semibold ${pointsClass}">${pointsLabel}</td>
+            <td class="px-4 py-2.5 text-sm text-gray-500">${escapeHtml(reason)}</td>
+          </tr>
+        `;
+      })
+      .join('')
+    : `
+      <tr>
+        <td colspan="6" class="px-4 py-8 text-center text-sm text-gray-400">
+          No tasks counted for this month.
+        </td>
+      </tr>
+    `;
+
+  content.innerHTML = `
+    <div class="text-xs text-gray-500 mb-4">${escapeHtml(monthLabel)}</div>
+
+    <div class="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-5">
+      <div class="stat-card">
+        <p class="text-xs text-gray-500">Score</p>
+        <h4 class="text-xl font-bold text-brand-700 mt-1">${perf.performanceScore}%</h4>
+      </div>
+      <div class="stat-card">
+        <p class="text-xs text-gray-500">Label</p>
+        <h4 class="text-sm font-semibold text-gray-900 mt-1">${escapeHtml(perf.performanceLabel)}</h4>
+      </div>
+      <div class="stat-card">
+        <p class="text-xs text-gray-500">Counted Tasks</p>
+        <h4 class="text-xl font-bold text-gray-900 mt-1">${perf.monthlyTasks.length}</h4>
+      </div>
+      <div class="stat-card">
+        <p class="text-xs text-gray-500">Total Points</p>
+        <h4 class="text-xl font-bold text-gray-900 mt-1">${perf.totalPoints}</h4>
+      </div>
+      <div class="stat-card">
+        <p class="text-xs text-gray-500">Max Points</p>
+        <h4 class="text-xl font-bold text-gray-900 mt-1">${perf.maxPoints}</h4>
+      </div>
+    </div>
+
+    <h4 class="text-sm font-semibold text-gray-900 mb-2">Breakdown</h4>
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+      ${breakdownItems
+        .map(
+          (item) => `
+            <div class="stat-card">
+              <p class="text-xs text-gray-500">${item.label}</p>
+              <h4 class="text-lg font-semibold text-gray-900 mt-1">${item.count}</h4>
+              <p class="text-[11px] text-gray-400 mt-0.5">${item.points} pts each</p>
+            </div>
+          `
+        )
+        .join('')}
+    </div>
+
+    <h4 class="text-sm font-semibold text-gray-900 mb-2">Points Explanation</h4>
+    <ul class="text-xs text-gray-600 space-y-1 mb-5 list-disc pl-5">
+      <li>Completed before deadline: <strong>+120</strong></li>
+      <li>Completed on deadline: <strong>+100</strong></li>
+      <li>Completed after deadline: <strong>+60</strong></li>
+      <li>Completed with no deadline: <strong>+80</strong></li>
+      <li>Overdue and not completed: <strong>-40</strong></li>
+      <li>In Review (not overdue): <strong>+20</strong></li>
+      <li>In Progress (not overdue): <strong>+10</strong></li>
+      <li>To Do: <strong>0</strong></li>
+    </ul>
+
+    <h4 class="text-sm font-semibold text-gray-900 mb-2">Counted Tasks</h4>
+    <div class="border border-gray-200 rounded-lg overflow-hidden">
+      <table class="w-full text-sm">
+        <thead class="bg-gray-50 border-b border-gray-100">
+          <tr class="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+            <th class="px-4 py-2.5">Task</th>
+            <th class="px-4 py-2.5">Status</th>
+            <th class="px-4 py-2.5">Deadline</th>
+            <th class="px-4 py-2.5">Completed At</th>
+            <th class="px-4 py-2.5">Points</th>
+            <th class="px-4 py-2.5">Reason</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${tableRows}
+        </tbody>
+      </table>
+    </div>
+  `;
+
+  refreshIcons();
+  openModal('performance-details-modal');
 }
 
 function wireEvents() {
