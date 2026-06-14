@@ -880,6 +880,19 @@ async function updateTask(id, payload) {
     (task) => Number(task.id) === Number(id)
   );
 
+  if (payload.status !== undefined && oldTask) {
+    const oldStatus = (oldTask.status || '').toLowerCase();
+    const newStatus = (payload.status || '').toLowerCase();
+
+    if (newStatus === 'completed' && oldStatus !== 'completed') {
+      if (!oldTask.completed_at) {
+        payload.completed_at = new Date().toISOString();
+      }
+    } else if (oldStatus === 'completed' && newStatus !== 'completed') {
+      payload.completed_at = null;
+    }
+  }
+
   const { data, error } = await supabaseClient
     .from('tasks')
     .update(payload)
