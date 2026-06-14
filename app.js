@@ -31,6 +31,7 @@ const state = {
   },
   search: '',
   pendingDelete: null, // { type: 'project' | 'task', id }
+  alertsFilter: 'all', // 'all' | 'overdue' | 'due_today'
 };
 
 // ---------- DOM Helpers ----------
@@ -250,6 +251,17 @@ const NOTIFICATION_ICONS = {
 
 function getNotificationIcon(type) {
   return NOTIFICATION_ICONS[type] || { icon: 'bell', bg: 'bg-gray-100', color: 'text-gray-500' };
+}
+
+const ALERT_TYPE_STYLES = {
+  overdue: { icon: 'alert-circle', bg: 'bg-red-100', color: 'text-red-600', label: 'Overdue' },
+  due_today: { icon: 'clock', bg: 'bg-orange-100', color: 'text-orange-600', label: 'Due Today' },
+  project_overdue: { icon: 'folder-x', bg: 'bg-red-100', color: 'text-red-600', label: 'Project Overdue' },
+  project_due_today: { icon: 'folder-clock', bg: 'bg-orange-100', color: 'text-orange-600', label: 'Project Due Today' },
+};
+
+function getAlertStyle(alertType) {
+  return ALERT_TYPE_STYLES[alertType] || { icon: 'triangle-alert', bg: 'bg-gray-100', color: 'text-gray-500', label: 'Alert' };
 }
 
 async function notifyAdmins({
@@ -484,6 +496,211 @@ function renderNotifications() {
         >
           <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
         </button>
+      </div>
+    `;
+    })
+    .join('');
+
+  refreshIcons();
+}
+
+function getAlertVisibleTasks() {
+  if (isAdmin()) return state.tasks;
+
+  const currentMember = getCurrentMember();
+
+  if (!currentMember) return [];
+
+  return state.tasks.filter(
+    (t) =>
+      (t.assigned_to || '').toLowerCase().trim() ===
+      (currentMember.name || '').toLowerCase().trim()
+  );
+}
+
+function computeAlerts() {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const alerts = [];
+  const currentMemberName = (getCurrentMember()?.name || '').toLowerCase().trim();
+
+  getAlertVisibleTasks().forEach((task) => {
+    if ((task.status || '').toLowerCase() === 'completed') return;
+    if (!task.deadline) return;
+
+    const deadline = new Date(task.deadline);
+    deadline.setHours(0, 0, 0, 0);
+    const diffDays = Math.round((deadline - today) / (1000 * 60 * 60 * 24));
+
+    let alertType = null;
+    if (diffDays < 0) alertType = 'overdue';
+    else if (diffDays === 0) alertType = 'due_today';
+
+    if (!alertType) return;
+
+    const project = state.projects.find((p) => p.id === task.project_id);
+    const isMine = (task.assigned_to || '').toLowerCase().trim() === currentMemberName;
+
+    alerts.push({
+      id: `task-${task.id}`,
+      kind: 'task',
+      entityId: task.id,
+      alertType,
+      title: task.task_info || 'Untitled task',
+      subtitle: project?.project_name || '',
+      deadline: task.deadline,
+      priority: task.priority,
+      assignedTo: task.assigned_to || '',
+      isMine,
+    });
+  });
+
+  if (isAdmin() || isManager()) {
+    state.projects.forEach((project) => {
+      if ((project.status || '').toLowerCase() === 'completed') return;
+      if (!project.deadline) return;
+
+      const deadline = new Date(project.deadline);
+      deadline.setHours(0, 0, 0, 0);
+      const diffDays = Math.round((deadline - today) / (1000 * 60 * 60 * 24));
+
+      let alertType = null;
+      if (diffDays < 0) alertType = 'project_overdue';
+      else if (diffDays === 0) alertType = 'project_due_today';
+
+      if (!alertType) return;
+
+      alerts.push({
+        id: `project-${project.id}`,
+        kind: 'project',
+        entityId: project.id,
+        alertType,
+        title: project.project_name || 'Untitled project',
+        subtitle: project.client || '',
+        deadline: project.deadline,
+        priority: project.priority,
+        isMine: false,
+      });
+    });
+  }
+
+  const groupOrder = { mine: 0, other: 1, project: 2 };
+  const severityOrder = {
+    overdue: 0,
+    project_overdue: 0,
+    due_today: 1,
+    project_due_today: 1,
+  };
+
+  const getGroup = (alert) => {
+    if (alert.kind === 'project') return 'project';
+    return alert.isMine ? 'mine' : 'other';
+  };
+
+  alerts.sort((a, b) => {
+    const groupDiff = groupOrder[getGroup(a)] - groupOrder[getGroup(b)];
+    if (groupDiff !== 0) return groupDiff;
+
+    const sevDiff = (severityOrder[a.alertType] ?? 99) - (severityOrder[b.alertType] ?? 99);
+    if (sevDiff !== 0) return sevDiff;
+
+    const aTime = a.deadline ? new Date(a.deadline).getTime() : Infinity;
+    const bTime = b.deadline ? new Date(b.deadline).getTime() : Infinity;
+    return aTime - bTime;
+  });
+
+  return alerts;
+}
+
+function renderAlerts() {
+  const list = $('#alerts-list');
+  const badge = $('#alerts-count');
+  const overdueCountEl = $('#alerts-overdue-count');
+  const dueTodayCountEl = $('#alerts-due-today-count');
+  const tabs = document.querySelectorAll('.alerts-filter-tab');
+
+  if (!list || !badge) return;
+
+  const alerts = computeAlerts();
+
+  const overdueCount = alerts.filter((a) => a.alertType === 'overdue' || a.alertType === 'project_overdue').length;
+  const dueTodayCount = alerts.filter((a) => a.alertType === 'due_today' || a.alertType === 'project_due_today').length;
+  const totalCount = overdueCount + dueTodayCount;
+
+  if (totalCount > 0) {
+    badge.classList.remove('hidden');
+    badge.textContent = totalCount;
+  } else {
+    badge.classList.add('hidden');
+  }
+
+  if (overdueCountEl) overdueCountEl.textContent = overdueCount;
+  if (dueTodayCountEl) dueTodayCountEl.textContent = dueTodayCount;
+
+  tabs.forEach((tab) => {
+    const isActive = tab.dataset.filter === state.alertsFilter;
+    tab.classList.toggle('bg-brand-600', isActive);
+    tab.classList.toggle('text-white', isActive);
+    tab.classList.toggle('bg-gray-100', !isActive);
+    tab.classList.toggle('text-gray-600', !isActive);
+  });
+
+  const filteredAlerts = alerts.filter((alert) => {
+    if (state.alertsFilter === 'overdue') {
+      return alert.alertType === 'overdue' || alert.alertType === 'project_overdue';
+    }
+    if (state.alertsFilter === 'due_today') {
+      return alert.alertType === 'due_today' || alert.alertType === 'project_due_today';
+    }
+    return true;
+  });
+
+  if (filteredAlerts.length === 0) {
+    list.innerHTML = `
+      <div class="px-6 py-10 text-center text-sm text-gray-500">
+        <div class="w-10 h-10 mx-auto rounded-full bg-gray-100 flex items-center justify-center mb-2">
+          <i data-lucide="check-circle-2" class="w-5 h-5 text-gray-400"></i>
+        </div>
+        No alerts right now
+      </div>
+    `;
+    refreshIcons();
+    return;
+  }
+
+  list.innerHTML = filteredAlerts
+    .map((alert) => {
+      const { icon, bg, color, label } = getAlertStyle(alert.alertType);
+
+      const assignedLine = (isAdmin() && alert.kind === 'task')
+        ? `<div class="text-[11px] text-gray-400 mt-1">Assigned to: ${escapeHtml(alert.assignedTo || 'Unassigned')}</div>`
+        : '';
+
+      return `
+      <div
+        class="alert-item px-4 py-3 border-b border-gray-100 cursor-pointer hover:bg-gray-50 flex items-start gap-3 transition"
+        data-kind="${alert.kind}"
+        data-id="${alert.entityId}"
+      >
+        <div class="w-8 h-8 rounded-full ${bg} flex items-center justify-center shrink-0">
+          <i data-lucide="${icon}" class="w-4 h-4 ${color}"></i>
+        </div>
+
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2">
+            <span class="font-medium text-sm text-gray-900 truncate">${escapeHtml(alert.title)}</span>
+            <span class="text-[10px] font-semibold uppercase tracking-wide ${color}">${label}</span>
+          </div>
+
+          ${alert.subtitle ? `<div class="text-xs text-gray-500 mt-0.5 truncate">${escapeHtml(alert.subtitle)}</div>` : ''}
+
+          <div class="text-[11px] text-gray-400 mt-1.5">
+            Deadline: ${fmtDate(alert.deadline)}
+          </div>
+
+          ${assignedLine}
+        </div>
       </div>
     `;
     })
@@ -1772,6 +1989,7 @@ async function refreshDataAndRender() {
 
   renderAll();
   renderNotifications();
+  renderAlerts();
   updateSidebarUserCard();
 
   console.log('refreshDataAndRender completed');
@@ -3277,11 +3495,61 @@ if (action === 'delete-member') {
 document.addEventListener('click', async (e) => {
   const notificationsBtn = e.target.closest('#notifications-btn');
   const notificationsDropdown = $('#notifications-dropdown');
+  const alertsBtn = e.target.closest('#alerts-btn');
+  const alertsDropdown = $('#alerts-dropdown');
 
   if (notificationsBtn) {
     e.stopPropagation();
 
+    alertsDropdown?.classList.add('hidden');
     notificationsDropdown?.classList.toggle('hidden');
+    return;
+  }
+
+  if (alertsBtn) {
+    e.stopPropagation();
+
+    notificationsDropdown?.classList.add('hidden');
+    alertsDropdown?.classList.toggle('hidden');
+    return;
+  }
+
+  const alertsFilterTab = e.target.closest('.alerts-filter-tab');
+
+  if (alertsFilterTab) {
+    e.stopPropagation();
+
+    state.alertsFilter = alertsFilterTab.dataset.filter;
+    renderAlerts();
+    return;
+  }
+
+  const alertItem = e.target.closest('.alert-item');
+
+  if (alertItem) {
+    const kind = alertItem.dataset.kind;
+    const entityId = Number(alertItem.dataset.id);
+
+    alertsDropdown?.classList.add('hidden');
+
+    if (kind === 'task' && entityId) {
+      openTaskDetailsModal(entityId);
+      return;
+    }
+
+    if (kind === 'project' && entityId) {
+      state.selectedProjectId = entityId;
+
+      localStorage.setItem(
+        'tgora_selected_project_id',
+        entityId
+      );
+
+      setView('project-details');
+      renderProjectDetails();
+      return;
+    }
+
     return;
   }
 
@@ -3357,6 +3625,10 @@ if (item) {
 
   if (!e.target.closest('#notifications-dropdown')) {
     notificationsDropdown?.classList.add('hidden');
+  }
+
+  if (!e.target.closest('#alerts-dropdown')) {
+    alertsDropdown?.classList.add('hidden');
   }
 });
 
@@ -3590,6 +3862,7 @@ wireEvents();
   console.log('Current Role:', state.currentRole);
 
   renderAll();
+renderAlerts();
 renderNotifications();
 updateSidebarUserCard();
 subscribeToRealtimeChanges();
