@@ -347,6 +347,50 @@ async function markAllNotificationsAsRead() {
   }
 }
 
+async function deleteNotification(id) {
+  if (!state.currentUser?.id) return;
+
+  const { error } = await supabaseClient
+    .from('notifications')
+    .delete()
+    .eq('id', id)
+    .eq('user_id', state.currentUser.id);
+
+  if (error) {
+    console.error('deleteNotification', error);
+  }
+}
+
+async function clearReadNotifications() {
+  if (!state.currentUser?.id) return;
+
+  const { error } = await supabaseClient
+    .from('notifications')
+    .delete()
+    .eq('user_id', state.currentUser.id)
+    .eq('is_read', true);
+
+  if (error) {
+    console.error('clearReadNotifications', error);
+  }
+}
+
+async function cleanupOldNotifications() {
+  if (!state.currentUser?.id) return;
+
+  const cutoff = new Date(Date.now() - 32 * 24 * 60 * 60 * 1000).toISOString();
+
+  const { error } = await supabaseClient
+    .from('notifications')
+    .delete()
+    .eq('user_id', state.currentUser.id)
+    .lt('created_at', cutoff);
+
+  if (error) {
+    console.error('cleanupOldNotifications', error);
+  }
+}
+
 async function refreshNotifications() {
   state.notifications = await fetchNotifications();
   renderNotifications();
@@ -356,12 +400,15 @@ function renderNotifications() {
   const list = $('#notifications-list');
   const badge = $('#notifications-count');
   const markAllBtn = $('#notifications-mark-all-read');
+  const clearReadBtn = $('#notifications-clear-read');
 
   if (!list || !badge) return;
 
   const unreadCount = state.notifications.filter(
     (notification) => !notification.is_read
   ).length;
+
+  const readCount = state.notifications.length - unreadCount;
 
   if (unreadCount > 0) {
     badge.classList.remove('hidden');
@@ -372,6 +419,10 @@ function renderNotifications() {
 
   if (markAllBtn) {
     markAllBtn.classList.toggle('hidden', unreadCount === 0);
+  }
+
+  if (clearReadBtn) {
+    clearReadBtn.classList.toggle('hidden', readCount === 0);
   }
 
   if (state.notifications.length === 0) {
@@ -394,7 +445,7 @@ function renderNotifications() {
 
       return `
       <div
-        class="notification-item px-4 py-3 border-b border-gray-100 cursor-pointer flex items-start gap-3 transition ${
+        class="notification-item group px-4 py-3 border-b border-gray-100 cursor-pointer flex items-start gap-3 transition ${
           !notification.is_read
             ? 'bg-brand-50/60 border-l-2 border-l-brand-500 hover:bg-brand-50'
             : 'bg-white hover:bg-gray-50'
@@ -424,6 +475,15 @@ function renderNotifications() {
         <span class="mt-1.5 w-2 h-2 rounded-full shrink-0 ${
           !notification.is_read ? 'bg-brand-600' : 'bg-transparent'
         }"></span>
+
+        <button
+          type="button"
+          class="notification-delete-btn shrink-0 w-6 h-6 rounded-md flex items-center justify-center text-gray-400 opacity-0 group-hover:opacity-100 hover:bg-red-50 hover:text-red-500 transition"
+          data-id="${notification.id}"
+          title="Delete notification"
+        >
+          <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+        </button>
       </div>
     `;
     })
@@ -3235,13 +3295,25 @@ document.addEventListener('click', async (e) => {
     return;
   }
 
-  const viewAllBtn = e.target.closest('#notifications-view-all');
+  const clearReadBtn = e.target.closest('#notifications-clear-read');
 
-  if (viewAllBtn) {
+  if (clearReadBtn) {
     e.stopPropagation();
 
-    toast('Notifications center coming soon', 'info');
-    notificationsDropdown?.classList.add('hidden');
+    await clearReadNotifications();
+    await refreshNotifications();
+    return;
+  }
+
+  const deleteBtn = e.target.closest('.notification-delete-btn');
+
+  if (deleteBtn) {
+    e.stopPropagation();
+
+    const id = Number(deleteBtn.dataset.id);
+
+    await deleteNotification(id);
+    await refreshNotifications();
     return;
   }
 
@@ -3505,6 +3577,7 @@ wireEvents();
       state.currentRole = null;
     }
 
+    await cleanupOldNotifications();
     state.notifications = await fetchNotifications();
 
   } catch (err) {
