@@ -53,6 +53,26 @@ const fmtDate = (d) => {
   }
 };
 
+const timeAgo = (d) => {
+  if (!d) return '';
+  const date = new Date(d);
+  if (isNaN(date)) return '';
+
+  const diffMs = Date.now() - date.getTime();
+  const diffSec = Math.floor(diffMs / 1000);
+  const diffMin = Math.floor(diffSec / 60);
+  const diffHour = Math.floor(diffMin / 60);
+  const diffDay = Math.floor(diffHour / 24);
+
+  if (diffSec < 60) return 'Just now';
+  if (diffMin < 60) return `${diffMin} min ago`;
+  if (diffHour < 24) return `${diffHour} hour${diffHour === 1 ? '' : 's'} ago`;
+  if (diffDay === 1) return 'Yesterday';
+  if (diffDay < 7) return `${diffDay} days ago`;
+
+  return fmtDate(d);
+};
+
 const deadlineClass = (d) => {
   if (!d) return '';
   const today = new Date();
@@ -208,6 +228,30 @@ function getMemberByName(name) {
   );
 }
 
+function getActorName() {
+  return getCurrentMember()?.name || state.currentUser?.email || 'Someone';
+}
+
+const NOTIFICATION_ICONS = {
+  task_created: { icon: 'list-plus', bg: 'bg-emerald-100', color: 'text-emerald-600' },
+  task_updated: { icon: 'pencil', bg: 'bg-blue-100', color: 'text-blue-600' },
+  task_deleted: { icon: 'trash-2', bg: 'bg-red-100', color: 'text-red-600' },
+  task_assigned: { icon: 'user-check', bg: 'bg-indigo-100', color: 'text-indigo-600' },
+  task_completed: { icon: 'check-circle-2', bg: 'bg-emerald-100', color: 'text-emerald-600' },
+  task_status_updated: { icon: 'refresh-cw', bg: 'bg-blue-100', color: 'text-blue-600' },
+  task_deadline_updated: { icon: 'calendar-clock', bg: 'bg-amber-100', color: 'text-amber-600' },
+  project_created: { icon: 'folder-plus', bg: 'bg-emerald-100', color: 'text-emerald-600' },
+  project_updated: { icon: 'folder-cog', bg: 'bg-blue-100', color: 'text-blue-600' },
+  project_deleted: { icon: 'folder-x', bg: 'bg-red-100', color: 'text-red-600' },
+  team_member_created: { icon: 'user-plus', bg: 'bg-emerald-100', color: 'text-emerald-600' },
+  team_member_updated: { icon: 'user-cog', bg: 'bg-blue-100', color: 'text-blue-600' },
+  team_member_deleted: { icon: 'user-minus', bg: 'bg-red-100', color: 'text-red-600' },
+};
+
+function getNotificationIcon(type) {
+  return NOTIFICATION_ICONS[type] || { icon: 'bell', bg: 'bg-gray-100', color: 'text-gray-500' };
+}
+
 async function notifyAdmins({
   title,
   message,
@@ -345,18 +389,23 @@ function renderNotifications() {
 
   list.innerHTML = state.notifications
     .slice(0, 20)
-    .map((notification) => `
+    .map((notification) => {
+      const { icon, bg, color } = getNotificationIcon(notification.type);
+
+      return `
       <div
-        class="notification-item px-4 py-3 border-b border-gray-100 cursor-pointer hover:bg-gray-50 flex items-start gap-3 ${
-          !notification.is_read ? 'bg-blue-50' : ''
+        class="notification-item px-4 py-3 border-b border-gray-100 cursor-pointer flex items-start gap-3 transition ${
+          !notification.is_read
+            ? 'bg-brand-50/60 border-l-2 border-l-brand-500 hover:bg-brand-50'
+            : 'bg-white hover:bg-gray-50'
         }"
         data-id="${notification.id}"
         data-entity-type="${notification.entity_type || ''}"
         data-entity-id="${notification.entity_id || ''}"
       >
-        <span class="mt-1.5 w-2 h-2 rounded-full shrink-0 ${
-          !notification.is_read ? 'bg-brand-600' : 'bg-transparent'
-        }"></span>
+        <div class="w-8 h-8 rounded-full ${bg} flex items-center justify-center shrink-0">
+          <i data-lucide="${icon}" class="w-4 h-4 ${color}"></i>
+        </div>
 
         <div class="flex-1 min-w-0">
           <div class="font-medium text-sm text-gray-900">
@@ -368,11 +417,16 @@ function renderNotifications() {
           </div>
 
           <div class="text-[11px] text-gray-400 mt-1.5">
-            ${fmtDate(notification.created_at)}
+            ${timeAgo(notification.created_at)}
           </div>
         </div>
+
+        <span class="mt-1.5 w-2 h-2 rounded-full shrink-0 ${
+          !notification.is_read ? 'bg-brand-600' : 'bg-transparent'
+        }"></span>
       </div>
-    `)
+    `;
+    })
     .join('');
 
   refreshIcons();
@@ -392,7 +446,7 @@ async function insertTeamMember(payload) {
   }
 
   await notifyAdmins({
-    title: 'New team member added',
+    title: `${getActorName()} added a team member`,
     message: `${data.name || 'A team member'} was added to the team.`,
     type: 'team_member_created',
     entityType: 'team_member',
@@ -417,7 +471,7 @@ async function updateTeamMember(id, payload) {
   }
 
   await notifyAdmins({
-    title: 'Team member updated',
+    title: `${getActorName()} updated a team member`,
     message: `${data.name || 'A team member'} profile was updated.`,
     type: 'team_member_updated',
     entityType: 'team_member',
@@ -456,7 +510,7 @@ async function insertProject(payload) {
   }
 
   await notifyAdmins({
-    title: 'New project created',
+    title: `${getActorName()} created a project`,
     message: `${data.project_name || 'A project'} was created.`,
     type: 'project_created',
     entityType: 'project',
@@ -481,7 +535,7 @@ async function updateProject(id, payload) {
   }
 
   await notifyAdmins({
-    title: 'Project updated',
+    title: `${getActorName()} updated a project`,
     message: `${data.project_name || 'A project'} was updated.`,
     type: 'project_updated',
     entityType: 'project',
@@ -505,7 +559,7 @@ async function insertTask(payload) {
   }
 
   await notifyAdmins({
-    title: 'New task created',
+    title: `${getActorName()} created a task`,
     message: `${data.task_info || 'A task'} was created and assigned to ${data.assigned_to || 'someone'}.`,
     type: 'task_created',
     entityType: 'task',
@@ -514,7 +568,7 @@ async function insertTask(payload) {
 
   await notifyAssignedMember({
     assignedTo: data.assigned_to,
-    title: 'New task assigned to you',
+    title: `${getActorName()} assigned you a task`,
     message: data.task_info || 'You have a new task.',
     type: 'task_assigned',
     entityType: 'task',
@@ -542,22 +596,45 @@ async function updateTask(id, payload) {
     return null;
   }
 
-  await notifyAdmins({
-    title: 'Task updated',
-    message: `${data.task_info || 'A task'} was updated.`,
-    type: 'task_updated',
-    entityType: 'task',
-    entityId: data.id,
-  });
+  const actor = getActorName();
 
-  if (
+  const assignedToChanged =
     payload.assigned_to &&
     oldTask &&
-    (oldTask.assigned_to || '') !== (payload.assigned_to || '')
-  ) {
+    (oldTask.assigned_to || '') !== (payload.assigned_to || '');
+
+  const statusChanged =
+    payload.status &&
+    oldTask &&
+    (oldTask.status || '') !== (payload.status || '');
+
+  const becameCompleted =
+    statusChanged && (data.status || '').toLowerCase() === 'completed';
+
+  if (assignedToChanged) {
+    await notifyAdmins({
+      title: `${actor} reassigned a task`,
+      message: `${data.task_info || 'A task'} was assigned to ${data.assigned_to || 'someone'}.`,
+      type: 'task_assigned',
+      entityType: 'task',
+      entityId: data.id,
+    });
+  }
+
+  if (becameCompleted) {
+    await notifyAdmins({
+      title: `${actor} completed a task`,
+      message: `${data.task_info || 'A task'} was marked as completed.`,
+      type: 'task_completed',
+      entityType: 'task',
+      entityId: data.id,
+    });
+  }
+
+  if (assignedToChanged) {
     await notifyAssignedMember({
       assignedTo: payload.assigned_to,
-      title: 'Task assigned to you',
+      title: `${actor} assigned you a task`,
       message: data.task_info || 'A task was assigned to you.',
       type: 'task_assigned',
       entityType: 'task',
@@ -565,14 +642,10 @@ async function updateTask(id, payload) {
     });
   }
 
-  if (
-    payload.status &&
-    oldTask &&
-    (oldTask.status || '') !== (payload.status || '')
-  ) {
+  if (statusChanged) {
     await notifyAssignedMember({
       assignedTo: data.assigned_to,
-      title: 'Task status updated',
+      title: `${actor} updated task status`,
       message: `${data.task_info || 'A task'} status changed to ${labelize(data.status)}.`,
       type: 'task_status_updated',
       entityType: 'task',
@@ -587,7 +660,7 @@ async function updateTask(id, payload) {
   ) {
     await notifyAssignedMember({
       assignedTo: data.assigned_to,
-      title: 'Task deadline updated',
+      title: `${actor} changed task deadline`,
       message: `${data.task_info || 'A task'} deadline changed to ${fmtDate(data.deadline)}.`,
       type: 'task_deadline_updated',
       entityType: 'task',
@@ -617,7 +690,7 @@ async function deleteProject(id) {
   }
 
   await notifyAdmins({
-    title: 'Project deleted',
+    title: `${getActorName()} deleted a project`,
     message: `${project?.project_name || 'A project'} was deleted.`,
     type: 'project_deleted',
     entityType: 'project',
@@ -644,7 +717,7 @@ async function deleteTask(id) {
   }
 
   await notifyAdmins({
-    title: 'Task deleted',
+    title: `${getActorName()} deleted a task`,
     message: `${task?.task_info || 'A task'} was deleted.`,
     type: 'task_deleted',
     entityType: 'task',
@@ -671,7 +744,7 @@ async function deleteTeamMember(id) {
   }
 
   await notifyAdmins({
-    title: 'Team member deleted',
+    title: `${getActorName()} deleted a team member`,
     message: `${member?.name || 'A team member'} was deleted.`,
     type: 'team_member_deleted',
     entityType: 'team_member',
@@ -3167,7 +3240,7 @@ document.addEventListener('click', async (e) => {
   if (viewAllBtn) {
     e.stopPropagation();
 
-    toast('Full notifications view is coming soon', 'info');
+    toast('Notifications center coming soon', 'info');
     notificationsDropdown?.classList.add('hidden');
     return;
   }
