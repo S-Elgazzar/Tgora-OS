@@ -289,9 +289,29 @@ async function markNotificationAsRead(id) {
   }
 }
 
+async function markAllNotificationsAsRead() {
+  if (!state.currentUser?.id) return;
+
+  const { error } = await supabaseClient
+    .from('notifications')
+    .update({ is_read: true })
+    .eq('user_id', state.currentUser.id)
+    .eq('is_read', false);
+
+  if (error) {
+    console.error('markAllNotificationsAsRead', error);
+  }
+}
+
+async function refreshNotifications() {
+  state.notifications = await fetchNotifications();
+  renderNotifications();
+}
+
 function renderNotifications() {
   const list = $('#notifications-list');
   const badge = $('#notifications-count');
+  const markAllBtn = $('#notifications-mark-all-read');
 
   if (!list || !badge) return;
 
@@ -306,12 +326,20 @@ function renderNotifications() {
     badge.classList.add('hidden');
   }
 
+  if (markAllBtn) {
+    markAllBtn.classList.toggle('hidden', unreadCount === 0);
+  }
+
   if (state.notifications.length === 0) {
     list.innerHTML = `
-      <div class="p-6 text-center text-sm text-gray-500">
-        No notifications
+      <div class="px-6 py-10 text-center text-sm text-gray-500">
+        <div class="w-10 h-10 mx-auto rounded-full bg-gray-100 flex items-center justify-center mb-2">
+          <i data-lucide="bell-off" class="w-5 h-5 text-gray-400"></i>
+        </div>
+        No notifications yet
       </div>
     `;
+    refreshIcons();
     return;
   }
 
@@ -319,27 +347,35 @@ function renderNotifications() {
     .slice(0, 20)
     .map((notification) => `
       <div
-        class="notification-item p-4 border-b border-gray-100 cursor-pointer hover:bg-gray-50 ${
+        class="notification-item px-4 py-3 border-b border-gray-100 cursor-pointer hover:bg-gray-50 flex items-start gap-3 ${
           !notification.is_read ? 'bg-blue-50' : ''
         }"
         data-id="${notification.id}"
-data-entity-type="${notification.entity_type || ''}"
-data-entity-id="${notification.entity_id || ''}"
+        data-entity-type="${notification.entity_type || ''}"
+        data-entity-id="${notification.entity_id || ''}"
       >
-        <div class="font-medium text-sm text-gray-900">
-          ${escapeHtml(notification.title)}
-        </div>
+        <span class="mt-1.5 w-2 h-2 rounded-full shrink-0 ${
+          !notification.is_read ? 'bg-brand-600' : 'bg-transparent'
+        }"></span>
 
-        <div class="text-xs text-gray-600 mt-1">
-          ${escapeHtml(notification.message || '')}
-        </div>
+        <div class="flex-1 min-w-0">
+          <div class="font-medium text-sm text-gray-900">
+            ${escapeHtml(notification.title)}
+          </div>
 
-        <div class="text-[11px] text-gray-400 mt-2">
-          ${fmtDate(notification.created_at)}
+          <div class="text-xs text-gray-600 mt-0.5">
+            ${escapeHtml(notification.message || '')}
+          </div>
+
+          <div class="text-[11px] text-gray-400 mt-1.5">
+            ${fmtDate(notification.created_at)}
+          </div>
         </div>
       </div>
     `)
     .join('');
+
+  refreshIcons();
 }
 
 async function insertTeamMember(payload) {
@@ -3116,6 +3152,26 @@ document.addEventListener('click', async (e) => {
     return;
   }
 
+  const markAllReadBtn = e.target.closest('#notifications-mark-all-read');
+
+  if (markAllReadBtn) {
+    e.stopPropagation();
+
+    await markAllNotificationsAsRead();
+    await refreshNotifications();
+    return;
+  }
+
+  const viewAllBtn = e.target.closest('#notifications-view-all');
+
+  if (viewAllBtn) {
+    e.stopPropagation();
+
+    toast('Full notifications view is coming soon', 'info');
+    notificationsDropdown?.classList.add('hidden');
+    return;
+  }
+
   const item = e.target.closest('.notification-item');
 
 if (item) {
@@ -3124,7 +3180,7 @@ if (item) {
   const entityId = Number(item.dataset.entityId);
 
   await markNotificationAsRead(id);
-  await refreshDataAndRender();
+  await refreshNotifications();
 
   $('#notifications-dropdown')?.classList.add('hidden');
 
@@ -3309,10 +3365,30 @@ function subscribeToRealtimeChanges() {
 
         console.log('Team members realtime refresh completed');
       }
-    )
-    .subscribe((status) => {
-      console.log('Realtime status:', status);
-    });
+    );
+
+  if (state.currentUser?.id) {
+    channel.on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'notifications',
+        filter: `user_id=eq.${state.currentUser.id}`,
+      },
+      async (payload) => {
+        console.log('Realtime notifications change:', payload);
+
+        await refreshNotifications();
+
+        console.log('Notifications realtime refresh completed');
+      }
+    );
+  }
+
+  channel.subscribe((status) => {
+    console.log('Realtime status:', status);
+  });
 }
 
 async function init() {
@@ -3355,6 +3431,8 @@ wireEvents();
       state.currentMember = null;
       state.currentRole = null;
     }
+
+    state.notifications = await fetchNotifications();
 
   } catch (err) {
     console.error(err);
