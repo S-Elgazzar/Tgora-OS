@@ -681,7 +681,7 @@ function renderAlerts() {
     .map((alert) => {
       const { icon, bg, color, label } = getAlertStyle(alert.alertType);
 
-      const assignedLine = (isAdmin() && alert.kind === 'task')
+      const assignedLine = ((isAdmin() || isManager()) && alert.kind === 'task')
         ? `<div class="text-[11px] text-gray-400 mt-1">Assigned to: ${escapeHtml(alert.assignedTo || 'Unassigned')}</div>`
         : '';
 
