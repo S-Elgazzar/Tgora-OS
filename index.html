@@ -787,6 +787,40 @@
 
   </div>
 
+  <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+    <div class="stat-card border-l-4 border-yellow-400 bg-gradient-to-br from-yellow-50 to-white">
+      <div class="flex items-center gap-2 mb-1">
+        <span class="text-xl">🏆</span>
+        <p class="text-xs text-gray-500 font-medium">Best Performer — <span id="team-best-performer-period"></span></p>
+      </div>
+      <h4 id="team-best-performer-name" class="text-base font-semibold text-gray-900">Not enough data</h4>
+      <p id="team-best-performer-meta" class="text-xs text-gray-500 mt-1"></p>
+      <p class="text-[11px] text-gray-400 mt-1">This month</p>
+    </div>
+
+    <div class="stat-card border-l-4 border-red-400 bg-gradient-to-br from-red-50 to-white">
+      <div class="flex items-center gap-2 mb-1">
+        <span class="text-xl">⚠️</span>
+        <p class="text-xs text-gray-500 font-medium">Needs Attention — <span id="team-needs-attention-period"></span></p>
+      </div>
+      <h4 id="team-needs-attention-name" class="text-base font-semibold text-gray-900">Not enough data</h4>
+      <p id="team-needs-attention-meta" class="text-xs text-gray-500 mt-1"></p>
+      <p class="text-[11px] text-gray-400 mt-1">This month</p>
+    </div>
+
+    <div
+      class="stat-card cursor-pointer hover:shadow-md transition flex flex-col items-start justify-center"
+      data-action="open-performance-ranking"
+    >
+      <div class="flex items-center gap-2 mb-1">
+        <span class="text-xl">📊</span>
+        <p class="text-xs text-gray-500 font-medium">View Ranking</p>
+      </div>
+      <h4 id="team-ranking-card-title" class="text-base font-semibold text-gray-900">Team Performance Ranking</h4>
+      <p class="text-xs text-gray-500 mt-1">View this month's team ranking.</p>
+    </div>
+  </div>
+
   <div class="bg-white rounded-xl border border-gray-200 shadow-card overflow-hidden">
 
     <div class="overflow-x-auto">
@@ -1378,6 +1412,28 @@
     </div>
 
     <div id="performance-details-content" class="px-6 py-5">
+      <!-- Filled by JS -->
+    </div>
+  </div>
+</div>
+
+<!-- ============ PERFORMANCE RANKING MODAL ============ -->
+<div id="performance-ranking-modal" class="modal hidden">
+  <div class="modal-overlay" data-action="close-modal"></div>
+
+  <div class="modal-panel max-w-3xl">
+    <div class="px-6 py-5 border-b border-gray-100 flex items-center justify-between">
+      <div>
+        <h3 class="text-lg font-semibold text-gray-900">Team Performance Ranking</h3>
+        <p class="text-xs text-gray-500 mt-0.5">Ranked by this month's performance score.</p>
+      </div>
+
+      <button data-action="close-modal" class="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center">
+        <i data-lucide="x" class="w-4 h-4 text-gray-500"></i>
+      </button>
+    </div>
+
+    <div id="performance-ranking-content" class="px-6 py-5">
       <!-- Filled by JS -->
     </div>
   </div>

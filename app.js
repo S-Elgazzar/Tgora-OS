@@ -32,6 +32,8 @@ const state = {
   search: '',
   pendingDelete: null, // { type: 'project' | 'task', id }
   alertsFilter: 'all', // 'all' | 'overdue' | 'due_today'
+  teamPerformanceRanking: [],
+  teamPerformanceNotEnoughData: [],
 };
 
 // ---------- DOM Helpers ----------
@@ -2264,6 +2266,8 @@ ${
 
     refreshIcons();
   }
+
+  renderTeamPerformance();
 }
 
   $$('[data-action="open-project-modal"]').forEach((btn) => {
@@ -3160,6 +3164,182 @@ function calculateMemberPerformance(memberTasks) {
   };
 }
 
+function getPerformanceRankingBadge(rank, performanceScore) {
+  if (performanceScore < 40) return 'Needs Attention';
+
+  if (rank === 1) return '🥇 Top Performer';
+  if (rank === 2) return '🥈 Strong Performer';
+  if (rank === 3) return '🥉 Good Progress';
+
+  return `Rank #${rank}`;
+}
+
+function renderTeamPerformance() {
+  const nameEl = $('#team-best-performer-name');
+  const metaEl = $('#team-best-performer-meta');
+  const attentionNameEl = $('#team-needs-attention-name');
+  const attentionMetaEl = $('#team-needs-attention-meta');
+
+  if (!nameEl || !metaEl || !attentionNameEl || !attentionMetaEl) return;
+
+  const period = getCurrentPerformancePeriod();
+
+  const bestPeriodEl = $('#team-best-performer-period');
+  const attentionPeriodEl = $('#team-needs-attention-period');
+  const rankingTitleEl = $('#team-ranking-card-title');
+
+  if (bestPeriodEl) bestPeriodEl.textContent = period.label;
+  if (attentionPeriodEl) attentionPeriodEl.textContent = period.label;
+  if (rankingTitleEl) rankingTitleEl.textContent = `${period.label} Performance Ranking`;
+
+  const allPerf = state.teamMembers.map((member) => {
+    const memberTasks = state.tasks.filter(
+      (t) =>
+        (t.assigned_to || '').toLowerCase().trim() ===
+        (member.name || '').toLowerCase().trim()
+    );
+
+    const perf = calculateMemberPerformance(memberTasks);
+
+    return { member, perf };
+  });
+
+  const ranking = allPerf
+    .filter(({ perf }) => perf.monthlyTasks.length >= 3)
+    .sort((a, b) => b.perf.performanceScore - a.perf.performanceScore);
+
+  const notEnoughData = allPerf.filter(
+    ({ perf }) => perf.monthlyTasks.length > 0 && perf.monthlyTasks.length < 3
+  );
+
+  state.teamPerformanceRanking = ranking;
+  state.teamPerformanceNotEnoughData = notEnoughData;
+
+  if (ranking.length === 0) {
+    nameEl.textContent = 'Not enough data';
+    metaEl.textContent = '';
+    attentionNameEl.textContent = 'Not enough data';
+    attentionMetaEl.textContent = '';
+    return;
+  }
+
+  const best = ranking[0];
+  const attention = ranking[ranking.length - 1];
+
+  nameEl.textContent = best.member.name || 'Unknown Member';
+  metaEl.textContent = `${best.perf.performanceScore}% • ${best.perf.performanceLabel}`;
+
+  attentionNameEl.textContent = attention.member.name || 'Unknown Member';
+  attentionMetaEl.textContent = `${attention.perf.performanceScore}% • ${attention.perf.performanceLabel}`;
+}
+
+function openPerformanceRankingModal() {
+  const content = $('#performance-ranking-content');
+  if (!content) return;
+
+  const ranking = state.teamPerformanceRanking;
+  const notEnoughData = state.teamPerformanceNotEnoughData || [];
+
+  const period = getCurrentPerformancePeriod();
+  const monthTitle = `${period.label} Ranking`;
+  const periodSubtitle = `<p class="text-xs text-gray-500 mb-3">Performance period: ${escapeHtml(period.rangeLabel)}</p>`;
+
+  const notEnoughDataSection = notEnoughData.length
+    ? `
+      <div class="mt-5">
+        <h4 class="text-sm font-semibold text-gray-900 mb-2">Not Enough Data</h4>
+        <p class="text-xs text-gray-500 mb-2">These members have fewer than 3 counted tasks this month and are not ranked yet.</p>
+        <div class="border border-gray-200 rounded-lg overflow-hidden">
+          <table class="w-full text-sm">
+            <thead class="bg-gray-50 border-b border-gray-100">
+              <tr class="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th class="px-4 py-2.5">Member</th>
+                <th class="px-4 py-2.5">Job Title</th>
+                <th class="px-4 py-2.5">Counted Tasks</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${notEnoughData
+                .map(
+                  ({ member, perf }) => `
+                    <tr class="border-b border-gray-100">
+                      <td class="px-4 py-2.5 text-sm font-medium text-gray-900">${escapeHtml(member.name || 'Unknown Member')}</td>
+                      <td class="px-4 py-2.5 text-sm text-gray-600">${escapeHtml(member.job_title || '—')}</td>
+                      <td class="px-4 py-2.5 text-sm text-gray-600">${perf.monthlyTasks.length}</td>
+                    </tr>
+                  `
+                )
+                .join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `
+    : '';
+
+  if (!ranking.length) {
+    content.innerHTML = `
+      <h3 class="text-base font-semibold text-gray-900 mb-3">${escapeHtml(monthTitle)}</h3>
+      ${periodSubtitle}
+      <div class="px-6 py-10 text-center text-sm text-gray-500">
+        Not enough data to show a ranking yet.
+      </div>
+      ${notEnoughDataSection}
+    `;
+    refreshIcons();
+    openModal('performance-ranking-modal');
+    return;
+  }
+
+  const rows = ranking
+    .map(({ member, perf }, index) => {
+      const rank = index + 1;
+      const badge = getPerformanceRankingBadge(rank, perf.performanceScore);
+
+      return `
+        <tr class="border-b border-gray-100">
+          <td class="px-4 py-2.5 text-sm font-semibold text-gray-900">#${rank}</td>
+          <td class="px-4 py-2.5 text-sm text-gray-700">${escapeHtml(badge)}</td>
+          <td class="px-4 py-2.5 text-sm font-medium text-gray-900">${escapeHtml(member.name || 'Unknown Member')}</td>
+          <td class="px-4 py-2.5 text-sm text-gray-600">${escapeHtml(member.job_title || '—')}</td>
+          <td class="px-4 py-2.5 text-sm font-semibold text-brand-700">${perf.performanceScore}%</td>
+          <td class="px-4 py-2.5 text-sm text-gray-600">${escapeHtml(perf.performanceLabel)}</td>
+          <td class="px-4 py-2.5 text-sm text-gray-600">${perf.monthlyTasks.length}</td>
+          <td class="px-4 py-2.5 text-sm text-gray-600">${perf.totalPoints} / ${perf.maxPoints}</td>
+        </tr>
+      `;
+    })
+    .join('');
+
+  content.innerHTML = `
+    <h3 class="text-base font-semibold text-gray-900 mb-3">${escapeHtml(monthTitle)}</h3>
+    ${periodSubtitle}
+    <div class="border border-gray-200 rounded-lg overflow-hidden">
+      <table class="w-full text-sm">
+        <thead class="bg-gray-50 border-b border-gray-100">
+          <tr class="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+            <th class="px-4 py-2.5">Rank</th>
+            <th class="px-4 py-2.5">Badge</th>
+            <th class="px-4 py-2.5">Member</th>
+            <th class="px-4 py-2.5">Job Title</th>
+            <th class="px-4 py-2.5">Score</th>
+            <th class="px-4 py-2.5">Label</th>
+            <th class="px-4 py-2.5">Counted Tasks</th>
+            <th class="px-4 py-2.5">Points</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows}
+        </tbody>
+      </table>
+    </div>
+    ${notEnoughDataSection}
+  `;
+
+  refreshIcons();
+  openModal('performance-ranking-modal');
+}
+
 function openMemberDetails(memberId) {
   const member = state.teamMembers.find(
     (m) => Number(m.id) === Number(memberId)
@@ -3463,6 +3643,22 @@ const PERFORMANCE_MONTH_NAMES = [
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
 
+function getCurrentPerformancePeriod() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth();
+  const monthName = PERFORMANCE_MONTH_NAMES[month];
+  const lastDay = new Date(year, month + 1, 0).getDate();
+
+  return {
+    year,
+    month,
+    monthName,
+    label: `${monthName} ${year}`,
+    rangeLabel: `${monthName} 1–${lastDay}, ${year}`,
+  };
+}
+
 function openPerformanceDetailsModal() {
   const member = state.teamMembers.find(
     (m) => Number(m.id) === Number(state.selectedMemberId)
@@ -3486,7 +3682,7 @@ function openPerformanceDetailsModal() {
   const content = $('#performance-details-content');
   if (!content) return;
 
-  const monthLabel = `${PERFORMANCE_MONTH_NAMES[perf.currentMonth]} ${perf.currentYear}`;
+  const period = getCurrentPerformancePeriod();
 
   const breakdownItems = [
     { label: 'Completed Early', count: perf.breakdown.completedEarly.length, points: '+120' },
@@ -3532,7 +3728,7 @@ function openPerformanceDetailsModal() {
     `;
 
   content.innerHTML = `
-    <div class="text-xs text-gray-500 mb-4">${escapeHtml(monthLabel)}</div>
+    <div class="text-xs text-gray-500 mb-4">Performance period: ${escapeHtml(period.label)}</div>
 
     <div class="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-5">
       <div class="stat-card">
@@ -3758,6 +3954,11 @@ document.addEventListener('click', (e) => {
   openCreateMemberModal();
   return;
 }
+
+  if (action === 'open-performance-ranking') {
+    openPerformanceRankingModal();
+    return;
+  }
 
   if (action === 'close-modal') {
     closeModal();
