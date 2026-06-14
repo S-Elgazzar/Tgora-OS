@@ -2782,7 +2782,6 @@ async function handleTaskSubmit(e) {
     closeModal();
 
     await refreshDataAndRender();
-    setView('tasks');
   }
 }
 
@@ -3079,15 +3078,71 @@ localStorage.setItem(
   const completedCount = completedTasks.length;
   const overdueCount = overdueTasks.length;
 
-  const weightedPoints =
-    completedCount * 1.0 +
-    reviewTasks.length * 0.6 +
-    inProgressTasks.length * 0.4 +
-    todoTasks.length * 0;
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth();
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
 
-  let performanceScore =
-    Math.round((weightedPoints * 100) / Math.max(totalTasks, 1)) -
-    overdueCount * 10;
+  const isSameMonth = (dateStr) => {
+    if (!dateStr) return false;
+    const d = new Date(dateStr);
+    return d.getFullYear() === currentYear && d.getMonth() === currentMonth;
+  };
+
+  const isOverdueIncomplete = (task) => {
+    if (!task.deadline) return false;
+    if ((task.status || '').toLowerCase() === 'completed') return false;
+
+    const deadline = new Date(task.deadline);
+    deadline.setHours(0, 0, 0, 0);
+
+    return deadline < today;
+  };
+
+  const monthlyTasks = memberTasks.filter((t) => {
+    const status = (t.status || '').toLowerCase();
+
+    if (status === 'completed' && isSameMonth(t.completed_at)) return true;
+    if (isSameMonth(t.deadline)) return true;
+    if (isOverdueIncomplete(t)) return true;
+
+    return false;
+  });
+
+  let totalPoints = 0;
+
+  monthlyTasks.forEach((t) => {
+    const status = (t.status || '').toLowerCase();
+
+    if (status === 'completed') {
+      if (t.deadline && t.completed_at) {
+        const deadline = new Date(t.deadline);
+        deadline.setHours(0, 0, 0, 0);
+
+        const completedAt = new Date(t.completed_at);
+        completedAt.setHours(0, 0, 0, 0);
+
+        if (completedAt < deadline) totalPoints += 120;
+        else if (completedAt.getTime() === deadline.getTime()) totalPoints += 100;
+        else totalPoints += 60;
+      } else {
+        totalPoints += 80;
+      }
+    } else if (isOverdueIncomplete(t)) {
+      totalPoints -= 40;
+    } else if (status === 'review') {
+      totalPoints += 20;
+    } else if (status === 'in_progress') {
+      totalPoints += 10;
+    }
+  });
+
+  const maxPoints = monthlyTasks.length * 120;
+
+  let performanceScore = maxPoints > 0
+    ? Math.round((totalPoints / maxPoints) * 100)
+    : 0;
 
   performanceScore = Math.min(Math.max(performanceScore, 0), 100);
 
