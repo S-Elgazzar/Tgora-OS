@@ -505,7 +505,7 @@ function renderNotifications() {
 }
 
 function getAlertVisibleTasks() {
-  if (isAdmin()) return state.tasks;
+  if (isAdmin() || isManager()) return state.tasks;
 
   const currentMember = getCurrentMember();
 
@@ -516,6 +516,17 @@ function getAlertVisibleTasks() {
       (t.assigned_to || '').toLowerCase().trim() ===
       (currentMember.name || '').toLowerCase().trim()
   );
+}
+
+const ALERT_GROUP_LABELS = {
+  mine: 'My Tasks',
+  other: 'Team Tasks',
+  project: 'Projects',
+};
+
+function getAlertGroup(alert) {
+  if (alert.kind === 'project') return 'project';
+  return alert.isMine ? 'mine' : 'other';
 }
 
 function computeAlerts() {
@@ -593,13 +604,8 @@ function computeAlerts() {
     project_due_today: 1,
   };
 
-  const getGroup = (alert) => {
-    if (alert.kind === 'project') return 'project';
-    return alert.isMine ? 'mine' : 'other';
-  };
-
   alerts.sort((a, b) => {
-    const groupDiff = groupOrder[getGroup(a)] - groupOrder[getGroup(b)];
+    const groupDiff = groupOrder[getAlertGroup(a)] - groupOrder[getAlertGroup(b)];
     if (groupDiff !== 0) return groupDiff;
 
     const sevDiff = (severityOrder[a.alertType] ?? 99) - (severityOrder[b.alertType] ?? 99);
@@ -669,6 +675,8 @@ function renderAlerts() {
     return;
   }
 
+  let lastGroup = null;
+
   list.innerHTML = filteredAlerts
     .map((alert) => {
       const { icon, bg, color, label } = getAlertStyle(alert.alertType);
@@ -677,7 +685,19 @@ function renderAlerts() {
         ? `<div class="text-[11px] text-gray-400 mt-1">Assigned to: ${escapeHtml(alert.assignedTo || 'Unassigned')}</div>`
         : '';
 
+      const group = getAlertGroup(alert);
+      let groupHeader = '';
+      if (group !== lastGroup) {
+        groupHeader = `
+        <div class="px-4 py-1.5 bg-gray-50 border-b border-gray-100 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+          ${ALERT_GROUP_LABELS[group]}
+        </div>
+      `;
+        lastGroup = group;
+      }
+
       return `
+      ${groupHeader}
       <div
         class="alert-item px-4 py-3 border-b border-gray-100 cursor-pointer hover:bg-gray-50 flex items-start gap-3 transition"
         data-kind="${alert.kind}"
