@@ -2650,6 +2650,8 @@ function openEditTaskModal(id) {
 
   const form = $('#task-form');
 
+  syncTaskProjectSelect();
+
   form.task_info.value = task.task_info || '';
   form.assigned_to.value = task.assigned_to || '';
   form.status.value = task.status || 'todo';
@@ -3031,12 +3033,20 @@ localStorage.setItem(
       (member.name || '').toLowerCase().trim()
   );
 
-  const completedTasks = memberTasks.filter(
-    (t) => (t.status || '').toLowerCase() === 'completed'
+  const todoTasks = memberTasks.filter(
+    (t) => (t.status || '').toLowerCase() === 'todo'
   );
 
-  const progressTasks = memberTasks.filter(
-    (t) => ['in_progress', 'review'].includes((t.status || '').toLowerCase())
+  const inProgressTasks = memberTasks.filter(
+    (t) => (t.status || '').toLowerCase() === 'in_progress'
+  );
+
+  const reviewTasks = memberTasks.filter(
+    (t) => (t.status || '').toLowerCase() === 'review'
+  );
+
+  const completedTasks = memberTasks.filter(
+    (t) => (t.status || '').toLowerCase() === 'completed'
   );
 
   const overdueTasks = memberTasks.filter((t) => {
@@ -3056,11 +3066,17 @@ localStorage.setItem(
   const completedCount = completedTasks.length;
   const overdueCount = overdueTasks.length;
 
+  const weightedPoints =
+    completedCount * 1.0 +
+    reviewTasks.length * 0.6 +
+    inProgressTasks.length * 0.4 +
+    todoTasks.length * 0;
+
   let performanceScore =
-    Math.round((completedCount * 100) / Math.max(totalTasks, 1)) -
+    Math.round((weightedPoints * 100) / Math.max(totalTasks, 1)) -
     overdueCount * 10;
 
-  performanceScore = Math.max(performanceScore, 0);
+  performanceScore = Math.min(Math.max(performanceScore, 0), 100);
 
   let performanceLabel = 'Needs Improvement';
 
@@ -3083,8 +3099,10 @@ localStorage.setItem(
   `;
 
   $('#member-total-tasks').textContent = totalTasks;
+  $('#member-todo-tasks').textContent = todoTasks.length;
+  $('#member-progress-tasks').textContent = inProgressTasks.length;
+  $('#member-review-tasks').textContent = reviewTasks.length;
   $('#member-completed-tasks').textContent = completedCount;
-  $('#member-progress-tasks').textContent = progressTasks.length;
   $('#member-overdue-tasks').textContent = overdueCount;
 
   const performanceScoreEl = $('#member-performance-score');
@@ -3227,8 +3245,10 @@ localStorage.setItem(
   function activateCard(cardEl) {
     const cards = [
       $('#member-total-tasks'),
-      $('#member-completed-tasks'),
+      $('#member-todo-tasks'),
       $('#member-progress-tasks'),
+      $('#member-review-tasks'),
+      $('#member-completed-tasks'),
       $('#member-overdue-tasks')
     ]
       .map((el) => el?.closest('.stat-card'))
@@ -3244,8 +3264,10 @@ localStorage.setItem(
   }
 
   const totalCard = $('#member-total-tasks')?.closest('.stat-card');
-  const completedCard = $('#member-completed-tasks')?.closest('.stat-card');
+  const todoCard = $('#member-todo-tasks')?.closest('.stat-card');
   const progressCard = $('#member-progress-tasks')?.closest('.stat-card');
+  const reviewCard = $('#member-review-tasks')?.closest('.stat-card');
+  const completedCard = $('#member-completed-tasks')?.closest('.stat-card');
   const overdueCard = $('#member-overdue-tasks')?.closest('.stat-card');
 
   if (totalCard) {
@@ -3256,11 +3278,11 @@ localStorage.setItem(
     };
   }
 
-  if (completedCard) {
-    completedCard.classList.add('cursor-pointer');
-    completedCard.onclick = () => {
-      activateCard(completedCard);
-      renderMemberTasksTable(completedTasks);
+  if (todoCard) {
+    todoCard.classList.add('cursor-pointer');
+    todoCard.onclick = () => {
+      activateCard(todoCard);
+      renderMemberTasksTable(todoTasks);
     };
   }
 
@@ -3268,7 +3290,23 @@ localStorage.setItem(
     progressCard.classList.add('cursor-pointer');
     progressCard.onclick = () => {
       activateCard(progressCard);
-      renderMemberTasksTable(progressTasks);
+      renderMemberTasksTable(inProgressTasks);
+    };
+  }
+
+  if (reviewCard) {
+    reviewCard.classList.add('cursor-pointer');
+    reviewCard.onclick = () => {
+      activateCard(reviewCard);
+      renderMemberTasksTable(reviewTasks);
+    };
+  }
+
+  if (completedCard) {
+    completedCard.classList.add('cursor-pointer');
+    completedCard.onclick = () => {
+      activateCard(completedCard);
+      renderMemberTasksTable(completedTasks);
     };
   }
 
