@@ -2040,6 +2040,7 @@ function renderAll() {
   renderTasks();
   renderMyPerformance();
   renderTeamLeaderboard();
+  renderMyPerformanceTrend();
 
   const savedView = localStorage.getItem('tgora_current_view');
 
@@ -3721,6 +3722,104 @@ function renderTeamLeaderboard() {
       <p class="text-xs font-medium text-gray-500 mb-2">My Position</p>
       ${myPositionHtml}
       ${gapHtml}
+    </div>
+  `;
+}
+
+async function renderMyPerformanceTrend() {
+  const widget = $('#my-performance-trend-widget');
+  if (!widget) return;
+
+  const member = getCurrentMember();
+
+  if (isAdmin() || !member) {
+    widget.classList.add('hidden');
+    return;
+  }
+
+  widget.classList.remove('hidden');
+
+  const body = $('#my-performance-trend-body');
+  if (!body) return;
+
+  const { data, error } = await supabaseClient
+    .from('monthly_performance')
+    .select('year, month, score')
+    .eq('member_id', member.id)
+    .order('year', { ascending: false })
+    .order('month', { ascending: false })
+    .limit(6);
+
+  if (error) {
+    console.error('renderMyPerformanceTrend', error);
+    body.innerHTML = `<p class="text-sm text-gray-500">Unable to load performance history.</p>`;
+    return;
+  }
+
+  const rows = (data || []).slice().reverse();
+
+  if (rows.length === 0) {
+    body.innerHTML = `<p class="text-sm text-gray-500">No performance history yet.</p>`;
+    return;
+  }
+
+  if (rows.length === 1) {
+    const only = rows[0];
+
+    body.innerHTML = `
+      <p class="text-2xl font-bold text-gray-900">${only.score}%</p>
+      <p class="text-xs text-gray-500 mt-1">${PERFORMANCE_MONTH_NAMES[only.month - 1]} ${only.year}</p>
+      <p class="text-xs text-gray-500 mt-3">Not enough history to show trend.</p>
+    `;
+    return;
+  }
+
+  const latest = rows[rows.length - 1];
+  const previous = rows[rows.length - 2];
+  const diff = latest.score - previous.score;
+
+  let trendIcon = '➡️';
+  let trendLabel = 'Stable';
+  let trendClass = 'text-gray-500';
+
+  if (diff > 0) {
+    trendIcon = '⬆️';
+    trendLabel = 'Up';
+    trendClass = 'text-emerald-600';
+  } else if (diff < 0) {
+    trendIcon = '⬇️';
+    trendLabel = 'Down';
+    trendClass = 'text-rose-600';
+  }
+
+  const diffLabel = diff > 0 ? `+${diff}%` : `${diff}%`;
+
+  const maxScore = Math.max(...rows.map((r) => r.score), 1);
+
+  const bars = rows
+    .map((row) => {
+      const heightPct = Math.max((row.score / maxScore) * 100, 4);
+      const monthLabel = PERFORMANCE_MONTH_NAMES[row.month - 1].slice(0, 3);
+
+      return `
+        <div class="flex flex-col items-center gap-1 flex-1">
+          <p class="text-xs font-semibold text-gray-700">${row.score}%</p>
+          <div class="w-full bg-gray-100 rounded-md flex items-end" style="height: 80px;">
+            <div class="w-full bg-brand-500 rounded-md" style="height: ${heightPct}%;"></div>
+          </div>
+          <p class="text-xs text-gray-500">${escapeHtml(monthLabel)} ${row.year}</p>
+        </div>
+      `;
+    })
+    .join('');
+
+  body.innerHTML = `
+    <div class="mb-3">
+      <p class="text-xs text-gray-500">Latest vs Previous</p>
+      <p class="text-base font-semibold ${trendClass}">${trendIcon} ${trendLabel} (${diffLabel})</p>
+    </div>
+    <div class="flex items-end gap-2">
+      ${bars}
     </div>
   `;
 }
