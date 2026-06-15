@@ -2469,33 +2469,44 @@ async function handleMemberSubmit(e) {
       data: { session },
     } = await supabaseClient.auth.getSession();
 
-    const response = await fetch('/api/create-member', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${session.access_token}`,
-      },
-      body: JSON.stringify({
-        ...payload,
-        password,
-      }),
-    });
+    try {
+      const response = await fetch('/api/create-member', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          ...payload,
+          password,
+        }),
+      });
 
-    const data = await response.json();
+      let data;
 
-    if (!response.ok) {
-      toast(data.error || 'Failed to create member account', 'error');
+      try {
+        data = await response.json();
+      } catch (parseErr) {
+        throw new Error('Failed to create member. Please try again.');
+      }
 
+      if (!response.ok) {
+        throw new Error(data?.error || 'Failed to create member account');
+      }
+
+      result = data.member;
+    } catch (err) {
+      toast(err.message || 'Failed to create member. Please try again.', 'error');
+    } finally {
       submitBtn.disabled = false;
       submitBtn.innerHTML =
         `<i data-lucide="check" class="w-4 h-4"></i>
         Save Member`;
 
       refreshIcons();
-      return;
     }
 
-    result = data.member;
+    if (!result) return;
   }
 
   submitBtn.disabled = false;
