@@ -3174,6 +3174,175 @@ function getPerformanceRankingBadge(rank, performanceScore) {
   return `Rank #${rank}`;
 }
 
+async function generatePerformanceSnapshot() {
+  const period = getCurrentPerformancePeriod();
+
+  const confirmed = window.confirm(
+    `Generate performance snapshot for ${period.label}? This will update existing records for this month.`
+  );
+
+  if (!confirmed) return;
+
+  const allPerf = state.teamMembers.map((member) => {
+    const memberTasks = state.tasks.filter(
+      (t) =>
+        (t.assigned_to || '').toLowerCase().trim() ===
+        (member.name || '').toLowerCase().trim()
+    );
+
+    const perf = calculateMemberPerformance(memberTasks);
+
+    return { member, perf };
+  });
+
+  const eligible = allPerf
+    .filter(({ perf }) => perf.monthlyTasks.length >= 3)
+    .sort((a, b) => b.perf.performanceScore - a.perf.performanceScore);
+
+  if (eligible.length === 0) {
+    toast('Not enough data to generate snapshot.', 'error');
+    return;
+  }
+
+  const now = new Date().toISOString();
+
+  const rows = eligible.map(({ member, perf }, index) => ({
+    member_id: member.id,
+    month: period.month + 1,
+    year: period.year,
+    total_tasks: perf.monthlyTasks.length,
+    completed_early: perf.breakdown.completedEarly.length,
+    completed_on_time: perf.breakdown.completedOnTime.length,
+    completed_late: perf.breakdown.completedLate.length,
+    completed_no_deadline: perf.breakdown.completedNoDeadline.length,
+    overdue_tasks: perf.breakdown.overdueIncomplete.length,
+    total_points: perf.totalPoints,
+    max_points: perf.maxPoints,
+    score: perf.performanceScore,
+    rank: index + 1,
+    is_winner: index === 0,
+    calculated_at: now,
+    updated_at: now,
+  }));
+
+  const { error } = await supabaseClient
+    .from('monthly_performance')
+    .upsert(rows, { onConflict: 'member_id,month,year' });
+
+  if (error) {
+    console.error('generatePerformanceSnapshot', error);
+    toast(error.message || 'Failed to save snapshot', 'error');
+    return;
+  }
+
+  toast('Monthly performance snapshot saved.', 'success');
+}
+
+function getPerformanceLabelForScore(score) {
+  if (score >= 90) return 'Excellent';
+  if (score >= 75) return 'Very Good';
+  if (score >= 60) return 'Good';
+  if (score >= 40) return 'Average';
+
+  return 'Needs Improvement';
+}
+
+async function openMonthlyHistoryModal() {
+  const content = $('#monthly-history-content');
+  if (!content) return;
+
+  const { data, error } = await supabaseClient
+    .from('monthly_performance')
+    .select('*, team_members(name, job_title)')
+    .order('year', { ascending: false })
+    .order('month', { ascending: false })
+    .order('rank', { ascending: true });
+
+  if (error) {
+    console.error('openMonthlyHistoryModal', error);
+    toast(error.message || 'Failed to load monthly history', 'error');
+    return;
+  }
+
+  if (!data || data.length === 0) {
+    content.innerHTML = `
+      <div class="px-6 py-10 text-center text-sm text-gray-500">
+        No monthly performance snapshots yet.
+      </div>
+    `;
+    openModal('monthly-history-modal');
+    return;
+  }
+
+  const groups = new Map();
+
+  data.forEach((row) => {
+    const key = `${row.year}-${row.month}`;
+
+    if (!groups.has(key)) {
+      groups.set(key, { year: row.year, month: row.month, rows: [] });
+    }
+
+    groups.get(key).rows.push(row);
+  });
+
+  const sections = Array.from(groups.values()).map((group) => {
+    const monthLabel = `${PERFORMANCE_MONTH_NAMES[group.month - 1]} ${group.year}`;
+    const winner = group.rows.find((row) => row.is_winner);
+
+    const winnerLine = winner
+      ? `Winner: ${escapeHtml(winner.team_members?.name || 'Unknown Member')} — ${winner.score}%`
+      : 'No winner recorded';
+
+    const rows = group.rows
+      .map((row) => `
+        <tr class="border-b border-gray-100">
+          <td class="px-4 py-2.5 text-sm font-semibold text-gray-900">#${row.rank}</td>
+          <td class="px-4 py-2.5 text-sm font-medium text-gray-900">
+            ${escapeHtml(row.team_members?.name || 'Unknown Member')}
+            ${row.is_winner ? '<span class="badge badge-completed ml-1">🏆 Winner</span>' : ''}
+          </td>
+          <td class="px-4 py-2.5 text-sm text-gray-600">${escapeHtml(row.team_members?.job_title || '—')}</td>
+          <td class="px-4 py-2.5 text-sm font-semibold text-brand-700">${row.score}%</td>
+          <td class="px-4 py-2.5 text-sm text-gray-600">${escapeHtml(getPerformanceLabelForScore(row.score))}</td>
+          <td class="px-4 py-2.5 text-sm text-gray-600">${row.total_tasks}</td>
+          <td class="px-4 py-2.5 text-sm text-gray-600">${row.total_points} / ${row.max_points}</td>
+        </tr>
+      `)
+      .join('');
+
+    return `
+      <div class="mb-6">
+        <h3 class="text-base font-semibold text-gray-900 mb-1">${escapeHtml(monthLabel)}</h3>
+        <p class="text-xs text-gray-500 mb-3">${winnerLine}</p>
+        <div class="border border-gray-200 rounded-lg overflow-hidden">
+          <table class="w-full text-sm">
+            <thead class="bg-gray-50 border-b border-gray-100">
+              <tr class="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th class="px-4 py-2.5">Rank</th>
+                <th class="px-4 py-2.5">Member</th>
+                <th class="px-4 py-2.5">Job Title</th>
+                <th class="px-4 py-2.5">Score</th>
+                <th class="px-4 py-2.5">Label</th>
+                <th class="px-4 py-2.5">Total Tasks</th>
+                <th class="px-4 py-2.5">Points</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  });
+
+  content.innerHTML = sections.join('');
+
+  refreshIcons();
+  openModal('monthly-history-modal');
+}
+
 function renderTeamPerformance() {
   const nameEl = $('#team-best-performer-name');
   const metaEl = $('#team-best-performer-meta');
@@ -3191,6 +3360,16 @@ function renderTeamPerformance() {
   if (bestPeriodEl) bestPeriodEl.textContent = period.label;
   if (attentionPeriodEl) attentionPeriodEl.textContent = period.label;
   if (rankingTitleEl) rankingTitleEl.textContent = `${period.label} Performance Ranking`;
+
+  const snapshotBtn = $('#generate-snapshot-btn');
+  const snapshotLabelEl = $('#generate-snapshot-label');
+
+  if (snapshotBtn) snapshotBtn.classList.toggle('hidden', !isAdmin());
+  if (snapshotLabelEl) snapshotLabelEl.textContent = `Generate ${period.label} Snapshot`;
+
+  const historyBtn = $('#monthly-history-btn');
+
+  if (historyBtn) historyBtn.classList.toggle('hidden', !(isAdmin() || isManager()));
 
   const allPerf = state.teamMembers.map((member) => {
     const memberTasks = state.tasks.filter(
@@ -3957,6 +4136,16 @@ document.addEventListener('click', (e) => {
 
   if (action === 'open-performance-ranking') {
     openPerformanceRankingModal();
+    return;
+  }
+
+  if (action === 'generate-performance-snapshot') {
+    generatePerformanceSnapshot();
+    return;
+  }
+
+  if (action === 'open-monthly-history') {
+    openMonthlyHistoryModal();
     return;
   }
 
