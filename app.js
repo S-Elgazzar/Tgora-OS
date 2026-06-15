@@ -3343,6 +3343,102 @@ async function openMonthlyHistoryModal() {
   openModal('monthly-history-modal');
 }
 
+async function openHallOfFameModal() {
+  const content = $('#hall-of-fame-content');
+  if (!content) return;
+
+  const { data, error } = await supabaseClient
+    .from('monthly_performance')
+    .select('*, team_members(name, job_title)')
+    .eq('is_winner', true)
+    .order('year', { ascending: false })
+    .order('month', { ascending: false });
+
+  if (error) {
+    console.error('openHallOfFameModal', error);
+    toast(error.message || 'Failed to load hall of fame', 'error');
+    return;
+  }
+
+  if (!data || data.length === 0) {
+    content.innerHTML = `
+      <div class="px-6 py-10 text-center text-sm text-gray-500">
+        No monthly winners yet.
+      </div>
+    `;
+    openModal('hall-of-fame-modal');
+    return;
+  }
+
+  const winCounts = new Map();
+
+  data.forEach((row) => {
+    const name = row.team_members?.name || 'Unknown Member';
+    winCounts.set(name, (winCounts.get(name) || 0) + 1);
+  });
+
+  let mostWinsName = '';
+  let mostWinsCount = 0;
+
+  winCounts.forEach((count, name) => {
+    if (count > mostWinsCount) {
+      mostWinsCount = count;
+      mostWinsName = name;
+    }
+  });
+
+  const latest = data[0];
+  const latestLabel = `${PERFORMANCE_MONTH_NAMES[latest.month - 1]} ${latest.year}`;
+  const latestName = latest.team_members?.name || 'Unknown Member';
+
+  const summary = `
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+      <div class="stat-card">
+        <p class="text-xs text-gray-500 font-medium mb-1">Total Months Recorded</p>
+        <h4 class="text-base font-semibold text-gray-900">${data.length}</h4>
+      </div>
+      <div class="stat-card">
+        <p class="text-xs text-gray-500 font-medium mb-1">Most Wins</p>
+        <h4 class="text-base font-semibold text-gray-900">${escapeHtml(mostWinsName)} (${mostWinsCount})</h4>
+      </div>
+      <div class="stat-card">
+        <p class="text-xs text-gray-500 font-medium mb-1">Latest Winner</p>
+        <h4 class="text-base font-semibold text-gray-900">${escapeHtml(latestName)}</h4>
+        <p class="text-xs text-gray-500 mt-1">${escapeHtml(latestLabel)}</p>
+      </div>
+    </div>
+  `;
+
+  const entries = data
+    .map((row) => {
+      const monthLabel = `${PERFORMANCE_MONTH_NAMES[row.month - 1]} ${row.year}`;
+
+      return `
+        <div class="stat-card flex items-center justify-between mb-3">
+          <div class="flex items-center gap-3">
+            <span class="text-2xl">🏆</span>
+            <div>
+              <h4 class="text-sm font-semibold text-gray-900">${escapeHtml(row.team_members?.name || 'Unknown Member')}</h4>
+              <p class="text-xs text-gray-500">${escapeHtml(row.team_members?.job_title || '—')}</p>
+              <p class="text-xs text-gray-500 mt-1">${escapeHtml(monthLabel)} • <span class="badge badge-completed">Rank #1</span></p>
+            </div>
+          </div>
+          <div class="text-right">
+            <p class="text-sm font-semibold text-brand-700">${row.score}%</p>
+            <p class="text-xs text-gray-500 mt-1">${row.total_tasks} tasks</p>
+            <p class="text-xs text-gray-500 mt-1">${row.total_points} / ${row.max_points} pts</p>
+          </div>
+        </div>
+      `;
+    })
+    .join('');
+
+  content.innerHTML = summary + entries;
+
+  refreshIcons();
+  openModal('hall-of-fame-modal');
+}
+
 function renderTeamPerformance() {
   const nameEl = $('#team-best-performer-name');
   const metaEl = $('#team-best-performer-meta');
@@ -3370,6 +3466,10 @@ function renderTeamPerformance() {
   const historyBtn = $('#monthly-history-btn');
 
   if (historyBtn) historyBtn.classList.toggle('hidden', !(isAdmin() || isManager()));
+
+  const hallOfFameBtn = $('#hall-of-fame-btn');
+
+  if (hallOfFameBtn) hallOfFameBtn.classList.toggle('hidden', !(isAdmin() || isManager()));
 
   const allPerf = state.teamMembers.map((member) => {
     const memberTasks = state.tasks.filter(
@@ -4146,6 +4246,11 @@ document.addEventListener('click', (e) => {
 
   if (action === 'open-monthly-history') {
     openMonthlyHistoryModal();
+    return;
+  }
+
+  if (action === 'open-hall-of-fame') {
+    openHallOfFameModal();
     return;
   }
 
