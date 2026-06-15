@@ -1432,7 +1432,7 @@ function renderRecentTasks() {
 }
 
 function getFilteredProjects() {
-  let data = [...state.projects];
+  let data = [...getVisibleProjects()];
 
   if (state.filters.projects !== 'all') {
     data = data.filter(
