@@ -1387,6 +1387,108 @@ if (memberView) {
 }
 }
 
+function renderTodayFocus() {
+  const widget = $('#today-focus-widget');
+  const body = $('#today-focus-body');
+
+  if (!widget || !body) return;
+
+  if (isAdmin()) {
+    widget.classList.add('hidden');
+    return;
+  }
+
+  widget.classList.remove('hidden');
+
+  const currentMember = getCurrentMember();
+  const memberName = (currentMember?.name || '').toLowerCase().trim();
+
+  const myTasks = state.tasks.filter((t) => {
+    const status = (t.status || '').toLowerCase();
+    if (status === 'completed' || status === 'on_hold') return false;
+    return (t.assigned_to || '').toLowerCase().trim() === memberName;
+  });
+
+  if (myTasks.length === 0) {
+    body.innerHTML = `
+      <div class="text-center py-6">
+        <p class="text-sm font-medium text-gray-900">All clear for now</p>
+        <p class="text-xs text-gray-500 mt-1">No active tasks assigned to you.</p>
+      </div>
+    `;
+    return;
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const getDiffDays = (task) => {
+    if (!task.deadline) return null;
+    const deadline = new Date(task.deadline);
+    deadline.setHours(0, 0, 0, 0);
+    return Math.round((deadline - today) / (1000 * 60 * 60 * 24));
+  };
+
+  const focusTask = [...myTasks].sort((a, b) => {
+    const diffA = getDiffDays(a);
+    const diffB = getDiffDays(b);
+
+    const overdueA = diffA !== null && diffA < 0;
+    const overdueB = diffB !== null && diffB < 0;
+    if (overdueA !== overdueB) return overdueA ? -1 : 1;
+
+    const dueTodayA = diffA === 0;
+    const dueTodayB = diffB === 0;
+    if (dueTodayA !== dueTodayB) return dueTodayA ? -1 : 1;
+
+    const priorityA = (a.priority || '').toLowerCase();
+    const priorityB = (b.priority || '').toLowerCase();
+
+    const urgentA = priorityA === 'urgent';
+    const urgentB = priorityB === 'urgent';
+    if (urgentA !== urgentB) return urgentA ? -1 : 1;
+
+    const highA = priorityA === 'high';
+    const highB = priorityB === 'high';
+    if (highA !== highB) return highA ? -1 : 1;
+
+    const timeA = diffA === null ? Infinity : diffA;
+    const timeB = diffB === null ? Infinity : diffB;
+    if (timeA !== timeB) return timeA - timeB;
+
+    return Number(a.id) - Number(b.id);
+  })[0];
+
+  const project = state.projects.find((p) => p.id === focusTask.project_id);
+  const status = (focusTask.status || 'todo').toLowerCase();
+  const priority = (focusTask.priority || 'medium').toLowerCase();
+
+  body.innerHTML = `
+    <p class="text-sm font-medium text-gray-900 mb-1">${escapeHtml(focusTask.task_info || 'Untitled task')}</p>
+    <p class="text-xs text-gray-500 mb-3">${escapeHtml(project?.project_name || 'No project')}</p>
+
+    <div class="flex items-center gap-2 mb-3">
+      <span class="badge priority-${priority}"><span class="dot"></span>${labelize(priority)}</span>
+      <span class="badge badge-${status}"><span class="dot"></span>${labelize(status)}</span>
+    </div>
+
+    <p class="text-xs text-gray-500 mb-4">
+      Deadline: <span class="${deadlineClass(focusTask.deadline)}">${fmtDate(focusTask.deadline)}</span>
+    </p>
+
+    <button
+      type="button"
+      class="h-9 px-4 inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg shadow-sm"
+      data-action="open-task-details"
+      data-id="${focusTask.id}"
+    >
+      Open Task
+    </button>
+  `;
+
+  refreshIcons();
+}
+
 function renderRecentProjects() {
   const container = $('#recent-projects-list');
   const recent = [...getVisibleProjects()].slice(0, 5);
@@ -2072,6 +2174,7 @@ function renderAll() {
   populateTeamMembers();
   renderStats();
   renderCharts();
+  renderTodayFocus();
   renderRecentProjects();
   renderRecentTasks();
   renderProjects();
