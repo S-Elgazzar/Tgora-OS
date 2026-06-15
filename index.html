@@ -1567,6 +1567,27 @@
   </div>
 </div>
 
+<!-- ============ ACHIEVEMENT DETAILS MODAL ============ -->
+<div id="achievement-details-modal" class="modal hidden">
+  <div class="modal-overlay" data-action="close-modal"></div>
+
+  <div class="modal-panel max-w-md">
+    <div class="px-6 py-5 border-b border-gray-100 flex items-center justify-between">
+      <div>
+        <h3 class="text-lg font-semibold text-gray-900">Achievement Details</h3>
+      </div>
+
+      <button data-action="close-modal" class="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center">
+        <i data-lucide="x" class="w-4 h-4 text-gray-500"></i>
+      </button>
+    </div>
+
+    <div id="achievement-details-content" class="px-6 py-5">
+      <!-- Filled by JS -->
+    </div>
+  </div>
+</div>
+
   <!-- ============ CONFIRM DELETE MODAL ============ -->
   <div id="confirm-modal" class="modal hidden">
     <div class="modal-overlay" data-action="close-confirm"></div>

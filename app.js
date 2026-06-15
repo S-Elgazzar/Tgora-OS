@@ -3825,6 +3825,138 @@ async function renderMyPerformanceTrend() {
   `;
 }
 
+function calculateMemberAchievements(member, memberTasks, monthlyRows) {
+  const rows = monthlyRows || [];
+
+  const earlyFinishCount = memberTasks.filter((t) => {
+    if ((t.status || '').toLowerCase() !== 'completed') return false;
+    if (!t.deadline || !t.completed_at) return false;
+
+    const deadline = new Date(t.deadline);
+    deadline.setHours(0, 0, 0, 0);
+
+    const completedAt = new Date(t.completed_at);
+    completedAt.setHours(0, 0, 0, 0);
+
+    return completedAt < deadline;
+  }).length;
+
+  const winCount = rows.filter((r) => r.is_winner === true).length;
+
+  const bestScore = rows.length ? Math.max(...rows.map((r) => r.score)) : 0;
+
+  let longestStreak = 0;
+  let currentStreak = 0;
+  let prevIdx = null;
+
+  rows.forEach((r) => {
+    const idx = r.year * 12 + (r.month - 1);
+
+    if (r.score >= 60) {
+      currentStreak = prevIdx !== null && idx === prevIdx + 1 ? currentStreak + 1 : 1;
+      longestStreak = Math.max(longestStreak, currentStreak);
+    } else {
+      currentStreak = 0;
+    }
+
+    prevIdx = idx;
+  });
+
+  const hasConsecutive = longestStreak >= 3;
+  const bestStreak = Math.min(longestStreak, 3);
+
+  const perfectMonth = rows.find((r) => r.score >= 90 && r.overdue_tasks === 0);
+
+  const minOverdue = rows.length
+    ? Math.min(...rows.map((r) => r.overdue_tasks ?? 0))
+    : 0;
+
+  let bestImprovement = 0;
+
+  for (let i = 1; i < rows.length; i++) {
+    bestImprovement = Math.max(bestImprovement, rows[i].score - rows[i - 1].score);
+  }
+
+  const isRisingStar = bestImprovement >= 20;
+
+  return [
+    {
+      key: 'employee-of-the-month',
+      icon: '🏆',
+      name: 'Employee of the Month',
+      description: 'Awarded for being the top performer in a saved month.',
+      requirement: 'Win at least one monthly performance snapshot.',
+      unlocked: winCount > 0,
+      progress: `${winCount} monthly win${winCount === 1 ? '' : 's'}.`,
+      explanation: winCount > 0
+        ? 'You have been the top performer in at least one saved month. Great work!'
+        : 'Be the top performer (rank #1) in a saved monthly snapshot to unlock this badge.',
+    },
+    {
+      key: 'early-finisher',
+      icon: '⏱️',
+      name: 'Early Finisher',
+      description: 'Complete at least 10 tasks before their deadline.',
+      requirement: 'Complete at least 10 tasks before deadline.',
+      unlocked: earlyFinishCount >= 10,
+      progress: `${earlyFinishCount}/10 early completions.`,
+      explanation: earlyFinishCount >= 10
+        ? 'You have completed 10 or more tasks ahead of their deadlines.'
+        : `Complete ${Math.max(10 - earlyFinishCount, 0)} more task${10 - earlyFinishCount === 1 ? '' : 's'} before their deadline to unlock this badge.`,
+    },
+    {
+      key: 'high-performer',
+      icon: '⭐',
+      name: 'High Performer',
+      description: 'Reach a monthly performance score of 80% or higher.',
+      requirement: 'Reach score >= 80 in any saved month.',
+      unlocked: bestScore >= 80,
+      progress: `Best saved score: ${bestScore}%.`,
+      explanation: bestScore >= 80
+        ? 'You reached a performance score of 80% or higher in a saved month.'
+        : 'Reach a performance score of 80% or higher in a saved month to unlock this badge.',
+    },
+    {
+      key: 'consistent-performer',
+      icon: '📈',
+      name: 'Consistent Performer',
+      description: 'Score 60% or higher for 3 consecutive months.',
+      requirement: '3 consecutive saved months with score >= 60.',
+      unlocked: hasConsecutive,
+      progress: `Best streak: ${bestStreak}/3 months.`,
+      explanation: hasConsecutive
+        ? 'You scored 60% or higher for 3 consecutive saved months.'
+        : 'Score 60% or higher for 3 saved months in a row to unlock this badge.',
+    },
+    {
+      key: 'perfect-month',
+      icon: '💯',
+      name: 'Perfect Month',
+      description: 'Score 90%+ with zero overdue tasks in a month.',
+      requirement: 'Score >= 90 and 0 overdue tasks in any saved month.',
+      unlocked: !!perfectMonth,
+      progress: perfectMonth
+        ? `${PERFORMANCE_MONTH_NAMES[perfectMonth.month - 1]} ${perfectMonth.year}: ${perfectMonth.score}% with 0 overdue tasks.`
+        : `Best saved score: ${bestScore}%. Lowest overdue tasks in a saved month: ${minOverdue}.`,
+      explanation: perfectMonth
+        ? 'You had a saved month with a 90%+ score and zero overdue tasks.'
+        : 'Reach a 90%+ score with zero overdue tasks in a saved month to unlock this badge.',
+    },
+    {
+      key: 'rising-star',
+      icon: '🚀',
+      name: 'Rising Star',
+      description: 'Improve your score by 20+ points vs. the previous saved month.',
+      requirement: 'Improve by at least 20 percentage points vs. the previous saved month.',
+      unlocked: isRisingStar,
+      progress: `Best improvement: ${bestImprovement >= 0 ? '+' : ''}${bestImprovement}%.`,
+      explanation: isRisingStar
+        ? 'You improved your score by 20 or more points compared to the previous saved month.'
+        : 'Improve your score by 20 or more points compared to the previous saved month to unlock this badge.',
+    },
+  ];
+}
+
 async function renderMyAchievements() {
   const widget = $('#my-achievements-widget');
   if (!widget) return;
@@ -3863,89 +3995,9 @@ async function renderMyAchievements() {
       (member.name || '').toLowerCase().trim()
   );
 
-  const earlyFinishCount = memberTasks.filter((t) => {
-    if ((t.status || '').toLowerCase() !== 'completed') return false;
-    if (!t.deadline || !t.completed_at) return false;
+  const achievements = calculateMemberAchievements(member, memberTasks, rows);
 
-    const deadline = new Date(t.deadline);
-    deadline.setHours(0, 0, 0, 0);
-
-    const completedAt = new Date(t.completed_at);
-    completedAt.setHours(0, 0, 0, 0);
-
-    return completedAt < deadline;
-  }).length;
-
-  let hasConsecutive = false;
-
-  for (let i = 0; i + 2 < rows.length; i++) {
-    const a = rows[i];
-    const b = rows[i + 1];
-    const c = rows[i + 2];
-
-    const idxA = a.year * 12 + (a.month - 1);
-    const idxB = b.year * 12 + (b.month - 1);
-    const idxC = c.year * 12 + (c.month - 1);
-
-    if (
-      idxB === idxA + 1 &&
-      idxC === idxB + 1 &&
-      a.score >= 60 &&
-      b.score >= 60 &&
-      c.score >= 60
-    ) {
-      hasConsecutive = true;
-      break;
-    }
-  }
-
-  let isRisingStar = false;
-
-  if (rows.length >= 2) {
-    const latest = rows[rows.length - 1];
-    const previous = rows[rows.length - 2];
-
-    isRisingStar = latest.score - previous.score >= 20;
-  }
-
-  const achievements = [
-    {
-      icon: '🏆',
-      name: 'Employee of the Month',
-      description: 'Awarded for being the top performer in a saved month.',
-      unlocked: rows.some((r) => r.is_winner === true),
-    },
-    {
-      icon: '⏱️',
-      name: 'Early Finisher',
-      description: 'Complete at least 10 tasks before their deadline.',
-      unlocked: earlyFinishCount >= 10,
-    },
-    {
-      icon: '⭐',
-      name: 'High Performer',
-      description: 'Reach a monthly performance score of 80% or higher.',
-      unlocked: rows.some((r) => r.score >= 80),
-    },
-    {
-      icon: '📈',
-      name: 'Consistent Performer',
-      description: 'Score 60% or higher for 3 consecutive months.',
-      unlocked: hasConsecutive,
-    },
-    {
-      icon: '💯',
-      name: 'Perfect Month',
-      description: 'Score 90%+ with zero overdue tasks in a month.',
-      unlocked: rows.some((r) => r.score >= 90 && r.overdue_tasks === 0),
-    },
-    {
-      icon: '🚀',
-      name: 'Rising Star',
-      description: 'Improve your score by 20+ points vs. the previous saved month.',
-      unlocked: isRisingStar,
-    },
-  ];
+  state.myAchievements = achievements;
 
   const unlockedCount = achievements.filter((a) => a.unlocked).length;
 
@@ -3958,11 +4010,11 @@ async function renderMyAchievements() {
       ${achievements
         .map(
           (a) => `
-            <div class="rounded-xl border p-3 text-center ${
+            <div class="rounded-xl border p-3 text-center cursor-pointer transition hover:shadow-md ${
               a.unlocked
                 ? 'border-amber-300 bg-amber-50 shadow-sm'
                 : 'border-gray-200 bg-gray-50 opacity-60'
-            }">
+            }" data-action="open-achievement-details" data-key="${a.key}">
               <div class="text-2xl mb-1">${a.icon}</div>
               <p class="text-sm font-semibold text-gray-900">${escapeHtml(a.name)}</p>
               <p class="text-xs text-gray-500 mt-1">${escapeHtml(a.description)}</p>
@@ -3975,6 +4027,46 @@ async function renderMyAchievements() {
         .join('')}
     </div>
   `;
+
+  refreshIcons();
+}
+
+function openAchievementDetailsModal(key) {
+  const content = $('#achievement-details-content');
+  if (!content) return;
+
+  const achievement = (state.myAchievements || []).find((a) => a.key === key);
+  if (!achievement) return;
+
+  content.innerHTML = `
+    <div class="text-center mb-4">
+      <div class="text-4xl mb-2">${achievement.icon}</div>
+      <h3 class="text-lg font-semibold text-gray-900">${escapeHtml(achievement.name)}</h3>
+      <span class="badge mt-2 inline-block ${achievement.unlocked ? 'badge-completed' : 'badge-todo'}">
+        ${achievement.unlocked ? 'Unlocked' : 'Locked'}
+      </span>
+    </div>
+    <div class="space-y-3">
+      <div>
+        <p class="text-xs font-medium text-gray-500 uppercase tracking-wider">Description</p>
+        <p class="text-sm text-gray-700 mt-1">${escapeHtml(achievement.description)}</p>
+      </div>
+      <div>
+        <p class="text-xs font-medium text-gray-500 uppercase tracking-wider">Requirement</p>
+        <p class="text-sm text-gray-700 mt-1">${escapeHtml(achievement.requirement)}</p>
+      </div>
+      <div>
+        <p class="text-xs font-medium text-gray-500 uppercase tracking-wider">Current Progress</p>
+        <p class="text-sm text-gray-700 mt-1">${escapeHtml(achievement.progress)}</p>
+      </div>
+      <div>
+        <p class="text-xs font-medium text-gray-500 uppercase tracking-wider">What this means</p>
+        <p class="text-sm text-gray-700 mt-1">${escapeHtml(achievement.explanation)}</p>
+      </div>
+    </div>
+  `;
+
+  openModal('achievement-details-modal');
 }
 
 function openPerformanceRankingModal() {
@@ -4716,6 +4808,11 @@ document.addEventListener('click', (e) => {
 
   if (action === 'open-hall-of-fame') {
     openHallOfFameModal();
+    return;
+  }
+
+  if (action === 'open-achievement-details') {
+    openAchievementDetailsModal(trigger.dataset.key);
     return;
   }
 
