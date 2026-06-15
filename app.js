@@ -1554,7 +1554,7 @@ function renderRecentTasks() {
       <div class="recent-row">
         <div class="client-avatar ${avatarColor(t.assigned_to)}">${initials(t.assigned_to)}</div>
         <div class="flex-1 min-w-0">
-          <p class="text-sm font-medium text-gray-900 truncate">${escapeHtml(t.task_info || 'Untitled task')}</p>
+          <button type="button" class="text-sm font-medium text-gray-900 truncate hover:text-indigo-600 text-left" data-action="open-task-details" data-id="${t.id}">${escapeHtml(t.task_info || 'Untitled task')}</button>
           <p class="text-xs text-gray-500 truncate">
             ${escapeHtml(t.assigned_to || 'Unassigned')} ·
             <span class="${deadlineClass(t.deadline)}">${fmtDate(t.deadline)}</span>
