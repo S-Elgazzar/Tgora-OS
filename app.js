@@ -1092,34 +1092,37 @@ function populateTeamMembers() {
 }
 
 function renderStats() {
-  const totalProjects = state.projects.length;
+  const visibleProjects = getVisibleProjects();
+  const visibleTasks = getVisibleTasks();
 
-  const activeProjects = state.projects.filter(
+  const totalProjects = visibleProjects.length;
+
+  const activeProjects = visibleProjects.filter(
     (p) => (p.status || '').toLowerCase() === 'active'
   ).length;
 
-  const onHoldProjects = state.projects.filter(
+  const onHoldProjects = visibleProjects.filter(
     (p) => (p.status || '').toLowerCase() === 'on_hold'
   ).length;
 
-  const urgentProjects = state.projects.filter(
+  const urgentProjects = visibleProjects.filter(
     (p) => (p.priority || '').toLowerCase() === 'urgent'
   ).length;
 
-  const totalTasks = state.tasks.length;
+  const totalTasks = visibleTasks.length;
 
-  const completedTasks = state.tasks.filter(
+  const completedTasks = visibleTasks.filter(
     (t) => (t.status || '').toLowerCase() === 'completed'
   ).length;
 
-  const inProgress = state.tasks.filter(
+  const inProgress = visibleTasks.filter(
     (t) => ['in_progress', 'review'].includes((t.status || '').toLowerCase())
   ).length;
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  const overdue = state.tasks.filter((t) => {
+  const overdue = visibleTasks.filter((t) => {
     if (!t.deadline) return false;
     if ((t.status || '').toLowerCase() === 'completed') return false;
 
@@ -1352,7 +1355,7 @@ if (teamCtx) {
 
 function renderRecentProjects() {
   const container = $('#recent-projects-list');
-  const recent = [...state.projects].slice(0, 5);
+  const recent = [...getVisibleProjects()].slice(0, 5);
   if (recent.length === 0) {
     container.innerHTML = `
       <div class="px-5 py-12 text-center text-sm text-gray-500">
@@ -1388,7 +1391,7 @@ function renderRecentProjects() {
 
 function renderRecentTasks() {
   const container = $('#recent-tasks-list');
-  const upcoming = [...state.tasks]
+  const upcoming = [...getVisibleTasks()]
     .filter((t) => (t.status || '').toLowerCase() !== 'completed')
     .sort((a, b) => {
       const da = a.deadline ? new Date(a.deadline) : new Date(8640000000000000);
@@ -2108,6 +2111,34 @@ function canDeleteTeamMember() {
 
 function getCurrentMember() {
   return state.currentMember || null;
+}
+
+function getVisibleTasks() {
+  if (isAdmin() || isManager()) {
+    return state.tasks;
+  }
+
+  const member = getCurrentMember();
+  if (!member) return [];
+
+  const memberName = (member.name || '').toLowerCase().trim();
+
+  return state.tasks.filter(
+    (t) => (t.assigned_to || '').toLowerCase().trim() === memberName
+  );
+}
+
+function getVisibleProjects() {
+  if (isAdmin() || isManager()) {
+    return state.projects;
+  }
+
+  const visibleTasks = getVisibleTasks();
+  const visibleProjectIds = new Set(
+    visibleTasks.map((t) => Number(t.project_id))
+  );
+
+  return state.projects.filter((p) => visibleProjectIds.has(Number(p.id)));
 }
 
 function updateSidebarUserCard() {
