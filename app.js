@@ -2041,6 +2041,7 @@ function renderAll() {
   renderMyPerformance();
   renderTeamLeaderboard();
   renderMyPerformanceTrend();
+  renderMyAchievements();
 
   const savedView = localStorage.getItem('tgora_current_view');
 
@@ -3820,6 +3821,158 @@ async function renderMyPerformanceTrend() {
     </div>
     <div class="flex items-end gap-2">
       ${bars}
+    </div>
+  `;
+}
+
+async function renderMyAchievements() {
+  const widget = $('#my-achievements-widget');
+  if (!widget) return;
+
+  const member = getCurrentMember();
+
+  if (isAdmin() || !member) {
+    widget.classList.add('hidden');
+    return;
+  }
+
+  widget.classList.remove('hidden');
+
+  const body = $('#my-achievements-body');
+  const summaryEl = $('#my-achievements-summary');
+  if (!body) return;
+
+  const { data, error } = await supabaseClient
+    .from('monthly_performance')
+    .select('year, month, score, overdue_tasks, is_winner')
+    .eq('member_id', member.id)
+    .order('year', { ascending: true })
+    .order('month', { ascending: true });
+
+  if (error) {
+    console.error('renderMyAchievements', error);
+    body.innerHTML = `<p class="text-sm text-gray-500">Unable to load achievements.</p>`;
+    return;
+  }
+
+  const rows = data || [];
+
+  const memberTasks = state.tasks.filter(
+    (t) =>
+      (t.assigned_to || '').toLowerCase().trim() ===
+      (member.name || '').toLowerCase().trim()
+  );
+
+  const earlyFinishCount = memberTasks.filter((t) => {
+    if ((t.status || '').toLowerCase() !== 'completed') return false;
+    if (!t.deadline || !t.completed_at) return false;
+
+    const deadline = new Date(t.deadline);
+    deadline.setHours(0, 0, 0, 0);
+
+    const completedAt = new Date(t.completed_at);
+    completedAt.setHours(0, 0, 0, 0);
+
+    return completedAt < deadline;
+  }).length;
+
+  let hasConsecutive = false;
+
+  for (let i = 0; i + 2 < rows.length; i++) {
+    const a = rows[i];
+    const b = rows[i + 1];
+    const c = rows[i + 2];
+
+    const idxA = a.year * 12 + (a.month - 1);
+    const idxB = b.year * 12 + (b.month - 1);
+    const idxC = c.year * 12 + (c.month - 1);
+
+    if (
+      idxB === idxA + 1 &&
+      idxC === idxB + 1 &&
+      a.score >= 60 &&
+      b.score >= 60 &&
+      c.score >= 60
+    ) {
+      hasConsecutive = true;
+      break;
+    }
+  }
+
+  let isRisingStar = false;
+
+  if (rows.length >= 2) {
+    const latest = rows[rows.length - 1];
+    const previous = rows[rows.length - 2];
+
+    isRisingStar = latest.score - previous.score >= 20;
+  }
+
+  const achievements = [
+    {
+      icon: '🏆',
+      name: 'Employee of the Month',
+      description: 'Awarded for being the top performer in a saved month.',
+      unlocked: rows.some((r) => r.is_winner === true),
+    },
+    {
+      icon: '⏱️',
+      name: 'Early Finisher',
+      description: 'Complete at least 10 tasks before their deadline.',
+      unlocked: earlyFinishCount >= 10,
+    },
+    {
+      icon: '⭐',
+      name: 'High Performer',
+      description: 'Reach a monthly performance score of 80% or higher.',
+      unlocked: rows.some((r) => r.score >= 80),
+    },
+    {
+      icon: '📈',
+      name: 'Consistent Performer',
+      description: 'Score 60% or higher for 3 consecutive months.',
+      unlocked: hasConsecutive,
+    },
+    {
+      icon: '💯',
+      name: 'Perfect Month',
+      description: 'Score 90%+ with zero overdue tasks in a month.',
+      unlocked: rows.some((r) => r.score >= 90 && r.overdue_tasks === 0),
+    },
+    {
+      icon: '🚀',
+      name: 'Rising Star',
+      description: 'Improve your score by 20+ points vs. the previous saved month.',
+      unlocked: isRisingStar,
+    },
+  ];
+
+  const unlockedCount = achievements.filter((a) => a.unlocked).length;
+
+  if (summaryEl) {
+    summaryEl.textContent = `Unlocked ${unlockedCount} of ${achievements.length} achievements`;
+  }
+
+  body.innerHTML = `
+    <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+      ${achievements
+        .map(
+          (a) => `
+            <div class="rounded-xl border p-3 text-center ${
+              a.unlocked
+                ? 'border-amber-300 bg-amber-50 shadow-sm'
+                : 'border-gray-200 bg-gray-50 opacity-60'
+            }">
+              <div class="text-2xl mb-1">${a.icon}</div>
+              <p class="text-sm font-semibold text-gray-900">${escapeHtml(a.name)}</p>
+              <p class="text-xs text-gray-500 mt-1">${escapeHtml(a.description)}</p>
+              <span class="badge mt-2 inline-block ${a.unlocked ? 'badge-completed' : 'badge-todo'}">
+                ${a.unlocked ? 'Unlocked' : 'Locked'}
+              </span>
+            </div>
+          `
+        )
+        .join('')}
     </div>
   `;
 }
