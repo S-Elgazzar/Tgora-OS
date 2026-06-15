@@ -1159,77 +1159,96 @@ let teamChartInstance = null;
 
 function renderCharts() {
 
+  const memberView = isMember();
+
   // -------- Projects Chart --------
 
-  const activeProjects = state.projects.filter(
-    (p) => (p.status || '').toLowerCase() === 'active'
-  ).length;
-
-  const onHoldProjects = state.projects.filter(
-    (p) => (p.status || '').toLowerCase() === 'on_hold'
-  ).length;
-
-  const completedProjects = state.projects.filter(
-    (p) => (p.status || '').toLowerCase() === 'completed'
-  ).length;
-
-  const projectsCtx = document
+  const projectsCard = document
     .getElementById('projectsChart')
-    ?.getContext('2d');
+    ?.closest('.shadow-card');
 
-  if (projectsChartInstance) {
-    projectsChartInstance.destroy();
-  }
+  if (memberView) {
+    if (projectsChartInstance) {
+      projectsChartInstance.destroy();
+      projectsChartInstance = null;
+    }
 
-  if (projectsCtx) {
-    projectsChartInstance = new Chart(projectsCtx, {
-      type: 'doughnut',
-      data: {
-        labels: ['Active', 'On Hold', 'Completed'],
-        datasets: [
-          {
-            data: [
-              activeProjects,
-              onHoldProjects,
-              completedProjects
-            ],
-            backgroundColor: [
-              '#10B981',
-              '#F59E0B',
-              '#6366F1'
-            ],
-            borderWidth: 0
-          }
-        ]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        cutout: '70%',
-        plugins: {
-          legend: {
-            position: 'bottom'
+    if (projectsCard) projectsCard.classList.add('hidden');
+  } else {
+    if (projectsCard) projectsCard.classList.remove('hidden');
+
+    const activeProjects = state.projects.filter(
+      (p) => (p.status || '').toLowerCase() === 'active'
+    ).length;
+
+    const onHoldProjects = state.projects.filter(
+      (p) => (p.status || '').toLowerCase() === 'on_hold'
+    ).length;
+
+    const completedProjects = state.projects.filter(
+      (p) => (p.status || '').toLowerCase() === 'completed'
+    ).length;
+
+    const projectsCtx = document
+      .getElementById('projectsChart')
+      ?.getContext('2d');
+
+    if (projectsChartInstance) {
+      projectsChartInstance.destroy();
+    }
+
+    if (projectsCtx) {
+      projectsChartInstance = new Chart(projectsCtx, {
+        type: 'doughnut',
+        data: {
+          labels: ['Active', 'On Hold', 'Completed'],
+          datasets: [
+            {
+              data: [
+                activeProjects,
+                onHoldProjects,
+                completedProjects
+              ],
+              backgroundColor: [
+                '#10B981',
+                '#F59E0B',
+                '#6366F1'
+              ],
+              borderWidth: 0
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          cutout: '70%',
+          plugins: {
+            legend: {
+              position: 'bottom'
+            }
           }
         }
-      }
-    });
+      });
+    }
   }
 
   // -------- Tasks Chart --------
 
-  const todoTasks = state.tasks.filter(
+  const visibleTasks = getVisibleTasks();
+
+  const todoTasks = visibleTasks.filter(
     (t) => (t.status || '').toLowerCase() === 'todo'
   ).length;
 
-  const inProgressTasks = state.tasks.filter(
+  const inProgressTasks = visibleTasks.filter(
     (t) => (t.status || '').toLowerCase() === 'in_progress'
   ).length;
 
-  const reviewTasks = state.tasks.filter(
+  const reviewTasks = visibleTasks.filter(
     (t) => (t.status || '').toLowerCase() === 'review'
   ).length;
 
-  const completedTasks = state.tasks.filter(
+  const completedTasks = visibleTasks.filter(
     (t) => (t.status || '').toLowerCase() === 'completed'
   ).length;
 
@@ -1290,66 +1309,81 @@ function renderCharts() {
   }
 // -------- Team Workload Chart --------
 
-const workloadMap = {};
-
-state.tasks
-  .filter((task) => (task.status || '').toLowerCase() !== 'completed')
-  .forEach((task) => {
-    const member = task.assigned_to || 'Unassigned';
-
-    if (!workloadMap[member]) {
-      workloadMap[member] = 0;
-    }
-
-    workloadMap[member]++;
-  });
-
-const memberLabels = Object.keys(workloadMap);
-const workloadData = Object.values(workloadMap);
-
-const teamCtx = document
+const teamCard = document
   .getElementById('teamChart')
-  ?.getContext('2d');
+  ?.closest('.shadow-card');
 
-if (teamChartInstance) {
-  teamChartInstance.destroy();
-}
+if (memberView) {
+  if (teamChartInstance) {
+    teamChartInstance.destroy();
+    teamChartInstance = null;
+  }
 
-if (teamCtx) {
-  teamChartInstance = new Chart(teamCtx, {
-    type: 'polarArea',
+  if (teamCard) teamCard.classList.add('hidden');
+} else {
+  if (teamCard) teamCard.classList.remove('hidden');
 
-    data: {
-      labels: memberLabels,
+  const workloadMap = {};
 
-      datasets: [
-        {
-          data: workloadData,
+  state.tasks
+    .filter((task) => (task.status || '').toLowerCase() !== 'completed')
+    .forEach((task) => {
+      const member = task.assigned_to || 'Unassigned';
 
-          backgroundColor: [
-            '#6366F1',
-            '#10B981',
-            '#F59E0B',
-            '#EC4899',
-            '#8B5CF6',
-            '#06B6D4',
-            '#EF4444'
-          ]
-        }
-      ]
-    },
+      if (!workloadMap[member]) {
+        workloadMap[member] = 0;
+      }
 
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
+      workloadMap[member]++;
+    });
 
-      plugins: {
-        legend: {
-          position: 'bottom'
+  const memberLabels = Object.keys(workloadMap);
+  const workloadData = Object.values(workloadMap);
+
+  const teamCtx = document
+    .getElementById('teamChart')
+    ?.getContext('2d');
+
+  if (teamChartInstance) {
+    teamChartInstance.destroy();
+  }
+
+  if (teamCtx) {
+    teamChartInstance = new Chart(teamCtx, {
+      type: 'polarArea',
+
+      data: {
+        labels: memberLabels,
+
+        datasets: [
+          {
+            data: workloadData,
+
+            backgroundColor: [
+              '#6366F1',
+              '#10B981',
+              '#F59E0B',
+              '#EC4899',
+              '#8B5CF6',
+              '#06B6D4',
+              '#EF4444'
+            ]
+          }
+        ]
+      },
+
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+
+        plugins: {
+          legend: {
+            position: 'bottom'
+          }
         }
       }
-    }
-  });
+    });
+  }
 }
 }
 
