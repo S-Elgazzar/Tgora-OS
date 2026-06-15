@@ -2039,6 +2039,7 @@ function renderAll() {
   renderProjects();
   renderTasks();
   renderMyPerformance();
+  renderTeamLeaderboard();
 
   const savedView = localStorage.getItem('tgora_current_view');
 
@@ -3598,6 +3599,128 @@ function renderMyPerformance() {
         <p class="text-xs text-gray-500">Points</p>
         <p class="text-base font-semibold text-gray-900">${mine.perf.totalPoints} / ${mine.perf.maxPoints}</p>
       </div>
+    </div>
+  `;
+}
+
+function renderTeamLeaderboard() {
+  const widget = $('#team-leaderboard-widget');
+  if (!widget) return;
+
+  const member = getCurrentMember();
+
+  if (isAdmin() || !member) {
+    widget.classList.add('hidden');
+    return;
+  }
+
+  widget.classList.remove('hidden');
+
+  const period = getCurrentPerformancePeriod();
+  const periodEl = $('#team-leaderboard-period');
+  if (periodEl) periodEl.textContent = period.label;
+
+  const body = $('#team-leaderboard-body');
+  if (!body) return;
+
+  const allPerf = state.teamMembers
+    .filter(isPerformanceEligibleMember)
+    .map((m) => {
+      const memberTasks = state.tasks.filter(
+        (t) =>
+          (t.assigned_to || '').toLowerCase().trim() ===
+          (m.name || '').toLowerCase().trim()
+      );
+
+      const perf = calculateMemberPerformance(memberTasks);
+
+      return { member: m, perf };
+    });
+
+  const ranking = allPerf
+    .filter(({ perf }) => perf.monthlyTasks.length >= 3)
+    .sort((a, b) => b.perf.performanceScore - a.perf.performanceScore);
+
+  if (ranking.length === 0) {
+    body.innerHTML = `
+      <div class="px-4 py-8 text-center text-sm text-gray-500">
+        No leaderboard data yet for this month.
+      </div>
+    `;
+    return;
+  }
+
+  const medalConfig = [
+    { medal: '🥇', label: 'Rank #1', card: 'bg-amber-50 border-amber-300' },
+    { medal: '🥈', label: 'Rank #2', card: 'bg-gray-50 border-gray-300' },
+    { medal: '🥉', label: 'Rank #3', card: 'bg-orange-50 border-orange-200' },
+  ];
+
+  const podium = ranking
+    .slice(0, 3)
+    .map(({ member: m, perf }, index) => {
+      const cfg = medalConfig[index];
+      const isMe = Number(m.id) === Number(member.id);
+
+      return `
+        <div class="rounded-xl border ${cfg.card} p-3 text-center ${isMe ? 'ring-2 ring-brand-500' : ''}">
+          <div class="text-2xl mb-1">${cfg.medal}</div>
+          <p class="text-xs font-medium text-gray-500">${cfg.label}</p>
+          <p class="text-sm font-semibold text-gray-900 mt-1 truncate">${escapeHtml(m.name || 'Unknown Member')}${isMe ? ' (You)' : ''}</p>
+          <p class="text-lg font-bold text-brand-700 mt-1">${perf.performanceScore}%</p>
+          <p class="text-xs text-gray-500 mt-0.5">${escapeHtml(perf.performanceLabel)}</p>
+          <p class="text-xs text-gray-400 mt-0.5">${perf.monthlyTasks.length} counted tasks</p>
+        </div>
+      `;
+    })
+    .join('');
+
+  const mine = allPerf.find(({ member: m }) => Number(m.id) === Number(member.id));
+  const myRankIndex = ranking.findIndex(({ member: m }) => Number(m.id) === Number(member.id));
+
+  let myPositionHtml;
+  let gapHtml = '';
+
+  if (!mine || mine.perf.monthlyTasks.length < 3) {
+    myPositionHtml = `<p class="text-sm text-gray-500">Not enough data this month</p>`;
+  } else {
+    const myRank = myRankIndex + 1;
+
+    myPositionHtml = `
+      <div class="grid grid-cols-3 gap-3">
+        <div>
+          <p class="text-xs text-gray-500">My Rank</p>
+          <p class="text-base font-semibold text-gray-900">#${myRank} of ${ranking.length}</p>
+        </div>
+        <div>
+          <p class="text-xs text-gray-500">My Score</p>
+          <p class="text-base font-semibold text-gray-900">${mine.perf.performanceScore}%</p>
+        </div>
+        <div>
+          <p class="text-xs text-gray-500">Label</p>
+          <p class="text-base font-semibold text-gray-900">${escapeHtml(mine.perf.performanceLabel)}</p>
+        </div>
+      </div>
+    `;
+
+    if (myRank === 1) {
+      gapHtml = `<p class="text-xs text-emerald-600 font-medium mt-3">You are currently leading this month.</p>`;
+    } else {
+      const aboveScore = ranking[myRankIndex - 1].perf.performanceScore;
+      const gap = aboveScore - mine.perf.performanceScore;
+
+      gapHtml = `<p class="text-xs text-gray-500 mt-3">Need ${gap} point${gap === 1 ? '' : 's'} to pass Rank #${myRank - 1}</p>`;
+    }
+  }
+
+  body.innerHTML = `
+    <div class="grid grid-cols-3 gap-2">
+      ${podium}
+    </div>
+    <div class="mt-4 pt-4 border-t border-gray-100">
+      <p class="text-xs font-medium text-gray-500 mb-2">My Position</p>
+      ${myPositionHtml}
+      ${gapHtml}
     </div>
   `;
 }
