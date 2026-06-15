@@ -1142,7 +1142,7 @@ function renderStats() {
   $('#stat-in-progress').textContent = inProgress;
   $('#stat-overdue').textContent = overdue;
 
-  $('#nav-projects-count').textContent = totalProjects;
+  $('#nav-projects-count').textContent = state.projects.length;
   $('#nav-tasks-count').textContent = totalTasks;
   
   const teamCount = state.teamMembers.length;
@@ -1432,7 +1432,7 @@ function renderRecentTasks() {
 }
 
 function getFilteredProjects() {
-  let data = [...getVisibleProjects()];
+  let data = [...state.projects];
 
   if (state.filters.projects !== 'all') {
     data = data.filter(
