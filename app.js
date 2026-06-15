@@ -249,6 +249,7 @@ const NOTIFICATION_ICONS = {
   team_member_created: { icon: 'user-plus', bg: 'bg-emerald-100', color: 'text-emerald-600' },
   team_member_updated: { icon: 'user-cog', bg: 'bg-blue-100', color: 'text-blue-600' },
   team_member_deleted: { icon: 'user-minus', bg: 'bg-red-100', color: 'text-red-600' },
+  achievement_unlocked: { icon: 'trophy', bg: 'bg-amber-100', color: 'text-amber-600' },
 };
 
 function getNotificationIcon(type) {
@@ -3999,6 +4000,8 @@ async function renderMyAchievements() {
 
   state.myAchievements = achievements;
 
+  checkAchievementUnlockNotifications(member, achievements);
+
   const unlockedCount = achievements.filter((a) => a.unlocked).length;
 
   if (summaryEl) {
@@ -4029,6 +4032,53 @@ async function renderMyAchievements() {
   `;
 
   refreshIcons();
+}
+
+async function checkAchievementUnlockNotifications(member, achievements) {
+  if (isAdmin() || !state.currentUser?.id) return;
+
+  const unlocked = achievements.filter((a) => a.unlocked);
+  if (unlocked.length === 0) return;
+
+  try {
+    const { data, error } = await supabaseClient
+      .from('notifications')
+      .select('entity_id')
+      .eq('user_id', state.currentUser.id)
+      .eq('type', 'achievement_unlocked')
+      .eq('entity_type', 'achievement');
+
+    if (error) {
+      console.error('checkAchievementUnlockNotifications', error);
+      return;
+    }
+
+    const existingKeys = new Set((data || []).map((row) => row.entity_id));
+
+    let insertedAny = false;
+
+    for (const achievement of unlocked) {
+      if (existingKeys.has(achievement.key)) continue;
+
+      const result = await insertNotification({
+        user_id: state.currentUser.id,
+        title: 'Achievement unlocked',
+        message: `You unlocked ${achievement.name}.`,
+        type: 'achievement_unlocked',
+        entity_type: 'achievement',
+        entity_id: achievement.key,
+        is_read: false,
+      });
+
+      if (result) insertedAny = true;
+    }
+
+    if (insertedAny) {
+      await refreshNotifications();
+    }
+  } catch (err) {
+    console.error('checkAchievementUnlockNotifications', err);
+  }
 }
 
 function openAchievementDetailsModal(key) {
