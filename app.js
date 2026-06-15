@@ -2038,6 +2038,7 @@ function renderAll() {
   renderRecentTasks();
   renderProjects();
   renderTasks();
+  renderMyPerformance();
 
   const savedView = localStorage.getItem('tgora_current_view');
 
@@ -3174,6 +3175,10 @@ function getPerformanceRankingBadge(rank, performanceScore) {
   return `Rank #${rank}`;
 }
 
+function isPerformanceEligibleMember(member) {
+  return (member.role_type || '').toLowerCase() !== 'admin';
+}
+
 async function generatePerformanceSnapshot() {
   const period = getCurrentPerformancePeriod();
 
@@ -3183,17 +3188,19 @@ async function generatePerformanceSnapshot() {
 
   if (!confirmed) return;
 
-  const allPerf = state.teamMembers.map((member) => {
-    const memberTasks = state.tasks.filter(
-      (t) =>
-        (t.assigned_to || '').toLowerCase().trim() ===
-        (member.name || '').toLowerCase().trim()
-    );
+  const allPerf = state.teamMembers
+    .filter(isPerformanceEligibleMember)
+    .map((member) => {
+      const memberTasks = state.tasks.filter(
+        (t) =>
+          (t.assigned_to || '').toLowerCase().trim() ===
+          (member.name || '').toLowerCase().trim()
+      );
 
-    const perf = calculateMemberPerformance(memberTasks);
+      const perf = calculateMemberPerformance(memberTasks);
 
-    return { member, perf };
-  });
+      return { member, perf };
+    });
 
   const eligible = allPerf
     .filter(({ perf }) => perf.monthlyTasks.length >= 3)
@@ -3253,7 +3260,7 @@ async function openMonthlyHistoryModal() {
 
   const { data, error } = await supabaseClient
     .from('monthly_performance')
-    .select('*, team_members(name, job_title)')
+    .select('*, team_members(name, job_title, role_type)')
     .order('year', { ascending: false })
     .order('month', { ascending: false })
     .order('rank', { ascending: true });
@@ -3264,7 +3271,11 @@ async function openMonthlyHistoryModal() {
     return;
   }
 
-  if (!data || data.length === 0) {
+  const eligibleData = (data || []).filter(
+    (row) => (row.team_members?.role_type || '').toLowerCase() !== 'admin'
+  );
+
+  if (eligibleData.length === 0) {
     content.innerHTML = `
       <div class="px-6 py-10 text-center text-sm text-gray-500">
         No monthly performance snapshots yet.
@@ -3276,7 +3287,7 @@ async function openMonthlyHistoryModal() {
 
   const groups = new Map();
 
-  data.forEach((row) => {
+  eligibleData.forEach((row) => {
     const key = `${row.year}-${row.month}`;
 
     if (!groups.has(key)) {
@@ -3349,7 +3360,7 @@ async function openHallOfFameModal() {
 
   const { data, error } = await supabaseClient
     .from('monthly_performance')
-    .select('*, team_members(name, job_title)')
+    .select('*, team_members(name, job_title, role_type)')
     .eq('is_winner', true)
     .order('year', { ascending: false })
     .order('month', { ascending: false });
@@ -3360,7 +3371,11 @@ async function openHallOfFameModal() {
     return;
   }
 
-  if (!data || data.length === 0) {
+  const eligibleData = (data || []).filter(
+    (row) => (row.team_members?.role_type || '').toLowerCase() !== 'admin'
+  );
+
+  if (eligibleData.length === 0) {
     content.innerHTML = `
       <div class="px-6 py-10 text-center text-sm text-gray-500">
         No monthly winners yet.
@@ -3372,7 +3387,7 @@ async function openHallOfFameModal() {
 
   const winCounts = new Map();
 
-  data.forEach((row) => {
+  eligibleData.forEach((row) => {
     const name = row.team_members?.name || 'Unknown Member';
     winCounts.set(name, (winCounts.get(name) || 0) + 1);
   });
@@ -3387,7 +3402,7 @@ async function openHallOfFameModal() {
     }
   });
 
-  const latest = data[0];
+  const latest = eligibleData[0];
   const latestLabel = `${PERFORMANCE_MONTH_NAMES[latest.month - 1]} ${latest.year}`;
   const latestName = latest.team_members?.name || 'Unknown Member';
 
@@ -3395,7 +3410,7 @@ async function openHallOfFameModal() {
     <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
       <div class="stat-card">
         <p class="text-xs text-gray-500 font-medium mb-1">Total Months Recorded</p>
-        <h4 class="text-base font-semibold text-gray-900">${data.length}</h4>
+        <h4 class="text-base font-semibold text-gray-900">${eligibleData.length}</h4>
       </div>
       <div class="stat-card">
         <p class="text-xs text-gray-500 font-medium mb-1">Most Wins</p>
@@ -3409,7 +3424,7 @@ async function openHallOfFameModal() {
     </div>
   `;
 
-  const entries = data
+  const entries = eligibleData
     .map((row) => {
       const monthLabel = `${PERFORMANCE_MONTH_NAMES[row.month - 1]} ${row.year}`;
 
@@ -3471,17 +3486,19 @@ function renderTeamPerformance() {
 
   if (hallOfFameBtn) hallOfFameBtn.classList.toggle('hidden', !(isAdmin() || isManager()));
 
-  const allPerf = state.teamMembers.map((member) => {
-    const memberTasks = state.tasks.filter(
-      (t) =>
-        (t.assigned_to || '').toLowerCase().trim() ===
-        (member.name || '').toLowerCase().trim()
-    );
+  const allPerf = state.teamMembers
+    .filter(isPerformanceEligibleMember)
+    .map((member) => {
+      const memberTasks = state.tasks.filter(
+        (t) =>
+          (t.assigned_to || '').toLowerCase().trim() ===
+          (member.name || '').toLowerCase().trim()
+      );
 
-    const perf = calculateMemberPerformance(memberTasks);
+      const perf = calculateMemberPerformance(memberTasks);
 
-    return { member, perf };
-  });
+      return { member, perf };
+    });
 
   const ranking = allPerf
     .filter(({ perf }) => perf.monthlyTasks.length >= 3)
@@ -3510,6 +3527,79 @@ function renderTeamPerformance() {
 
   attentionNameEl.textContent = attention.member.name || 'Unknown Member';
   attentionMetaEl.textContent = `${attention.perf.performanceScore}% • ${attention.perf.performanceLabel}`;
+}
+
+function renderMyPerformance() {
+  const widget = $('#my-performance-widget');
+  if (!widget) return;
+
+  const member = getCurrentMember();
+
+  if (isAdmin() || !member) {
+    widget.classList.add('hidden');
+    return;
+  }
+
+  widget.classList.remove('hidden');
+
+  const period = getCurrentPerformancePeriod();
+  const periodEl = $('#my-performance-period');
+  if (periodEl) periodEl.textContent = period.label;
+
+  const body = $('#my-performance-body');
+  if (!body) return;
+
+  const allPerf = state.teamMembers
+    .filter(isPerformanceEligibleMember)
+    .map((m) => {
+      const memberTasks = state.tasks.filter(
+        (t) =>
+          (t.assigned_to || '').toLowerCase().trim() ===
+          (m.name || '').toLowerCase().trim()
+      );
+
+      const perf = calculateMemberPerformance(memberTasks);
+
+      return { member: m, perf };
+    });
+
+  const ranking = allPerf
+    .filter(({ perf }) => perf.monthlyTasks.length >= 3)
+    .sort((a, b) => b.perf.performanceScore - a.perf.performanceScore);
+
+  const mine = allPerf.find(({ member: m }) => Number(m.id) === Number(member.id));
+
+  if (!mine || mine.perf.monthlyTasks.length < 3) {
+    body.innerHTML = `<p class="text-sm text-gray-500">Not enough data this month</p>`;
+    return;
+  }
+
+  const rank = ranking.findIndex(({ member: m }) => Number(m.id) === Number(member.id)) + 1;
+
+  body.innerHTML = `
+    <div class="grid grid-cols-2 sm:grid-cols-5 gap-3">
+      <div>
+        <p class="text-xs text-gray-500">Score</p>
+        <p class="text-base font-semibold text-gray-900">${mine.perf.performanceScore}%</p>
+      </div>
+      <div>
+        <p class="text-xs text-gray-500">Label</p>
+        <p class="text-base font-semibold text-gray-900">${escapeHtml(mine.perf.performanceLabel)}</p>
+      </div>
+      <div>
+        <p class="text-xs text-gray-500">Rank</p>
+        <p class="text-base font-semibold text-gray-900">#${rank} of ${ranking.length}</p>
+      </div>
+      <div>
+        <p class="text-xs text-gray-500">Counted Tasks</p>
+        <p class="text-base font-semibold text-gray-900">${mine.perf.monthlyTasks.length}</p>
+      </div>
+      <div>
+        <p class="text-xs text-gray-500">Points</p>
+        <p class="text-base font-semibold text-gray-900">${mine.perf.totalPoints} / ${mine.perf.maxPoints}</p>
+      </div>
+    </div>
+  `;
 }
 
 function openPerformanceRankingModal() {
