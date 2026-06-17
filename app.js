@@ -1748,6 +1748,12 @@ function getFilteredTasks() {
     );
   }
 
+  if (state.filters.tasks.priority !== 'all') {
+    data = data.filter(
+      (t) => (t.priority || 'medium').toLowerCase() === state.filters.tasks.priority
+    );
+  }
+
   return data;
 }
 
@@ -5425,6 +5431,11 @@ $$('[data-tasks-filter]').forEach((btn) => {
 
     renderTasks();
   });
+});
+
+$('#tasks-priority-filter')?.addEventListener('change', (e) => {
+  state.filters.tasks.priority = e.target.value;
+  renderTasks();
 });
 
   // Search (module-scoped: only the currently active module is affected)

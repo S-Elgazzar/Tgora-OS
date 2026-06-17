@@ -718,6 +718,14 @@
         <button data-tasks-filter="completed" class="filter-pill">Done</button>
       </div>
 
+      <select id="tasks-priority-filter" class="hidden sm:block form-input w-36">
+        <option value="all">All Priorities</option>
+        <option value="urgent">Urgent</option>
+        <option value="high">High</option>
+        <option value="medium">Medium</option>
+        <option value="low">Low</option>
+      </select>
+
       <button data-action="open-task-modal" class="h-9 px-3 inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg transition shadow-sm">
         <i data-lucide="plus" class="w-4 h-4"></i> New Task
       </button>
