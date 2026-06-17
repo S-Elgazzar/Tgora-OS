@@ -1586,10 +1586,10 @@ function renderRecentProjects() {
       const priority = (p.priority || 'medium').toLowerCase();
       const dlClass = deadlineClass(p.deadline) || 'text-gray-400';
       return `
-      <div class="recent-row flex-wrap sm:flex-nowrap">
+      <button type="button" class="recent-row flex-wrap sm:flex-nowrap" data-action="open-project-details" data-id="${p.id}">
         <div class="client-avatar ${avatarColor(p.client)} shrink-0">${initials(p.client || p.project_name)}</div>
         <div class="flex-1 min-w-0">
-          <button class="row-title block w-full text-left text-sm font-semibold text-gray-900 truncate leading-snug" data-action="open-project-details" data-id="${p.id}">${escapeHtml(p.project_name || 'Untitled')}</button>
+          <span class="row-title block w-full text-left text-sm font-semibold text-gray-900 truncate leading-snug">${escapeHtml(p.project_name || 'Untitled')}</span>
           <p class="text-xs text-gray-400 truncate mt-0.5">${escapeHtml(p.client || 'No client')}</p>
         </div>
         <div class="recent-row-meta">
@@ -1602,7 +1602,7 @@ function renderRecentProjects() {
             ${p.deadline ? `<p class="font-medium ${dlClass}">Due ${fmtDate(p.deadline)}</p>` : ''}
           </div>
         </div>
-      </div>`;
+      </button>`;
     })
     .join('');
   refreshIcons();
@@ -1645,10 +1645,10 @@ function renderRecentTasks() {
       if (project) subtitleParts.push(escapeHtml(project.project_name));
       const subtitle = subtitleParts.join(' · ') || '—';
       return `
-      <div class="recent-row flex-wrap sm:flex-nowrap">
+      <button type="button" class="recent-row flex-wrap sm:flex-nowrap" data-action="open-task-details" data-id="${t.id}">
         ${showAssignee ? `<div class="client-avatar ${avatarColor(t.assigned_to)} shrink-0">${initials(t.assigned_to)}</div>` : ''}
         <div class="flex-1 min-w-0">
-          <button type="button" class="row-title block w-full text-left text-sm font-semibold text-gray-900 truncate leading-snug" data-action="open-task-details" data-id="${t.id}">${escapeHtml(t.task_info || 'Untitled task')}</button>
+          <span class="row-title block w-full text-left text-sm font-semibold text-gray-900 truncate leading-snug">${escapeHtml(t.task_info || 'Untitled task')}</span>
           <p class="text-xs text-gray-400 truncate mt-0.5">${subtitle}</p>
         </div>
         <div class="recent-row-meta">
@@ -1661,7 +1661,7 @@ function renderRecentTasks() {
             <p class="font-medium ${dlClass}">Due ${fmtDate(t.deadline)}</p>
           </div>
         </div>
-      </div>`;
+      </button>`;
     })
     .join('');
   refreshIcons();

@@ -282,6 +282,12 @@ tbody tr:hover {
   transition: background-color 0.12s ease;
   cursor: pointer;
   position: relative;
+  width: 100%;
+  background: none;
+  border: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
 }
 .recent-row::before {
   content: '';
@@ -297,6 +303,14 @@ tbody tr:hover {
   background-color: #f1f5f9;
 }
 .recent-row:hover::before {
+  background-color: #c7d2fe;
+}
+.recent-row:focus-visible {
+  outline: 2px solid #6366f1;
+  outline-offset: -2px;
+  background-color: #f1f5f9;
+}
+.recent-row:focus-visible::before {
   background-color: #c7d2fe;
 }
 .recent-row .row-title {
