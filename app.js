@@ -25,11 +25,25 @@ const state = {
   editingTaskId: null,
   editingProjectId: null,
   filters: {
-    projects: 'all',
-    tasks: 'all',
+    projects: {
+      status: 'all',
+      search: '',
+      priority: 'all',
+      deadline: null,
+    },
+    tasks: {
+      status: 'all',
+      search: '',
+      priority: 'all',
+      project: null,
+      assignee: null,
+      deadline: null,
+    },
+    team: {
+      search: '',
+    },
     selectedProjectId: null,
   },
-  search: '',
   pendingDelete: null, // { type: 'project' | 'task', id }
   alertsFilter: 'all', // 'all' | 'overdue' | 'due_today'
   teamPerformanceRanking: [],
@@ -1670,14 +1684,14 @@ function renderRecentTasks() {
 function getFilteredProjects() {
   let data = [...state.projects];
 
-  if (state.filters.projects !== 'all') {
+  if (state.filters.projects.status !== 'all') {
     data = data.filter(
-      (p) => (p.status || '').toLowerCase() === state.filters.projects
+      (p) => (p.status || '').toLowerCase() === state.filters.projects.status
     );
   }
 
-  if (state.search) {
-    const q = state.search.toLowerCase();
+  if (state.filters.projects.search) {
+    const q = state.filters.projects.search.toLowerCase();
 
     data = data.filter((p) =>
       [
@@ -1712,14 +1726,14 @@ function getFilteredTasks() {
     );
   }
 
-  if (state.filters.tasks !== 'all') {
+  if (state.filters.tasks.status !== 'all') {
     data = data.filter(
-      (t) => (t.status || '').toLowerCase() === state.filters.tasks
+      (t) => (t.status || '').toLowerCase() === state.filters.tasks.status
     );
   }
 
-  if (state.search) {
-    const q = state.search.toLowerCase();
+  if (state.filters.tasks.search) {
+    const q = state.filters.tasks.search.toLowerCase();
 
     data = data.filter((t) =>
       [
@@ -2444,9 +2458,25 @@ function canLimitedEditTask(task) {
 }
 
 // ---------- View Switching ----------
+function syncSearchInputWithView() {
+  const searchInput = $('#global-search');
+  if (!searchInput) return;
+
+  if (state.view === 'projects') {
+    searchInput.value = state.filters.projects.search;
+  } else if (state.view === 'tasks') {
+    searchInput.value = state.filters.tasks.search;
+  } else if (state.view === 'team') {
+    searchInput.value = state.filters.team.search;
+  } else {
+    searchInput.value = '';
+  }
+}
+
 function setView(view) {
   state.view = view;
   localStorage.setItem('tgora_current_view', view);
+  syncSearchInputWithView();
 
   $$('.view').forEach((el) => el.classList.add('hidden'));
   const target = $(`#view-${view}`);
@@ -5375,7 +5405,7 @@ if (item) {
   // Filters
   $$('[data-projects-filter]').forEach((btn) => {
   btn.addEventListener('click', () => {
-    state.filters.projects = btn.dataset.projectsFilter;
+    state.filters.projects.status = btn.dataset.projectsFilter;
 
     $$('[data-projects-filter]').forEach((b) => {
       b.classList.toggle('active', b === btn);
@@ -5387,7 +5417,7 @@ if (item) {
 
 $$('[data-tasks-filter]').forEach((btn) => {
   btn.addEventListener('click', () => {
-    state.filters.tasks = btn.dataset.tasksFilter;
+    state.filters.tasks.status = btn.dataset.tasksFilter;
 
     $$('[data-tasks-filter]').forEach((b) => {
       b.classList.toggle('active', b === btn);
@@ -5397,13 +5427,20 @@ $$('[data-tasks-filter]').forEach((btn) => {
   });
 });
 
-  // Search
+  // Search (module-scoped: only the currently active module is affected)
   $('#global-search').addEventListener('input', (e) => {
-    state.search = e.target.value.trim();
-    renderProjects();
-    renderTasks();
-    renderRecentProjects();
-    renderRecentTasks();
+    const value = e.target.value.trim();
+
+    if (state.view === 'projects') {
+      state.filters.projects.search = value;
+      renderProjects();
+    } else if (state.view === 'tasks') {
+      state.filters.tasks.search = value;
+      renderTasks();
+    } else if (state.view === 'team') {
+      state.filters.team.search = value;
+      // renderTeam() does not consume search yet — reserved for future use.
+    }
   });
 
   // Esc to close modals
