@@ -79,13 +79,13 @@ aside::-webkit-scrollbar-thumb:hover {
   background-color: #fff;
   border: 1px solid #e5e7eb;
   border-radius: 0.75rem;
-  padding: 1.25rem;
-  box-shadow: 0 1px 3px 0 rgba(0,0,0,0.05), 0 4px 12px -2px rgba(0,0,0,0.04);
-  transition: all 0.2s ease;
+  padding: 1rem;
+  box-shadow: 0 1px 2px 0 rgba(0,0,0,0.04), 0 2px 8px -2px rgba(0,0,0,0.04);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
 }
 .stat-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 6px -1px rgba(0,0,0,0.08), 0 10px 25px -3px rgba(0,0,0,0.08);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px -2px rgba(0,0,0,0.1), 0 2px 4px 0 rgba(0,0,0,0.05);
   border-color: #d1d5db;
 }
 
@@ -278,12 +278,69 @@ tbody tr:hover {
   display: flex;
   align-items: center;
   gap: 0.875rem;
-  padding: 0.875rem 1.25rem;
-  transition: background-color 0.15s ease;
+  padding: 0.75rem 1.25rem;
+  transition: background-color 0.12s ease;
   cursor: pointer;
+  position: relative;
+}
+.recent-row::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: transparent;
+  transition: background-color 0.12s ease;
 }
 .recent-row:hover {
-  background-color: #fafafa;
+  background-color: #f1f5f9;
+}
+.recent-row:hover::before {
+  background-color: #c7d2fe;
+}
+.recent-row .row-title {
+  transition: color 0.12s ease;
+  min-width: 0;
+}
+.recent-row:hover .row-title {
+  color: #4f46e5;
+}
+.recent-row .row-title,
+.recent-row p {
+  overflow-wrap: anywhere;
+}
+
+/* Recent row metadata column (badges + dates) */
+.recent-row-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.3rem;
+  flex-shrink: 0;
+  min-width: 96px;
+}
+@media (max-width: 639px) {
+  .recent-row {
+    overflow: hidden;
+  }
+  .recent-row-meta {
+    /* Stack badges above dates on mobile instead of placing them
+       side by side — side-by-side caused the meta group to overflow
+       the card width and overlap row content on narrow screens. */
+    flex-direction: column;
+    align-items: flex-start;
+    width: 100%;
+    min-width: 0;
+    margin-top: 0.5rem;
+    gap: 0.375rem;
+  }
+  .recent-row-meta > div {
+    flex-wrap: wrap;
+  }
+  .recent-row-meta > div:last-child {
+    text-align: left;
+  }
 }
 
 /* ============================================
@@ -373,6 +430,80 @@ tbody tr:hover {
 }
 
 /* ============================================
+   Manager dashboard section ordering
+   ============================================ */
+.manager-dashboard {
+  display: flex;
+  flex-direction: column;
+}
+.manager-dashboard #dash-header                   { order: 0; }
+.manager-dashboard #dash-projects-overview        { order: 1; }
+.manager-dashboard #dash-tasks-overview           { order: 2; }
+.manager-dashboard #dash-charts                   { order: 3; }
+.manager-dashboard #dash-recent                   { order: 4; margin-bottom: 1.5rem; }
+.manager-dashboard #dash-perf-heading             { order: 5; }
+.manager-dashboard #dash-perf-grid                { order: 6; }
+.manager-dashboard #my-performance-trend-widget   { order: 7; }
+.manager-dashboard #my-achievements-widget        { order: 8; }
+
+/* ============================================
+   Member dashboard section ordering
+   ============================================ */
+.member-dashboard {
+  display: flex;
+  flex-direction: column;
+}
+.member-dashboard #dash-header                    { order: 0; }
+.member-dashboard #dash-tasks-overview            { order: 1; }
+.member-dashboard #dash-charts                    { order: 2; }
+.member-dashboard #dash-recent                    { order: 3; margin-bottom: 1.5rem; }
+.member-dashboard #dash-perf-heading              { order: 4; }
+.member-dashboard #dash-perf-grid                 { order: 5; }
+.member-dashboard #my-performance-trend-widget    { order: 6; }
+.member-dashboard #my-achievements-widget         { order: 7; }
+.member-dashboard #dash-projects-overview         { order: 8; }
+
+/* In member view, tasks chart + today's focus fill 2 columns */
+@media (min-width: 1024px) {
+  .member-dashboard #dash-charts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* ============================================
+   Chart card wrapper
+   ============================================ */
+.chart-card {
+  transition: box-shadow 0.15s ease, border-color 0.15s ease;
+}
+.chart-card:hover {
+  box-shadow: 0 4px 16px -4px rgba(0,0,0,0.09), 0 2px 6px -2px rgba(0,0,0,0.05);
+  border-color: #d1d5db;
+}
+
+/* ============================================
+   Today's Focus task card highlight
+   ============================================ */
+.focus-task-card {
+  background: linear-gradient(135deg, #eef2ff 0%, #f5f3ff 100%);
+  border: 1px solid #c7d2fe;
+  border-radius: 0.625rem;
+  padding: 0.875rem 1rem;
+  margin-bottom: 0.875rem;
+}
+
+/* ============================================
+   Clickable card affordance
+   ============================================ */
+.stat-card[data-action],
+.stat-card[onclick] {
+  cursor: pointer;
+}
+.recent-row {
+  cursor: pointer;
+}
+
+/* ============================================
    Misc
    ============================================ */
 .client-avatar {
@@ -408,4 +539,31 @@ a:focus-visible {
   outline: 2px solid #6366f1;
   outline-offset: 2px;
   border-radius: 0.375rem;
+}
+
+/* ============================================
+   Alerts / Notifications dropdowns — mobile
+   ============================================ */
+@media (max-width: 639px) {
+  #alerts-dropdown,
+  #notifications-dropdown {
+    position: fixed;
+    top: 4.25rem;
+    left: 0.75rem;
+    right: 0.75rem;
+    margin-top: 0;
+    width: auto;
+    max-height: calc(100vh - 5rem);
+  }
+  #alerts-dropdown:not(.hidden),
+  #notifications-dropdown:not(.hidden) {
+    display: flex;
+    flex-direction: column;
+  }
+  #alerts-list,
+  #notifications-list {
+    max-height: none;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
 }

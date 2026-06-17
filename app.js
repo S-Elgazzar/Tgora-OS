@@ -1144,13 +1144,76 @@ function renderStats() {
 
   $('#nav-projects-count').textContent = state.projects.length;
   $('#nav-tasks-count').textContent = totalTasks;
-  
+
   const teamCount = state.teamMembers.length;
 const teamCountEl = $('#nav-team-count');
 
 if (teamCountEl) {
   teamCountEl.textContent = teamCount;
 }
+
+  // Role-aware copy and Projects Overview visibility
+  const member = isMember();
+
+  const projectsOverview = $('#dash-projects-overview');
+  if (projectsOverview) {
+    projectsOverview.classList.toggle('hidden', member);
+  }
+
+  const dashSubtitle = $('#dash-subtitle');
+  if (dashSubtitle) {
+    dashSubtitle.textContent = member
+      ? "Here's your work and progress for today."
+      : "Here's what's happening across your agency today.";
+  }
+
+  const tasksOverviewTitle = $('#tasks-overview-title');
+  if (tasksOverviewTitle) {
+    tasksOverviewTitle.textContent = member ? 'My Tasks' : 'Tasks Overview';
+  }
+
+  const tasksOverviewSubtitle = $('#tasks-overview-subtitle');
+  if (tasksOverviewSubtitle) {
+    tasksOverviewSubtitle.textContent = member
+      ? 'Your assigned tasks and deadlines.'
+      : 'Monitor tasks and deadlines.';
+  }
+
+  const totalTasksLabel = $('#stat-total-tasks-label');
+  if (totalTasksLabel) {
+    totalTasksLabel.textContent = member ? 'My Tasks' : 'Total Tasks';
+  }
+
+  const totalTasksSub = $('#stat-total-tasks-sub');
+  if (totalTasksSub) {
+    totalTasksSub.textContent = member ? 'Assigned to you' : 'Across all projects';
+  }
+
+  const recentProjectsSub = $('#recent-projects-subtitle');
+  if (recentProjectsSub) {
+    recentProjectsSub.textContent = member
+      ? 'Projects with your tasks'
+      : 'Latest agency engagements';
+  }
+
+  const headerLabel = $('#dash-header-label');
+  if (headerLabel) {
+    headerLabel.textContent = member ? 'My Dashboard' : 'Agency Overview';
+  }
+
+  const welcomeNameEl = $('#dash-welcome-name');
+  if (welcomeNameEl) {
+    const currentMember = getCurrentMember();
+    const firstName = currentMember?.name
+      ? currentMember.name.split(' ')[0]
+      : (state.currentUser?.email?.split('@')[0] || 'Tgorian');
+    welcomeNameEl.textContent = firstName;
+  }
+
+  const perfHeading = $('#dash-perf-heading');
+  if (perfHeading) {
+    perfHeading.classList.toggle('hidden', isAdmin());
+  }
 }
 
 let projectsChartInstance = null;
@@ -1222,9 +1285,11 @@ function renderCharts() {
           responsive: true,
           maintainAspectRatio: false,
           cutout: '70%',
+          layout: { padding: 0 },
           plugins: {
             legend: {
-              position: 'bottom'
+              position: 'bottom',
+              labels: { boxWidth: 10, font: { size: 11 }, padding: 8 }
             }
           }
         }
@@ -1291,6 +1356,7 @@ function renderCharts() {
       options: {
         responsive: true,
         maintainAspectRatio: false,
+        layout: { padding: { top: 4, right: 0, bottom: 0, left: 0 } },
         plugins: {
           legend: {
             display: false
@@ -1375,10 +1441,11 @@ if (memberView) {
       options: {
         responsive: true,
         maintainAspectRatio: false,
-
+        layout: { padding: 0 },
         plugins: {
           legend: {
-            position: 'bottom'
+            position: 'bottom',
+            labels: { boxWidth: 10, font: { size: 11 }, padding: 8 }
           }
         }
       }
@@ -1393,7 +1460,7 @@ function renderTodayFocus() {
 
   if (!widget || !body) return;
 
-  if (isAdmin()) {
+  if (isAdmin() || isManager()) {
     widget.classList.add('hidden');
     return;
   }
@@ -1412,10 +1479,14 @@ function renderTodayFocus() {
   if (myTasks.length === 0) {
     body.innerHTML = `
       <div class="text-center py-6">
-        <p class="text-sm font-medium text-gray-900">All clear for now</p>
-        <p class="text-xs text-gray-500 mt-1">No active tasks assigned to you.</p>
+        <div class="w-10 h-10 mx-auto rounded-full bg-emerald-50 flex items-center justify-center mb-2">
+          <i data-lucide="check-circle-2" class="w-5 h-5 text-emerald-500"></i>
+        </div>
+        <p class="text-sm font-semibold text-gray-800">All caught up!</p>
+        <p class="text-xs text-gray-400 mt-0.5">No active tasks assigned to you.</p>
       </div>
     `;
+    refreshIcons();
     return;
   }
 
@@ -1464,26 +1535,29 @@ function renderTodayFocus() {
   const priority = (focusTask.priority || 'medium').toLowerCase();
 
   body.innerHTML = `
-    <p class="text-sm font-medium text-gray-900 mb-1">${escapeHtml(focusTask.task_info || 'Untitled task')}</p>
-    <p class="text-xs text-gray-500 mb-3">${escapeHtml(project?.project_name || 'No project')}</p>
+    <div class="focus-task-card">
+      <p class="text-base font-semibold text-gray-900 leading-snug mb-1">${escapeHtml(focusTask.task_info || 'Untitled task')}</p>
+      <p class="text-xs font-medium text-brand-500">${escapeHtml(project?.project_name || 'No project')}</p>
+    </div>
 
-    <div class="flex items-center gap-2 mb-3">
+    <div class="flex items-center gap-1.5 mb-3">
       <span class="badge priority-${priority}"><span class="dot"></span>${labelize(priority)}</span>
       <span class="badge badge-${status}"><span class="dot"></span>${labelize(status)}</span>
     </div>
 
-    <p class="text-xs text-gray-500 mb-4">
-      Deadline: <span class="${deadlineClass(focusTask.deadline)}">${fmtDate(focusTask.deadline)}</span>
-    </p>
-
-    <button
-      type="button"
-      class="h-9 px-4 inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg shadow-sm"
-      data-action="open-task-details"
-      data-id="${focusTask.id}"
-    >
-      Open Task
-    </button>
+    <div class="flex items-center justify-between">
+      <p class="text-xs text-gray-400">
+        Due <span class="${deadlineClass(focusTask.deadline)} font-semibold">${fmtDate(focusTask.deadline)}</span>
+      </p>
+      <button
+        type="button"
+        class="h-8 px-3 inline-flex items-center gap-1.5 bg-brand-600 hover:bg-brand-700 text-white text-xs font-semibold rounded-lg transition"
+        data-action="open-task-details"
+        data-id="${focusTask.id}"
+      >
+        Open Task <i data-lucide="arrow-right" class="w-3 h-3"></i>
+      </button>
+    </div>
   `;
 
   refreshIcons();
@@ -1493,12 +1567,15 @@ function renderRecentProjects() {
   const container = $('#recent-projects-list');
   const recent = [...getVisibleProjects()].slice(0, 5);
   if (recent.length === 0) {
+    const emptyMsg = isMember()
+      ? 'No projects are linked to your tasks yet.'
+      : 'No projects yet. Create one to get started.';
     container.innerHTML = `
-      <div class="px-5 py-12 text-center text-sm text-gray-500">
-        <div class="w-10 h-10 mx-auto rounded-full bg-gray-100 flex items-center justify-center mb-2">
-          <i data-lucide="folder" class="w-5 h-5 text-gray-400"></i>
+      <div class="px-5 py-12 text-center">
+        <div class="w-10 h-10 mx-auto rounded-full bg-gray-100 flex items-center justify-center mb-3">
+          <i data-lucide="folder-open" class="w-5 h-5 text-gray-400"></i>
         </div>
-        No projects yet. Create one to get started.
+        <p class="text-sm font-medium text-gray-700">${emptyMsg}</p>
       </div>`;
     refreshIcons();
     return;
@@ -1507,18 +1584,24 @@ function renderRecentProjects() {
     .map((p) => {
       const status = (p.status || 'planning').toLowerCase();
       const priority = (p.priority || 'medium').toLowerCase();
+      const dlClass = deadlineClass(p.deadline) || 'text-gray-400';
       return `
-      <div class="recent-row">
-        <div class="client-avatar ${avatarColor(p.client)}">${initials(p.client || p.project_name)}</div>
+      <div class="recent-row flex-wrap sm:flex-nowrap">
+        <div class="client-avatar ${avatarColor(p.client)} shrink-0">${initials(p.client || p.project_name)}</div>
         <div class="flex-1 min-w-0">
-          <button class="text-sm font-medium text-gray-900 truncate hover:text-indigo-600 text-left" data-action="open-project-details" data-id="${p.id}">
-  ${escapeHtml(p.project_name || 'Untitled')}
-</button>
-          <p class="text-xs text-gray-500 truncate">${escapeHtml(p.client || 'No client')}</p>
+          <button class="row-title block w-full text-left text-sm font-semibold text-gray-900 truncate leading-snug" data-action="open-project-details" data-id="${p.id}">${escapeHtml(p.project_name || 'Untitled')}</button>
+          <p class="text-xs text-gray-400 truncate mt-0.5">${escapeHtml(p.client || 'No client')}</p>
         </div>
-        <span class="badge badge-${status}"><span class="dot"></span>${labelize(status)}</span>
-        <span class="badge priority-${priority} hidden sm:inline-flex"><span class="dot"></span>${labelize(priority)}</span>
-        <span class="text-xs text-gray-500 hidden md:inline-block ${deadlineClass(p.deadline)}">${fmtDate(p.deadline)}</span>
+        <div class="recent-row-meta">
+          <div class="flex items-center gap-1.5">
+            <span class="badge badge-${status}"><span class="dot"></span>${labelize(status)}</span>
+            <span class="badge priority-${priority}"><span class="dot"></span>${labelize(priority)}</span>
+          </div>
+          <div class="text-[11px] text-right leading-snug">
+            ${p.start_date ? `<p class="text-gray-400">Start ${fmtDate(p.start_date)}</p>` : ''}
+            ${p.deadline ? `<p class="font-medium ${dlClass}">Due ${fmtDate(p.deadline)}</p>` : ''}
+          </div>
+        </div>
       </div>`;
     })
     .join('');
@@ -1537,30 +1620,47 @@ function renderRecentTasks() {
     .slice(0, 5);
 
   if (upcoming.length === 0) {
+    const emptyMsg = isMember()
+      ? "You're all caught up — no upcoming tasks."
+      : 'All clear. No upcoming tasks.';
     container.innerHTML = `
-      <div class="px-5 py-12 text-center text-sm text-gray-500">
-        <div class="w-10 h-10 mx-auto rounded-full bg-gray-100 flex items-center justify-center mb-2">
-          <i data-lucide="check-check" class="w-5 h-5 text-gray-400"></i>
+      <div class="px-5 py-12 text-center">
+        <div class="w-10 h-10 mx-auto rounded-full bg-emerald-50 flex items-center justify-center mb-3">
+          <i data-lucide="check-check" class="w-5 h-5 text-emerald-500"></i>
         </div>
-        All clear. No upcoming tasks.
+        <p class="text-sm font-medium text-gray-700">${emptyMsg}</p>
       </div>`;
     refreshIcons();
     return;
   }
+  const showAssignee = !isMember();
   container.innerHTML = upcoming
     .map((t) => {
       const priority = (t.priority || 'medium').toLowerCase();
+      const status = (t.status || 'todo').toLowerCase();
+      const project = state.projects.find((p) => p.id === t.project_id);
+      const dlClass = deadlineClass(t.deadline) || 'text-gray-400';
+      const subtitleParts = [];
+      if (showAssignee) subtitleParts.push(escapeHtml(t.assigned_to || 'Unassigned'));
+      if (project) subtitleParts.push(escapeHtml(project.project_name));
+      const subtitle = subtitleParts.join(' · ') || '—';
       return `
-      <div class="recent-row">
-        <div class="client-avatar ${avatarColor(t.assigned_to)}">${initials(t.assigned_to)}</div>
+      <div class="recent-row flex-wrap sm:flex-nowrap">
+        ${showAssignee ? `<div class="client-avatar ${avatarColor(t.assigned_to)} shrink-0">${initials(t.assigned_to)}</div>` : ''}
         <div class="flex-1 min-w-0">
-          <button type="button" class="text-sm font-medium text-gray-900 truncate hover:text-indigo-600 text-left" data-action="open-task-details" data-id="${t.id}">${escapeHtml(t.task_info || 'Untitled task')}</button>
-          <p class="text-xs text-gray-500 truncate">
-            ${escapeHtml(t.assigned_to || 'Unassigned')} ·
-            <span class="${deadlineClass(t.deadline)}">${fmtDate(t.deadline)}</span>
-          </p>
+          <button type="button" class="row-title block w-full text-left text-sm font-semibold text-gray-900 truncate leading-snug" data-action="open-task-details" data-id="${t.id}">${escapeHtml(t.task_info || 'Untitled task')}</button>
+          <p class="text-xs text-gray-400 truncate mt-0.5">${subtitle}</p>
         </div>
-        <span class="badge priority-${priority}"><span class="dot"></span>${labelize(priority)}</span>
+        <div class="recent-row-meta">
+          <div class="flex items-center gap-1.5">
+            <span class="badge badge-${status}"><span class="dot"></span>${labelize(status)}</span>
+            <span class="badge priority-${priority}"><span class="dot"></span>${labelize(priority)}</span>
+          </div>
+          <div class="text-[11px] text-right leading-snug">
+            ${t.start_date ? `<p class="text-gray-400">From ${fmtDate(t.start_date)}</p>` : ''}
+            <p class="font-medium ${dlClass}">Due ${fmtDate(t.deadline)}</p>
+          </div>
+        </div>
       </div>`;
     })
     .join('');
@@ -2170,7 +2270,19 @@ async function refreshDataAndRender() {
   console.log('refreshDataAndRender completed');
 }
 
+function applyMemberDashboardLayout() {
+  const dashboard = $('#view-dashboard');
+  if (!dashboard) return;
+  dashboard.classList.remove('member-dashboard', 'manager-dashboard');
+  if (isMember()) {
+    dashboard.classList.add('member-dashboard');
+  } else if (isManager()) {
+    dashboard.classList.add('manager-dashboard');
+  }
+}
+
 function renderAll() {
+  applyMemberDashboardLayout();
   populateTeamMembers();
   renderStats();
   renderCharts();
