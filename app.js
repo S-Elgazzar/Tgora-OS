@@ -1880,6 +1880,17 @@ function renderTasks() {
   const empty = $('#tasks-empty');
   const data = getFilteredTasks();
 
+  const summaryEl = $('#tasks-results-summary');
+  if (summaryEl) {
+    const total = getVisibleTasks().length;
+    const filtered = data.length;
+
+    summaryEl.textContent =
+      filtered === total
+        ? `Showing all ${total} Tasks`
+        : `Showing ${filtered} of ${total} Tasks`;
+  }
+
   if (data.length === 0) {
     tbody.innerHTML = '';
     empty.classList.remove('hidden');
