@@ -175,19 +175,22 @@ aside::-webkit-scrollbar-thumb:hover {
 }
 /* overflow-x-auto forces overflow-y to clip too, so the wrapper needs enough
    height to fit the tallest popover even when the table has 0-1 rows */
-#tasks-table-wrapper {
+#tasks-table-wrapper,
+#projects-table-wrapper {
   min-height: 20rem;
 }
 
 /* ============================================
-   Tasks active filter chips
+   Active filter chips (Tasks + Projects)
    ============================================ */
-#tasks-active-filters {
+#tasks-active-filters,
+#projects-active-filters {
   flex-wrap: wrap;
   align-items: center;
   gap: 0.375rem;
 }
-#tasks-active-filters:not(.hidden) {
+#tasks-active-filters:not(.hidden),
+#projects-active-filters:not(.hidden) {
   display: flex;
 }
 .task-filter-chip {

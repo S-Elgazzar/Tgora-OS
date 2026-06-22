@@ -29,6 +29,7 @@ const state = {
       status: 'all',
       search: '',
       priority: 'all',
+      client: null,
       deadline: null,
     },
     tasks: {
@@ -1684,12 +1685,6 @@ function renderRecentTasks() {
 function getFilteredProjects() {
   let data = [...state.projects];
 
-  if (state.filters.projects.status !== 'all') {
-    data = data.filter(
-      (p) => (p.status || '').toLowerCase() === state.filters.projects.status
-    );
-  }
-
   if (state.filters.projects.search) {
     const q = state.filters.projects.search.toLowerCase();
 
@@ -1704,6 +1699,57 @@ function getFilteredProjects() {
         .toLowerCase()
         .includes(q)
     );
+  }
+
+  if (state.filters.projects.client) {
+    const target = state.filters.projects.client.toLowerCase().trim();
+    data = data.filter(
+      (p) => (p.client || '').toLowerCase().trim() === target
+    );
+  }
+
+  if (state.filters.projects.status !== 'all') {
+    data = data.filter(
+      (p) => (p.status || '').toLowerCase() === state.filters.projects.status
+    );
+  }
+
+  if (state.filters.projects.priority !== 'all') {
+    data = data.filter(
+      (p) => (p.priority || 'medium').toLowerCase() === state.filters.projects.priority
+    );
+  }
+
+  if (state.filters.projects.deadline) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    data = data.filter((p) => {
+      if (state.filters.projects.deadline === 'no_deadline') {
+        return !p.deadline;
+      }
+
+      if (!p.deadline) return false;
+
+      const d = new Date(p.deadline);
+      d.setHours(0, 0, 0, 0);
+
+      if (state.filters.projects.deadline === 'overdue') {
+        return d < today && (p.status || '').toLowerCase() !== 'completed';
+      }
+
+      if (state.filters.projects.deadline === 'due_today') {
+        return d.getTime() === today.getTime();
+      }
+
+      if (state.filters.projects.deadline === 'due_this_week') {
+        const weekFromNow = new Date(today);
+        weekFromNow.setDate(weekFromNow.getDate() + 7);
+        return d >= today && d < weekFromNow;
+      }
+
+      return true;
+    });
   }
 
   return data;
@@ -1807,9 +1853,54 @@ function renderProjects() {
   const empty = $('#projects-empty');
   const data = getFilteredProjects();
 
+  const summaryEl = $('#projects-results-summary');
+  if (summaryEl) {
+    const total = state.projects.length;
+    const filtered = data.length;
+
+    summaryEl.textContent =
+      filtered === total
+        ? `Showing all ${total} Projects`
+        : `Showing ${filtered} of ${total} Projects`;
+  }
+
+  const resetBtn = $('#projects-reset-filters');
+  if (resetBtn) {
+    const f = state.filters.projects;
+    const hasActiveFilter =
+      f.status !== 'all' ||
+      f.priority !== 'all' ||
+      !!f.client ||
+      !!f.deadline ||
+      !!f.search;
+    resetBtn.classList.toggle('hidden', !hasActiveFilter);
+  }
+
+  renderActiveFilterChips('projects');
+  renderHeaderFilters('projects');
+
   if (data.length === 0) {
     tbody.innerHTML = '';
     empty.classList.remove('hidden');
+
+    const isFilteredEmpty = state.projects.length > 0;
+
+    const titleEl = $('#projects-empty-title');
+    const messageEl = $('#projects-empty-message');
+    if (titleEl) {
+      titleEl.textContent = isFilteredEmpty
+        ? 'No projects match your current filters.'
+        : 'No projects yet';
+    }
+    if (messageEl) {
+      messageEl.textContent = isFilteredEmpty
+        ? 'Try adjusting or clearing your filters.'
+        : 'Get started by creating your first project.';
+    }
+
+    $('#projects-empty-new-project-btn')?.classList.toggle('hidden', isFilteredEmpty);
+    $('#projects-empty-reset-btn')?.classList.toggle('hidden', !isFilteredEmpty);
+
     refreshIcons();
     return;
   }
@@ -1950,6 +2041,28 @@ const HEADER_FILTER_MODULES = {
     getChips: () => getTaskActiveFilterChips(),
     renderHeaderFilters: () => renderTasksHeaderFilters(),
     render: () => renderTasks(),
+  },
+  projects: {
+    stateKey: 'projects',
+    viewName: 'projects',
+    popoverIds: [
+      'projects-client-popover',
+      'projects-status-popover',
+      'projects-priority-popover',
+      'projects-deadline-popover',
+    ],
+    chipsContainerId: 'projects-active-filters',
+    allDefaultFilters: ['status', 'priority'],
+    defaults: {
+      status: 'all',
+      priority: 'all',
+      client: null,
+      deadline: null,
+      search: '',
+    },
+    getChips: () => getProjectActiveFilterChips(),
+    renderHeaderFilters: () => renderProjectsHeaderFilters(),
+    render: () => renderProjects(),
   },
 };
 
@@ -2130,6 +2243,68 @@ function getTaskActiveFilterChips() {
 
   if (f.assignee) {
     chips.push({ type: 'assignee', label: `Assigned: ${f.assignee}` });
+  }
+
+  if (f.deadline) {
+    chips.push({ type: 'deadline', label: `Deadline: ${deadlineLabels[f.deadline] || f.deadline}` });
+  }
+
+  return chips;
+}
+
+function renderProjectsHeaderFilters() {
+  const f = state.filters.projects;
+
+  $('#projects-client-th-filter')?.classList.toggle('active', !!f.client);
+  $('#projects-status-th-filter')?.classList.toggle('active', f.status !== 'all');
+  $('#projects-priority-th-filter')?.classList.toggle('active', f.priority !== 'all');
+  $('#projects-deadline-th-filter')?.classList.toggle('active', !!f.deadline);
+
+  const clients = Array.from(
+    new Set(
+      state.projects
+        .map((p) => (p.client || '').trim())
+        .filter((c) => c.length > 0)
+    )
+  ).sort((a, b) => a.localeCompare(b));
+
+  buildHeaderFilterOptions(
+    'projects-client-popover',
+    'All Clients',
+    clients.map((c) => ({ value: c, label: c })),
+    f.client
+  );
+
+  syncHeaderFilterPopoverActive('projects-status-popover', f.status);
+  syncHeaderFilterPopoverActive('projects-priority-popover', f.priority);
+  syncHeaderFilterPopoverActive('projects-deadline-popover', f.deadline);
+}
+
+function getProjectActiveFilterChips() {
+  const f = state.filters.projects;
+  const deadlineLabels = {
+    overdue: 'Overdue',
+    due_today: 'Due Today',
+    due_this_week: 'Due This Week',
+    no_deadline: 'No Deadline',
+  };
+
+  const chips = [];
+
+  if (f.search) {
+    chips.push({ type: 'search', label: `Search: ${f.search}` });
+  }
+
+  if (f.client) {
+    chips.push({ type: 'client', label: `Client: ${f.client}` });
+  }
+
+  if (f.status !== 'all') {
+    chips.push({ type: 'status', label: `Status: ${labelize(f.status)}` });
+  }
+
+  if (f.priority !== 'all') {
+    chips.push({ type: 'priority', label: `Priority: ${labelize(f.priority)}` });
   }
 
   if (f.deadline) {
@@ -5718,19 +5893,6 @@ if (item) {
   }
 });
 
-  // Filters
-  $$('[data-projects-filter]').forEach((btn) => {
-  btn.addEventListener('click', () => {
-    state.filters.projects.status = btn.dataset.projectsFilter;
-
-    $$('[data-projects-filter]').forEach((b) => {
-      b.classList.toggle('active', b === btn);
-    });
-
-    renderProjects();
-  });
-});
-
 $$('[data-th-popover-toggle]').forEach((btn) => {
   btn.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -5786,6 +5948,9 @@ document.addEventListener('click', (e) => {
 
 $('#tasks-reset-filters')?.addEventListener('click', () => resetModuleFilters('tasks'));
 $('#tasks-empty-reset-btn')?.addEventListener('click', () => resetModuleFilters('tasks'));
+
+$('#projects-reset-filters')?.addEventListener('click', () => resetModuleFilters('projects'));
+$('#projects-empty-reset-btn')?.addEventListener('click', () => resetModuleFilters('projects'));
 
   // Search (module-scoped: only the currently active module is affected)
   $('#global-search').addEventListener('input', (e) => {

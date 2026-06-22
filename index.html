@@ -638,47 +638,79 @@
               <p class="text-sm text-gray-500 mt-1">Manage all client engagements in one place.</p>
             </div>
             <div class="flex items-center gap-2">
-              <div class="hidden sm:flex items-center bg-white border border-gray-200 rounded-xl p-1">
-
-  <button data-projects-filter="all" class="filter-pill active">
-  All
-</button>
-
-  <button data-projects-filter="planning" class="filter-pill">
-    Planning
-  </button>
-
-  <button data-projects-filter="active" class="filter-pill">
-  Active
-</button>
-
-  <button data-projects-filter="on_hold" class="filter-pill">
-    On Hold
-  </button>
-
-  <button data-projects-filter="completed" class="filter-pill">
-    Done
-  </button>
-
-</div>
-
               <button data-action="open-project-modal" class="h-9 px-3 inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg transition shadow-sm">
                 <i data-lucide="plus" class="w-4 h-4"></i> New Project
               </button>
             </div>
           </div>
 
+          <!-- Projects summary/reset row -->
+          <div class="flex items-center justify-between gap-3 flex-wrap mb-3">
+            <div class="flex items-center flex-wrap gap-2 min-w-0">
+              <p id="projects-results-summary" class="text-xs text-gray-500 whitespace-nowrap"></p>
+              <div id="projects-active-filters" class="hidden"></div>
+            </div>
+
+            <button
+              id="projects-reset-filters"
+              type="button"
+              class="hidden h-8 px-2.5 inline-flex items-center gap-1.5 text-xs font-medium text-gray-500 hover:text-gray-700 border border-gray-200 rounded-lg transition w-fit"
+            >
+              <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i> Reset Filters
+            </button>
+          </div>
+
           <!-- Projects table -->
           <div class="bg-white rounded-xl border border-gray-200 shadow-card overflow-hidden">
-            <div class="overflow-x-auto">
+            <div id="projects-table-wrapper" class="overflow-x-auto">
               <table class="w-full text-sm">
                 <thead class="bg-gray-50 border-b border-gray-100">
                   <tr class="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     <th class="px-5 py-3">Project</th>
-                    <th class="px-5 py-3">Client</th>
-                    <th class="px-5 py-3">Status</th>
-                    <th class="px-5 py-3">Priority</th>
-                    <th class="px-5 py-3">Deadline</th>
+                    <th class="px-5 py-3 relative">
+                      <button type="button" id="projects-client-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="projects-client-popover" data-filter-module="projects">
+                        Client <i data-lucide="chevron-down" class="w-3 h-3"></i>
+                      </button>
+                      <div id="projects-client-popover" class="task-th-popover hidden" data-filter-type="client" data-filter-module="projects">
+                        <!-- Filled by JS: All Clients + distinct client values -->
+                      </div>
+                    </th>
+                    <th class="px-5 py-3 relative">
+                      <button type="button" id="projects-status-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="projects-status-popover" data-filter-module="projects">
+                        Status <i data-lucide="chevron-down" class="w-3 h-3"></i>
+                      </button>
+                      <div id="projects-status-popover" class="task-th-popover hidden" data-filter-type="status" data-filter-module="projects">
+                        <button type="button" class="task-th-popover-option" data-value="all">All Statuses</button>
+                        <button type="button" class="task-th-popover-option" data-value="planning">Planning</button>
+                        <button type="button" class="task-th-popover-option" data-value="active">Active</button>
+                        <button type="button" class="task-th-popover-option" data-value="on_hold">On Hold</button>
+                        <button type="button" class="task-th-popover-option" data-value="completed">Completed</button>
+                      </div>
+                    </th>
+                    <th class="px-5 py-3 relative">
+                      <button type="button" id="projects-priority-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="projects-priority-popover" data-filter-module="projects">
+                        Priority <i data-lucide="chevron-down" class="w-3 h-3"></i>
+                      </button>
+                      <div id="projects-priority-popover" class="task-th-popover hidden" data-filter-type="priority" data-filter-module="projects">
+                        <button type="button" class="task-th-popover-option" data-value="all">All Priorities</button>
+                        <button type="button" class="task-th-popover-option" data-value="urgent">Urgent</button>
+                        <button type="button" class="task-th-popover-option" data-value="high">High</button>
+                        <button type="button" class="task-th-popover-option" data-value="medium">Medium</button>
+                        <button type="button" class="task-th-popover-option" data-value="low">Low</button>
+                      </div>
+                    </th>
+                    <th class="px-5 py-3 relative">
+                      <button type="button" id="projects-deadline-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="projects-deadline-popover" data-filter-module="projects">
+                        Deadline <i data-lucide="chevron-down" class="w-3 h-3"></i>
+                      </button>
+                      <div id="projects-deadline-popover" class="task-th-popover hidden" data-filter-type="deadline" data-filter-module="projects">
+                        <button type="button" class="task-th-popover-option" data-value="">Any Deadline</button>
+                        <button type="button" class="task-th-popover-option" data-value="overdue">Overdue</button>
+                        <button type="button" class="task-th-popover-option" data-value="due_today">Due Today</button>
+                        <button type="button" class="task-th-popover-option" data-value="due_this_week">Due This Week</button>
+                        <button type="button" class="task-th-popover-option" data-value="no_deadline">No Deadline</button>
+                      </div>
+                    </th>
                     <th class="px-5 py-3 text-right">Actions</th>
                   </tr>
                 </thead>
@@ -691,10 +723,13 @@
               <div class="w-12 h-12 mx-auto rounded-full bg-gray-100 flex items-center justify-center mb-3">
                 <i data-lucide="folder-open" class="w-6 h-6 text-gray-400"></i>
               </div>
-              <p class="text-sm font-medium text-gray-900">No projects yet</p>
-              <p class="text-xs text-gray-500 mt-1">Get started by creating your first project.</p>
-              <button data-action="open-project-modal" class="mt-4 inline-flex items-center gap-2 h-9 px-3 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg">
+              <p id="projects-empty-title" class="text-sm font-medium text-gray-900">No projects yet</p>
+              <p id="projects-empty-message" class="text-xs text-gray-500 mt-1">Get started by creating your first project.</p>
+              <button id="projects-empty-new-project-btn" data-action="open-project-modal" class="mt-4 inline-flex items-center gap-2 h-9 px-3 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg">
                 <i data-lucide="plus" class="w-4 h-4"></i> New Project
+              </button>
+              <button id="projects-empty-reset-btn" type="button" class="hidden mt-4 inline-flex items-center gap-2 h-9 px-3 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-medium rounded-lg">
+                <i data-lucide="rotate-ccw" class="w-4 h-4"></i> Reset Filters
               </button>
             </div>
           </div>
