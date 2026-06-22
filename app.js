@@ -1920,26 +1920,55 @@ function renderProjects() {
   refreshIcons();
 }
 
-const TASKS_HEADER_POPOVER_IDS = [
-  'tasks-project-popover',
-  'tasks-assignee-popover',
-  'tasks-status-popover',
-  'tasks-priority-popover',
-  'tasks-deadline-popover',
-];
+// ---------- Header Filter Engine ----------
+// Generic popover/chip/reset plumbing shared by any module's table-header
+// filters. Each module (e.g. "tasks") registers its DOM ids, its filter
+// defaults, and the few bits of per-field logic (which options a popover
+// shows, how a chip is labeled) that genuinely differ between modules.
+const HEADER_FILTER_MODULES = {
+  tasks: {
+    stateKey: 'tasks',
+    viewName: 'tasks',
+    popoverIds: [
+      'tasks-project-popover',
+      'tasks-assignee-popover',
+      'tasks-status-popover',
+      'tasks-priority-popover',
+      'tasks-deadline-popover',
+    ],
+    chipsContainerId: 'tasks-active-filters',
+    // Filters that reset to 'all' instead of null when cleared/reset.
+    allDefaultFilters: ['status', 'priority'],
+    defaults: {
+      status: 'all',
+      priority: 'all',
+      project: null,
+      assignee: null,
+      deadline: null,
+      search: '',
+    },
+    getChips: () => getTaskActiveFilterChips(),
+    renderHeaderFilters: () => renderTasksHeaderFilters(),
+    render: () => renderTasks(),
+  },
+};
 
-function closeAllTaskHeaderPopovers() {
-  TASKS_HEADER_POPOVER_IDS.forEach((id) => {
+function closeHeaderFilterPopovers(module) {
+  HEADER_FILTER_MODULES[module]?.popoverIds.forEach((id) => {
     $(`#${id}`)?.classList.add('hidden');
   });
 }
 
-function openTaskHeaderPopover(popover) {
-  closeAllTaskHeaderPopovers();
+function closeAllHeaderFilterPopovers() {
+  Object.keys(HEADER_FILTER_MODULES).forEach(closeHeaderFilterPopovers);
+}
+
+function openHeaderFilterPopover(module, popover) {
+  closeHeaderFilterPopovers(module);
   popover.classList.remove('hidden');
 }
 
-function buildTaskHeaderPopoverOptions(popoverId, allLabel, items, activeValue) {
+function buildHeaderFilterOptions(popoverId, allLabel, items, activeValue) {
   const popover = $(`#${popoverId}`);
   if (!popover) return;
 
@@ -1958,10 +1987,82 @@ function buildTaskHeaderPopoverOptions(popoverId, allLabel, items, activeValue) 
     .join('');
 }
 
-function syncTaskHeaderPopoverActive(popoverId, activeValue) {
+function syncHeaderFilterPopoverActive(popoverId, activeValue) {
   $$(`#${popoverId} .task-th-popover-option`).forEach((opt) => {
     opt.classList.toggle('active', opt.dataset.value === String(activeValue ?? ''));
   });
+}
+
+function renderHeaderFilters(module) {
+  HEADER_FILTER_MODULES[module]?.renderHeaderFilters();
+}
+
+function getActiveFilterChips(module) {
+  return HEADER_FILTER_MODULES[module]?.getChips() || [];
+}
+
+function renderActiveFilterChips(module) {
+  const config = HEADER_FILTER_MODULES[module];
+  if (!config) return;
+
+  const container = $(`#${config.chipsContainerId}`);
+  if (!container) return;
+
+  const chips = getActiveFilterChips(module);
+
+  container.classList.toggle('hidden', chips.length === 0);
+
+  container.innerHTML = chips
+    .map(
+      (chip) => `
+        <span class="task-filter-chip">
+          <span class="truncate max-w-[10rem]">${escapeHtml(chip.label)}</span>
+          <button type="button" class="task-filter-chip-remove" data-filter-module="${module}" data-clear-filter="${chip.type}" aria-label="Remove filter">
+            <i data-lucide="x" class="w-3 h-3"></i>
+          </button>
+        </span>
+      `
+    )
+    .join('');
+
+  refreshIcons();
+}
+
+function clearSingleFilter(module, filterType) {
+  const config = HEADER_FILTER_MODULES[module];
+  if (!config) return;
+
+  const filters = state.filters[config.stateKey];
+
+  if (filterType === 'search') {
+    filters.search = '';
+
+    if (state.view === config.viewName) {
+      const searchInput = $('#global-search');
+      if (searchInput) searchInput.value = '';
+    }
+  } else {
+    filters[filterType] = config.allDefaultFilters.includes(filterType) ? 'all' : null;
+  }
+
+  closeHeaderFilterPopovers(module);
+  config.render();
+}
+
+function resetModuleFilters(module) {
+  const config = HEADER_FILTER_MODULES[module];
+  if (!config) return;
+
+  Object.assign(state.filters[config.stateKey], config.defaults);
+
+  closeHeaderFilterPopovers(module);
+
+  if (state.view === config.viewName) {
+    const searchInput = $('#global-search');
+    if (searchInput) searchInput.value = '';
+  }
+
+  config.render();
 }
 
 function renderTasksHeaderFilters() {
@@ -1973,7 +2074,7 @@ function renderTasksHeaderFilters() {
   $('#tasks-priority-th-filter')?.classList.toggle('active', f.priority !== 'all');
   $('#tasks-deadline-th-filter')?.classList.toggle('active', !!f.deadline);
 
-  buildTaskHeaderPopoverOptions(
+  buildHeaderFilterOptions(
     'tasks-project-popover',
     'All Projects',
     state.projects.map((p) => ({ value: p.id, label: p.project_name || 'Untitled project' })),
@@ -1986,7 +2087,7 @@ function renderTasksHeaderFilters() {
   }
 
   if (!isMember()) {
-    buildTaskHeaderPopoverOptions(
+    buildHeaderFilterOptions(
       'tasks-assignee-popover',
       'All Assignees',
       state.teamMembers.map((m) => ({ value: m.name, label: m.name })),
@@ -1994,9 +2095,9 @@ function renderTasksHeaderFilters() {
     );
   }
 
-  syncTaskHeaderPopoverActive('tasks-status-popover', f.status);
-  syncTaskHeaderPopoverActive('tasks-priority-popover', f.priority);
-  syncTaskHeaderPopoverActive('tasks-deadline-popover', f.deadline);
+  syncHeaderFilterPopoverActive('tasks-status-popover', f.status);
+  syncHeaderFilterPopoverActive('tasks-priority-popover', f.priority);
+  syncHeaderFilterPopoverActive('tasks-deadline-popover', f.deadline);
 }
 
 function getTaskActiveFilterChips() {
@@ -2038,54 +2139,6 @@ function getTaskActiveFilterChips() {
   return chips;
 }
 
-function clearSingleTaskFilter(type) {
-  if (type === 'search') {
-    state.filters.tasks.search = '';
-
-    if (state.view === 'tasks') {
-      const searchInput = $('#global-search');
-      if (searchInput) searchInput.value = '';
-    }
-  } else if (type === 'status') {
-    state.filters.tasks.status = 'all';
-  } else if (type === 'priority') {
-    state.filters.tasks.priority = 'all';
-  } else if (type === 'project') {
-    state.filters.tasks.project = null;
-  } else if (type === 'assignee') {
-    state.filters.tasks.assignee = null;
-  } else if (type === 'deadline') {
-    state.filters.tasks.deadline = null;
-  }
-
-  closeAllTaskHeaderPopovers();
-  renderTasks();
-}
-
-function renderTasksActiveFilterChips() {
-  const container = $('#tasks-active-filters');
-  if (!container) return;
-
-  const chips = getTaskActiveFilterChips();
-
-  container.classList.toggle('hidden', chips.length === 0);
-
-  container.innerHTML = chips
-    .map(
-      (chip) => `
-        <span class="task-filter-chip">
-          <span class="truncate max-w-[10rem]">${escapeHtml(chip.label)}</span>
-          <button type="button" class="task-filter-chip-remove" data-clear-filter="${chip.type}" aria-label="Remove filter">
-            <i data-lucide="x" class="w-3 h-3"></i>
-          </button>
-        </span>
-      `
-    )
-    .join('');
-
-  refreshIcons();
-}
-
 function renderTasks() {
   const tbody = $('#tasks-table-body');
   const empty = $('#tasks-empty');
@@ -2115,8 +2168,8 @@ function renderTasks() {
     resetBtn.classList.toggle('hidden', !hasActiveFilter);
   }
 
-  renderTasksActiveFilterChips();
-  renderTasksHeaderFilters();
+  renderActiveFilterChips('tasks');
+  renderHeaderFilters('tasks');
 
   if (data.length === 0) {
     tbody.innerHTML = '';
@@ -5683,15 +5736,16 @@ $$('[data-th-popover-toggle]').forEach((btn) => {
     e.stopPropagation();
 
     const popoverId = btn.dataset.thPopoverToggle;
+    const module = btn.dataset.filterModule;
     const popover = $(`#${popoverId}`);
-    if (!popover) return;
+    if (!popover || !module) return;
 
     const willOpen = popover.classList.contains('hidden');
 
     if (willOpen) {
-      openTaskHeaderPopover(popover);
+      openHeaderFilterPopover(module, popover);
     } else {
-      closeAllTaskHeaderPopovers();
+      closeHeaderFilterPopovers(module);
     }
   });
 });
@@ -5701,7 +5755,7 @@ document.addEventListener('click', (e) => {
   if (!chipRemoveBtn) return;
 
   e.stopPropagation();
-  clearSingleTaskFilter(chipRemoveBtn.dataset.clearFilter);
+  clearSingleFilter(chipRemoveBtn.dataset.filterModule, chipRemoveBtn.dataset.clearFilter);
 });
 
 document.addEventListener('click', (e) => {
@@ -5710,47 +5764,28 @@ document.addEventListener('click', (e) => {
 
   const popover = option.closest('.task-th-popover');
   const filterType = popover?.dataset.filterType;
-  if (!filterType) return;
+  const module = popover?.dataset.filterModule;
+  const config = module && HEADER_FILTER_MODULES[module];
+  if (!filterType || !config) return;
 
   e.stopPropagation();
 
   const rawValue = option.dataset.value || '';
+  const filters = state.filters[config.stateKey];
 
-  if (filterType === 'status' || filterType === 'priority') {
-    state.filters.tasks[filterType] = rawValue || 'all';
-  } else {
-    state.filters.tasks[filterType] = rawValue || null;
-  }
+  filters[filterType] = config.allDefaultFilters.includes(filterType) ? (rawValue || 'all') : (rawValue || null);
 
   popover.classList.add('hidden');
-  renderTasks();
+  config.render();
 });
 
 document.addEventListener('click', (e) => {
   if (e.target.closest('.task-th-popover') || e.target.closest('[data-th-popover-toggle]')) return;
-  closeAllTaskHeaderPopovers();
+  closeAllHeaderFilterPopovers();
 });
 
-function resetTaskFilters() {
-  state.filters.tasks.status = 'all';
-  state.filters.tasks.priority = 'all';
-  state.filters.tasks.project = null;
-  state.filters.tasks.assignee = null;
-  state.filters.tasks.deadline = null;
-  state.filters.tasks.search = '';
-
-  closeAllTaskHeaderPopovers();
-
-  if (state.view === 'tasks') {
-    const searchInput = $('#global-search');
-    if (searchInput) searchInput.value = '';
-  }
-
-  renderTasks();
-}
-
-$('#tasks-reset-filters')?.addEventListener('click', resetTaskFilters);
-$('#tasks-empty-reset-btn')?.addEventListener('click', resetTaskFilters);
+$('#tasks-reset-filters')?.addEventListener('click', () => resetModuleFilters('tasks'));
+$('#tasks-empty-reset-btn')?.addEventListener('click', () => resetModuleFilters('tasks'));
 
   // Search (module-scoped: only the currently active module is affected)
   $('#global-search').addEventListener('input', (e) => {
@@ -5774,7 +5809,7 @@ $('#tasks-empty-reset-btn')?.addEventListener('click', resetTaskFilters);
       closeModal();
       closeConfirm();
       closeSidebar();
-      closeAllTaskHeaderPopovers();
+      closeAllHeaderFilterPopovers();
     }
   });
 }
