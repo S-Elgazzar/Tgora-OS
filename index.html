@@ -1163,7 +1163,94 @@
       </button>
     </div>
 
-    <div id="details-tasks-list" class="divide-y divide-gray-100"></div>
+    <!-- Project Details summary/reset row -->
+    <div class="flex items-center justify-between gap-3 flex-wrap px-5 pt-4">
+      <div class="flex items-center flex-wrap gap-2 min-w-0">
+        <p id="project-details-results-summary" class="text-xs text-gray-500 whitespace-nowrap"></p>
+        <div id="project-details-active-filters" class="hidden"></div>
+      </div>
+
+      <button
+        id="project-details-reset-filters"
+        type="button"
+        class="hidden h-8 px-2.5 inline-flex items-center gap-1.5 text-xs font-medium text-gray-500 hover:text-gray-700 border border-gray-200 rounded-lg transition w-fit"
+      >
+        <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i> Reset Filters
+      </button>
+    </div>
+
+    <div id="project-details-table-wrapper" class="overflow-x-auto mt-3">
+      <table class="w-full text-sm">
+        <thead class="bg-gray-50 border-b border-gray-100">
+          <tr class="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+            <th class="px-5 py-3">Task</th>
+            <th class="px-5 py-3 relative">
+              <button type="button" id="project-details-assignee-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="project-details-assignee-popover" data-filter-module="projectDetails">
+                Assigned <i data-lucide="chevron-down" class="w-3 h-3"></i>
+              </button>
+              <div id="project-details-assignee-popover" class="task-th-popover hidden" data-filter-type="assignee" data-filter-module="projectDetails">
+                <!-- Filled by JS: All Assignees + one per state.teamMembers -->
+              </div>
+            </th>
+            <th class="px-5 py-3 relative">
+              <button type="button" id="project-details-status-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="project-details-status-popover" data-filter-module="projectDetails">
+                Status <i data-lucide="chevron-down" class="w-3 h-3"></i>
+              </button>
+              <div id="project-details-status-popover" class="task-th-popover hidden" data-filter-type="status" data-filter-module="projectDetails">
+                <button type="button" class="task-th-popover-option" data-value="all">All Statuses</button>
+                <button type="button" class="task-th-popover-option" data-value="todo">To Do</button>
+                <button type="button" class="task-th-popover-option" data-value="in_progress">In Progress</button>
+                <button type="button" class="task-th-popover-option" data-value="review">In Review</button>
+                <button type="button" class="task-th-popover-option" data-value="completed">Completed</button>
+                <button type="button" class="task-th-popover-option" data-value="on_hold">On Hold</button>
+              </div>
+            </th>
+            <th class="px-5 py-3 relative">
+              <button type="button" id="project-details-priority-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="project-details-priority-popover" data-filter-module="projectDetails">
+                Priority <i data-lucide="chevron-down" class="w-3 h-3"></i>
+              </button>
+              <div id="project-details-priority-popover" class="task-th-popover hidden" data-filter-type="priority" data-filter-module="projectDetails">
+                <button type="button" class="task-th-popover-option" data-value="all">All Priorities</button>
+                <button type="button" class="task-th-popover-option" data-value="urgent">Urgent</button>
+                <button type="button" class="task-th-popover-option" data-value="high">High</button>
+                <button type="button" class="task-th-popover-option" data-value="medium">Medium</button>
+                <button type="button" class="task-th-popover-option" data-value="low">Low</button>
+              </div>
+            </th>
+            <th class="px-5 py-3 relative">
+              <button type="button" id="project-details-deadline-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="project-details-deadline-popover" data-filter-module="projectDetails">
+                Deadline <i data-lucide="chevron-down" class="w-3 h-3"></i>
+              </button>
+              <div id="project-details-deadline-popover" class="task-th-popover hidden" data-filter-type="deadline" data-filter-module="projectDetails">
+                <button type="button" class="task-th-popover-option" data-value="">Any Deadline</button>
+                <button type="button" class="task-th-popover-option" data-value="overdue">Overdue</button>
+                <button type="button" class="task-th-popover-option" data-value="due_today">Due Today</button>
+                <button type="button" class="task-th-popover-option" data-value="due_this_week">Due This Week</button>
+                <button type="button" class="task-th-popover-option" data-value="no_deadline">No Deadline</button>
+              </div>
+            </th>
+            <th class="px-5 py-3 text-right">Actions</th>
+          </tr>
+        </thead>
+
+        <tbody id="project-details-tasks-body" class="divide-y divide-gray-100">
+          <!-- Filled by JS -->
+        </tbody>
+      </table>
+    </div>
+
+    <div id="project-details-tasks-empty" class="hidden px-5 py-20 text-center">
+      <div class="w-12 h-12 mx-auto rounded-full bg-gray-100 flex items-center justify-center mb-3">
+        <i data-lucide="list-checks" class="w-6 h-6 text-gray-400"></i>
+      </div>
+
+      <p id="project-details-tasks-empty-title" class="text-sm font-medium text-gray-900">No tasks yet</p>
+      <p id="project-details-tasks-empty-message" class="text-xs text-gray-500 mt-1">Add a task to start tracking work on this project.</p>
+
+      <button id="project-details-tasks-empty-reset-btn" type="button" class="hidden mt-4 inline-flex items-center gap-2 h-9 px-3 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-medium rounded-lg">
+        <i data-lucide="rotate-ccw" class="w-4 h-4"></i> Reset Filters
+      </button>
+    </div>
   </div>
 </section>
 

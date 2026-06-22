@@ -43,6 +43,13 @@ const state = {
     team: {
       search: '',
     },
+    projectDetails: {
+      status: 'all',
+      search: '',
+      priority: 'all',
+      assignee: null,
+      deadline: null,
+    },
     selectedProjectId: null,
   },
   pendingDelete: null, // { type: 'project' | 'task', id }
@@ -2064,6 +2071,28 @@ const HEADER_FILTER_MODULES = {
     renderHeaderFilters: () => renderProjectsHeaderFilters(),
     render: () => renderProjects(),
   },
+  projectDetails: {
+    stateKey: 'projectDetails',
+    viewName: 'project-details',
+    popoverIds: [
+      'project-details-assignee-popover',
+      'project-details-status-popover',
+      'project-details-priority-popover',
+      'project-details-deadline-popover',
+    ],
+    chipsContainerId: 'project-details-active-filters',
+    allDefaultFilters: ['status', 'priority'],
+    defaults: {
+      status: 'all',
+      priority: 'all',
+      assignee: null,
+      deadline: null,
+      search: '',
+    },
+    getChips: () => getProjectDetailsActiveFilterChips(),
+    renderHeaderFilters: () => renderProjectDetailsHeaderFilters(),
+    render: () => renderProjectDetails(),
+  },
 };
 
 function closeHeaderFilterPopovers(module) {
@@ -2305,6 +2334,135 @@ function getProjectActiveFilterChips() {
 
   if (f.priority !== 'all') {
     chips.push({ type: 'priority', label: `Priority: ${labelize(f.priority)}` });
+  }
+
+  if (f.deadline) {
+    chips.push({ type: 'deadline', label: `Deadline: ${deadlineLabels[f.deadline] || f.deadline}` });
+  }
+
+  return chips;
+}
+
+function getFilteredProjectDetailsTasks(projectId) {
+  let data = state.tasks.filter((t) => Number(t.project_id) === Number(projectId));
+
+  const f = state.filters.projectDetails;
+
+  if (f.search) {
+    const q = f.search.toLowerCase();
+
+    data = data.filter((t) =>
+      [
+        t.task_info,
+        t.assigned_to,
+        t.status,
+        t.priority
+      ]
+        .join(' ')
+        .toLowerCase()
+        .includes(q)
+    );
+  }
+
+  if (f.assignee) {
+    const target = f.assignee.toLowerCase().trim();
+    data = data.filter(
+      (t) => (t.assigned_to || '').toLowerCase().trim() === target
+    );
+  }
+
+  if (f.status !== 'all') {
+    data = data.filter(
+      (t) => (t.status || '').toLowerCase() === f.status
+    );
+  }
+
+  if (f.priority !== 'all') {
+    data = data.filter(
+      (t) => (t.priority || 'medium').toLowerCase() === f.priority
+    );
+  }
+
+  if (f.deadline) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    data = data.filter((t) => {
+      if (f.deadline === 'no_deadline') {
+        return !t.deadline;
+      }
+
+      if (!t.deadline) return false;
+
+      const d = new Date(t.deadline);
+      d.setHours(0, 0, 0, 0);
+
+      if (f.deadline === 'overdue') {
+        return d < today && (t.status || '').toLowerCase() !== 'completed';
+      }
+
+      if (f.deadline === 'due_today') {
+        return d.getTime() === today.getTime();
+      }
+
+      if (f.deadline === 'due_this_week') {
+        const weekFromNow = new Date(today);
+        weekFromNow.setDate(weekFromNow.getDate() + 7);
+        return d >= today && d < weekFromNow;
+      }
+
+      return true;
+    });
+  }
+
+  return data;
+}
+
+function renderProjectDetailsHeaderFilters() {
+  const f = state.filters.projectDetails;
+
+  $('#project-details-assignee-th-filter')?.classList.toggle('active', !!f.assignee);
+  $('#project-details-status-th-filter')?.classList.toggle('active', f.status !== 'all');
+  $('#project-details-priority-th-filter')?.classList.toggle('active', f.priority !== 'all');
+  $('#project-details-deadline-th-filter')?.classList.toggle('active', !!f.deadline);
+
+  buildHeaderFilterOptions(
+    'project-details-assignee-popover',
+    'All Assignees',
+    state.teamMembers.map((m) => ({ value: m.name, label: m.name })),
+    f.assignee
+  );
+
+  syncHeaderFilterPopoverActive('project-details-status-popover', f.status);
+  syncHeaderFilterPopoverActive('project-details-priority-popover', f.priority);
+  syncHeaderFilterPopoverActive('project-details-deadline-popover', f.deadline);
+}
+
+function getProjectDetailsActiveFilterChips() {
+  const f = state.filters.projectDetails;
+  const deadlineLabels = {
+    overdue: 'Overdue',
+    due_today: 'Due Today',
+    due_this_week: 'Due This Week',
+    no_deadline: 'No Deadline',
+  };
+
+  const chips = [];
+
+  if (f.search) {
+    chips.push({ type: 'search', label: `Search: ${f.search}` });
+  }
+
+  if (f.status !== 'all') {
+    chips.push({ type: 'status', label: `Status: ${labelize(f.status)}` });
+  }
+
+  if (f.priority !== 'all') {
+    chips.push({ type: 'priority', label: `Priority: ${labelize(f.priority)}` });
+  }
+
+  if (f.assignee) {
+    chips.push({ type: 'assignee', label: `Assigned: ${f.assignee}` });
   }
 
   if (f.deadline) {
@@ -2813,6 +2971,7 @@ function renderAll() {
     state.selectedProjectId
   ) {
     state.selectedProjectId = Number(state.selectedProjectId);
+    resetProjectDetailsFiltersForProject(state.selectedProjectId);
     setView('project-details');
     renderProjectDetails();
   } else if (savedView && $(`#view-${savedView}`)) {
@@ -2957,6 +3116,8 @@ function syncSearchInputWithView() {
     searchInput.value = state.filters.projects.search;
   } else if (state.view === 'tasks') {
     searchInput.value = state.filters.tasks.search;
+  } else if (state.view === 'project-details') {
+    searchInput.value = state.filters.projectDetails.search;
   } else if (state.view === 'team') {
     searchInput.value = state.filters.team.search;
   } else {
@@ -2965,6 +3126,8 @@ function syncSearchInputWithView() {
 }
 
 function setView(view) {
+  closeAllHeaderFilterPopovers();
+
   state.view = view;
   localStorage.setItem('tgora_current_view', view);
   syncSearchInputWithView();
@@ -3656,6 +3819,22 @@ async function confirmDelete() {
 }
 
 // ---------- Event Wiring ----------
+let lastProjectDetailsId = null;
+
+function resetProjectDetailsFiltersForProject(projectId) {
+  const normalizedId = Number(projectId);
+
+  if (lastProjectDetailsId !== normalizedId) {
+    lastProjectDetailsId = normalizedId;
+    Object.assign(state.filters.projectDetails, HEADER_FILTER_MODULES.projectDetails.defaults);
+
+    if (state.view === 'project-details') {
+      const searchInput = $('#global-search');
+      if (searchInput) searchInput.value = '';
+    }
+  }
+}
+
 function renderProjectDetails() {
   const project = state.projects.find(
     (p) => Number(p.id) === Number(state.selectedProjectId)
@@ -3705,23 +3884,62 @@ function renderProjectDetails() {
     linkEl.classList.add('hidden');
   }
 
-  $('#details-tasks-list').innerHTML = tasks.length
-    ? `
-      <div class="overflow-x-auto">
-        <table class="w-full text-sm">
-          <thead class="bg-gray-50 border-b border-gray-100">
-            <tr class="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              <th class="px-5 py-3">Task</th>
-              <th class="px-5 py-3">Assigned</th>
-              <th class="px-5 py-3">Status</th>
-              <th class="px-5 py-3">Priority</th>
-              <th class="px-5 py-3">Deadline</th>
-              <th class="px-5 py-3 text-right">Actions</th>
-            </tr>
-          </thead>
+  const filteredTasks = getFilteredProjectDetailsTasks(project.id);
 
-          <tbody class="divide-y divide-gray-100">
-            ${tasks
+  const detailsSummaryEl = $('#project-details-results-summary');
+  if (detailsSummaryEl) {
+    detailsSummaryEl.textContent =
+      filteredTasks.length === totalTasks
+        ? `Showing all ${totalTasks} Tasks`
+        : `Showing ${filteredTasks.length} of ${totalTasks} Tasks`;
+  }
+
+  const detailsResetBtn = $('#project-details-reset-filters');
+  if (detailsResetBtn) {
+    const f = state.filters.projectDetails;
+    const hasActiveFilter =
+      f.status !== 'all' ||
+      f.priority !== 'all' ||
+      !!f.assignee ||
+      !!f.deadline ||
+      !!f.search;
+    detailsResetBtn.classList.toggle('hidden', !hasActiveFilter);
+  }
+
+  renderActiveFilterChips('projectDetails');
+  renderHeaderFilters('projectDetails');
+
+  const detailsTbody = $('#project-details-tasks-body');
+  const detailsEmptyEl = $('#project-details-tasks-empty');
+
+  if (filteredTasks.length === 0) {
+    detailsTbody.innerHTML = '';
+    detailsEmptyEl.classList.remove('hidden');
+
+    const isFilteredEmpty = totalTasks > 0;
+
+    const detailsEmptyTitleEl = $('#project-details-tasks-empty-title');
+    const detailsEmptyMessageEl = $('#project-details-tasks-empty-message');
+    if (detailsEmptyTitleEl) {
+      detailsEmptyTitleEl.textContent = isFilteredEmpty
+        ? 'No tasks match your current filters.'
+        : 'No tasks yet';
+    }
+    if (detailsEmptyMessageEl) {
+      detailsEmptyMessageEl.textContent = isFilteredEmpty
+        ? 'Try adjusting or clearing your filters.'
+        : 'Add a task to start tracking work on this project.';
+    }
+
+    $('#project-details-tasks-empty-reset-btn')?.classList.toggle('hidden', !isFilteredEmpty);
+
+    refreshIcons();
+    return;
+  }
+
+  detailsEmptyEl.classList.add('hidden');
+
+  detailsTbody.innerHTML = filteredTasks
               .map((t) => {
                 const taskStatus = (t.status || 'todo').toLowerCase();
                 const taskPriority = (t.priority || 'medium').toLowerCase();
@@ -3832,16 +4050,7 @@ function renderProjectDetails() {
                   </tr>
                 `;
               })
-              .join('')}
-          </tbody>
-        </table>
-      </div>
-    `
-    : `
-      <div class="p-10 text-center text-gray-500 text-sm">
-        No tasks linked to this project yet.
-      </div>
-    `;
+              .join('');
 
   refreshIcons();
 }
@@ -5585,6 +5794,7 @@ document.addEventListener('click', (e) => {
   const id = Number(trigger.dataset.id);
 
   state.selectedProjectId = id;
+  resetProjectDetailsFiltersForProject(id);
 
   localStorage.setItem(
     'tgora_selected_project_id',
@@ -5800,6 +6010,7 @@ document.addEventListener('click', async (e) => {
 
     if (kind === 'project' && entityId) {
       state.selectedProjectId = entityId;
+      resetProjectDetailsFiltersForProject(entityId);
 
       localStorage.setItem(
         'tgora_selected_project_id',
@@ -5865,6 +6076,7 @@ if (item) {
 
   if (entityType === 'project' && entityId) {
     state.selectedProjectId = entityId;
+    resetProjectDetailsFiltersForProject(entityId);
 
     localStorage.setItem(
       'tgora_selected_project_id',
@@ -5952,6 +6164,9 @@ $('#tasks-empty-reset-btn')?.addEventListener('click', () => resetModuleFilters(
 $('#projects-reset-filters')?.addEventListener('click', () => resetModuleFilters('projects'));
 $('#projects-empty-reset-btn')?.addEventListener('click', () => resetModuleFilters('projects'));
 
+$('#project-details-reset-filters')?.addEventListener('click', () => resetModuleFilters('projectDetails'));
+$('#project-details-tasks-empty-reset-btn')?.addEventListener('click', () => resetModuleFilters('projectDetails'));
+
   // Search (module-scoped: only the currently active module is affected)
   $('#global-search').addEventListener('input', (e) => {
     const value = e.target.value.trim();
@@ -5962,6 +6177,9 @@ $('#projects-empty-reset-btn')?.addEventListener('click', () => resetModuleFilte
     } else if (state.view === 'tasks') {
       state.filters.tasks.search = value;
       renderTasks();
+    } else if (state.view === 'project-details') {
+      state.filters.projectDetails.search = value;
+      renderProjectDetails();
     } else if (state.view === 'team') {
       state.filters.team.search = value;
       // renderTeam() does not consume search yet — reserved for future use.
