@@ -1754,6 +1754,51 @@ function getFilteredTasks() {
     );
   }
 
+  if (state.filters.tasks.project) {
+    data = data.filter(
+      (t) => String(t.project_id) === String(state.filters.tasks.project)
+    );
+  }
+
+  if (state.filters.tasks.assignee) {
+    const target = state.filters.tasks.assignee.toLowerCase().trim();
+    data = data.filter(
+      (t) => (t.assigned_to || '').toLowerCase().trim() === target
+    );
+  }
+
+  if (state.filters.tasks.deadline) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    data = data.filter((t) => {
+      if (state.filters.tasks.deadline === 'no_deadline') {
+        return !t.deadline;
+      }
+
+      if (!t.deadline) return false;
+
+      const d = new Date(t.deadline);
+      d.setHours(0, 0, 0, 0);
+
+      if (state.filters.tasks.deadline === 'overdue') {
+        return d < today && (t.status || '').toLowerCase() !== 'completed';
+      }
+
+      if (state.filters.tasks.deadline === 'due_today') {
+        return d.getTime() === today.getTime();
+      }
+
+      if (state.filters.tasks.deadline === 'due_this_week') {
+        const weekFromNow = new Date(today);
+        weekFromNow.setDate(weekFromNow.getDate() + 7);
+        return d >= today && d < weekFromNow;
+      }
+
+      return true;
+    });
+  }
+
   return data;
 }
 
@@ -1875,6 +1920,85 @@ function renderProjects() {
   refreshIcons();
 }
 
+const TASKS_HEADER_POPOVER_IDS = [
+  'tasks-project-popover',
+  'tasks-assignee-popover',
+  'tasks-status-popover',
+  'tasks-priority-popover',
+  'tasks-deadline-popover',
+];
+
+function closeAllTaskHeaderPopovers() {
+  TASKS_HEADER_POPOVER_IDS.forEach((id) => {
+    $(`#${id}`)?.classList.add('hidden');
+  });
+}
+
+function openTaskHeaderPopover(popover) {
+  closeAllTaskHeaderPopovers();
+  popover.classList.remove('hidden');
+}
+
+function buildTaskHeaderPopoverOptions(popoverId, allLabel, items, activeValue) {
+  const popover = $(`#${popoverId}`);
+  if (!popover) return;
+
+  const isActive = (value) => String(value) === String(activeValue ?? '');
+
+  const options = [{ value: '', label: allLabel }, ...items];
+
+  popover.innerHTML = options
+    .map(
+      (opt) => `
+        <button type="button" class="task-th-popover-option${isActive(opt.value) ? ' active' : ''}" data-value="${escapeHtml(String(opt.value))}">
+          ${escapeHtml(opt.label)}
+        </button>
+      `
+    )
+    .join('');
+}
+
+function syncTaskHeaderPopoverActive(popoverId, activeValue) {
+  $$(`#${popoverId} .task-th-popover-option`).forEach((opt) => {
+    opt.classList.toggle('active', opt.dataset.value === String(activeValue ?? ''));
+  });
+}
+
+function renderTasksHeaderFilters() {
+  const f = state.filters.tasks;
+
+  $('#tasks-project-th-filter')?.classList.toggle('active', !!f.project);
+  $('#tasks-assignee-th-filter')?.classList.toggle('active', !!f.assignee);
+  $('#tasks-status-th-filter')?.classList.toggle('active', f.status !== 'all');
+  $('#tasks-priority-th-filter')?.classList.toggle('active', f.priority !== 'all');
+  $('#tasks-deadline-th-filter')?.classList.toggle('active', !!f.deadline);
+
+  buildTaskHeaderPopoverOptions(
+    'tasks-project-popover',
+    'All Projects',
+    state.projects.map((p) => ({ value: p.id, label: p.project_name || 'Untitled project' })),
+    f.project
+  );
+
+  const assigneeThBtn = $('#tasks-assignee-th-filter');
+  if (assigneeThBtn) {
+    assigneeThBtn.disabled = isMember();
+  }
+
+  if (!isMember()) {
+    buildTaskHeaderPopoverOptions(
+      'tasks-assignee-popover',
+      'All Assignees',
+      state.teamMembers.map((m) => ({ value: m.name, label: m.name })),
+      f.assignee
+    );
+  }
+
+  syncTaskHeaderPopoverActive('tasks-status-popover', f.status);
+  syncTaskHeaderPopoverActive('tasks-priority-popover', f.priority);
+  syncTaskHeaderPopoverActive('tasks-deadline-popover', f.deadline);
+}
+
 function renderTasks() {
   const tbody = $('#tasks-table-body');
   const empty = $('#tasks-empty');
@@ -1891,9 +2015,43 @@ function renderTasks() {
         : `Showing ${filtered} of ${total} Tasks`;
   }
 
+  const resetBtn = $('#tasks-reset-filters');
+  if (resetBtn) {
+    const f = state.filters.tasks;
+    const hasActiveFilter =
+      f.status !== 'all' ||
+      f.priority !== 'all' ||
+      !!f.project ||
+      !!f.assignee ||
+      !!f.deadline ||
+      !!f.search;
+    resetBtn.classList.toggle('hidden', !hasActiveFilter);
+  }
+
+  renderTasksHeaderFilters();
+
   if (data.length === 0) {
     tbody.innerHTML = '';
     empty.classList.remove('hidden');
+
+    const isFilteredEmpty = getVisibleTasks().length > 0;
+
+    const titleEl = $('#tasks-empty-title');
+    const messageEl = $('#tasks-empty-message');
+    if (titleEl) {
+      titleEl.textContent = isFilteredEmpty
+        ? 'No tasks match your current filters.'
+        : 'No tasks yet';
+    }
+    if (messageEl) {
+      messageEl.textContent = isFilteredEmpty
+        ? 'Try adjusting or clearing your filters.'
+        : 'Add a task to start tracking your work.';
+    }
+
+    $('#tasks-empty-new-task-btn')?.classList.toggle('hidden', isFilteredEmpty);
+    $('#tasks-empty-reset-btn')?.classList.toggle('hidden', !isFilteredEmpty);
+
     refreshIcons();
     return;
   }
@@ -5432,22 +5590,71 @@ if (item) {
   });
 });
 
-$$('[data-tasks-filter]').forEach((btn) => {
-  btn.addEventListener('click', () => {
-    state.filters.tasks.status = btn.dataset.tasksFilter;
+$$('[data-th-popover-toggle]').forEach((btn) => {
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
 
-    $$('[data-tasks-filter]').forEach((b) => {
-      b.classList.toggle('active', b === btn);
-    });
+    const popoverId = btn.dataset.thPopoverToggle;
+    const popover = $(`#${popoverId}`);
+    if (!popover) return;
 
-    renderTasks();
+    const willOpen = popover.classList.contains('hidden');
+
+    if (willOpen) {
+      openTaskHeaderPopover(popover);
+    } else {
+      closeAllTaskHeaderPopovers();
+    }
   });
 });
 
-$('#tasks-priority-filter')?.addEventListener('change', (e) => {
-  state.filters.tasks.priority = e.target.value;
+document.addEventListener('click', (e) => {
+  const option = e.target.closest('.task-th-popover-option');
+  if (!option) return;
+
+  const popover = option.closest('.task-th-popover');
+  const filterType = popover?.dataset.filterType;
+  if (!filterType) return;
+
+  e.stopPropagation();
+
+  const rawValue = option.dataset.value || '';
+
+  if (filterType === 'status' || filterType === 'priority') {
+    state.filters.tasks[filterType] = rawValue || 'all';
+  } else {
+    state.filters.tasks[filterType] = rawValue || null;
+  }
+
+  popover.classList.add('hidden');
   renderTasks();
 });
+
+document.addEventListener('click', (e) => {
+  if (e.target.closest('.task-th-popover') || e.target.closest('[data-th-popover-toggle]')) return;
+  closeAllTaskHeaderPopovers();
+});
+
+function resetTaskFilters() {
+  state.filters.tasks.status = 'all';
+  state.filters.tasks.priority = 'all';
+  state.filters.tasks.project = null;
+  state.filters.tasks.assignee = null;
+  state.filters.tasks.deadline = null;
+  state.filters.tasks.search = '';
+
+  closeAllTaskHeaderPopovers();
+
+  if (state.view === 'tasks') {
+    const searchInput = $('#global-search');
+    if (searchInput) searchInput.value = '';
+  }
+
+  renderTasks();
+}
+
+$('#tasks-reset-filters')?.addEventListener('click', resetTaskFilters);
+$('#tasks-empty-reset-btn')?.addEventListener('click', resetTaskFilters);
 
   // Search (module-scoped: only the currently active module is affected)
   $('#global-search').addEventListener('input', (e) => {
@@ -5471,6 +5678,7 @@ $('#tasks-priority-filter')?.addEventListener('change', (e) => {
       closeModal();
       closeConfirm();
       closeSidebar();
+      closeAllTaskHeaderPopovers();
     }
   });
 }

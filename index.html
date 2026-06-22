@@ -702,50 +702,91 @@
 
 <!-- ============ TASKS VIEW ============ -->
 <section id="view-tasks" class="view hidden">
-  <div class="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-7">
+  <div class="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-5">
     <div>
       <p class="text-xs font-medium text-brand-600 uppercase tracking-wider mb-1">Workspace</p>
       <h2 class="text-2xl sm:text-3xl font-semibold tracking-tight text-gray-900">Tasks</h2>
       <p class="text-sm text-gray-500 mt-1">Track everything your team is working on.</p>
     </div>
 
-    <div class="flex items-center gap-2">
-      <div class="hidden sm:flex items-center bg-white border border-gray-200 rounded-xl p-1">
-        <button data-tasks-filter="all" class="filter-pill active">All</button>
-        <button data-tasks-filter="todo" class="filter-pill">To Do</button>
-        <button data-tasks-filter="in_progress" class="filter-pill">In Progress</button>
-        <button data-tasks-filter="review" class="filter-pill">In Review</button>
-        <button data-tasks-filter="completed" class="filter-pill">Done</button>
-      </div>
-
-      <select id="tasks-priority-filter" class="hidden sm:block form-input w-36">
-        <option value="all">All Priorities</option>
-        <option value="urgent">Urgent</option>
-        <option value="high">High</option>
-        <option value="medium">Medium</option>
-        <option value="low">Low</option>
-      </select>
-
-      <button data-action="open-task-modal" class="h-9 px-3 inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg transition shadow-sm">
-        <i data-lucide="plus" class="w-4 h-4"></i> New Task
-      </button>
-    </div>
+    <button data-action="open-task-modal" class="h-9 px-3 inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg transition shadow-sm">
+      <i data-lucide="plus" class="w-4 h-4"></i> New Task
+    </button>
   </div>
 
-  <p id="tasks-results-summary" class="text-xs text-gray-500 mb-2"></p>
+  <!-- Tasks summary/reset row -->
+  <div class="flex items-center justify-between gap-3 flex-wrap mb-3">
+    <p id="tasks-results-summary" class="text-xs text-gray-500"></p>
+
+    <button
+      id="tasks-reset-filters"
+      type="button"
+      class="hidden h-8 px-2.5 inline-flex items-center gap-1.5 text-xs font-medium text-gray-500 hover:text-gray-700 border border-gray-200 rounded-lg transition w-fit"
+    >
+      <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i> Reset Filters
+    </button>
+  </div>
 
   <!-- Tasks table -->
   <div class="bg-white rounded-xl border border-gray-200 shadow-card overflow-hidden">
-    <div class="overflow-x-auto">
+    <div id="tasks-table-wrapper" class="overflow-x-auto">
       <table class="w-full text-sm">
         <thead class="bg-gray-50 border-b border-gray-100">
           <tr class="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
             <th class="px-5 py-3">Task</th>
-            <th class="px-5 py-3">Project</th>
-            <th class="px-5 py-3">Assigned</th>
-            <th class="px-5 py-3">Status</th>
-            <th class="px-5 py-3">Priority</th>
-            <th class="px-5 py-3">Deadline</th>
+            <th class="px-5 py-3 relative">
+              <button type="button" id="tasks-project-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="tasks-project-popover">
+                Project <i data-lucide="chevron-down" class="w-3 h-3"></i>
+              </button>
+              <div id="tasks-project-popover" class="task-th-popover hidden" data-filter-type="project">
+                <!-- Filled by JS: All Projects + one per state.projects -->
+              </div>
+            </th>
+            <th class="px-5 py-3 relative">
+              <button type="button" id="tasks-assignee-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="tasks-assignee-popover">
+                Assigned <i data-lucide="chevron-down" class="w-3 h-3"></i>
+              </button>
+              <div id="tasks-assignee-popover" class="task-th-popover hidden" data-filter-type="assignee">
+                <!-- Filled by JS: All Assignees + one per state.teamMembers -->
+              </div>
+            </th>
+            <th class="px-5 py-3 relative">
+              <button type="button" id="tasks-status-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="tasks-status-popover">
+                Status <i data-lucide="chevron-down" class="w-3 h-3"></i>
+              </button>
+              <div id="tasks-status-popover" class="task-th-popover hidden" data-filter-type="status">
+                <button type="button" class="task-th-popover-option" data-value="all">All Statuses</button>
+                <button type="button" class="task-th-popover-option" data-value="todo">To Do</button>
+                <button type="button" class="task-th-popover-option" data-value="in_progress">In Progress</button>
+                <button type="button" class="task-th-popover-option" data-value="review">In Review</button>
+                <button type="button" class="task-th-popover-option" data-value="completed">Completed</button>
+                <button type="button" class="task-th-popover-option" data-value="on_hold">On Hold</button>
+              </div>
+            </th>
+            <th class="px-5 py-3 relative">
+              <button type="button" id="tasks-priority-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="tasks-priority-popover">
+                Priority <i data-lucide="chevron-down" class="w-3 h-3"></i>
+              </button>
+              <div id="tasks-priority-popover" class="task-th-popover hidden" data-filter-type="priority">
+                <button type="button" class="task-th-popover-option" data-value="all">All Priorities</button>
+                <button type="button" class="task-th-popover-option" data-value="urgent">Urgent</button>
+                <button type="button" class="task-th-popover-option" data-value="high">High</button>
+                <button type="button" class="task-th-popover-option" data-value="medium">Medium</button>
+                <button type="button" class="task-th-popover-option" data-value="low">Low</button>
+              </div>
+            </th>
+            <th class="px-5 py-3 relative">
+              <button type="button" id="tasks-deadline-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="tasks-deadline-popover">
+                Deadline <i data-lucide="chevron-down" class="w-3 h-3"></i>
+              </button>
+              <div id="tasks-deadline-popover" class="task-th-popover hidden" data-filter-type="deadline">
+                <button type="button" class="task-th-popover-option" data-value="">Any Deadline</button>
+                <button type="button" class="task-th-popover-option" data-value="overdue">Overdue</button>
+                <button type="button" class="task-th-popover-option" data-value="due_today">Due Today</button>
+                <button type="button" class="task-th-popover-option" data-value="due_this_week">Due This Week</button>
+                <button type="button" class="task-th-popover-option" data-value="no_deadline">No Deadline</button>
+              </div>
+            </th>
             <th class="px-5 py-3 text-right">Actions</th>
           </tr>
         </thead>
@@ -761,11 +802,15 @@
         <i data-lucide="list-checks" class="w-6 h-6 text-gray-400"></i>
       </div>
 
-      <p class="text-sm font-medium text-gray-900">No tasks yet</p>
-      <p class="text-xs text-gray-500 mt-1">Add a task to start tracking your work.</p>
+      <p id="tasks-empty-title" class="text-sm font-medium text-gray-900">No tasks yet</p>
+      <p id="tasks-empty-message" class="text-xs text-gray-500 mt-1">Add a task to start tracking your work.</p>
 
-      <button data-action="open-task-modal" class="mt-4 inline-flex items-center gap-2 h-9 px-3 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg">
+      <button id="tasks-empty-new-task-btn" data-action="open-task-modal" class="mt-4 inline-flex items-center gap-2 h-9 px-3 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg">
         <i data-lucide="plus" class="w-4 h-4"></i> New Task
+      </button>
+
+      <button id="tasks-empty-reset-btn" type="button" class="hidden mt-4 inline-flex items-center gap-2 h-9 px-3 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-medium rounded-lg">
+        <i data-lucide="rotate-ccw" class="w-4 h-4"></i> Reset Filters
       </button>
     </div>
   </div>
