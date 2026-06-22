@@ -1999,6 +1999,93 @@ function renderTasksHeaderFilters() {
   syncTaskHeaderPopoverActive('tasks-deadline-popover', f.deadline);
 }
 
+function getTaskActiveFilterChips() {
+  const f = state.filters.tasks;
+  const deadlineLabels = {
+    overdue: 'Overdue',
+    due_today: 'Due Today',
+    due_this_week: 'Due This Week',
+    no_deadline: 'No Deadline',
+  };
+
+  const chips = [];
+
+  if (f.search) {
+    chips.push({ type: 'search', label: `Search: ${f.search}` });
+  }
+
+  if (f.status !== 'all') {
+    chips.push({ type: 'status', label: `Status: ${labelize(f.status)}` });
+  }
+
+  if (f.priority !== 'all') {
+    chips.push({ type: 'priority', label: `Priority: ${labelize(f.priority)}` });
+  }
+
+  if (f.project) {
+    const project = state.projects.find((p) => String(p.id) === String(f.project));
+    chips.push({ type: 'project', label: `Project: ${project ? project.project_name : 'Unknown'}` });
+  }
+
+  if (f.assignee) {
+    chips.push({ type: 'assignee', label: `Assigned: ${f.assignee}` });
+  }
+
+  if (f.deadline) {
+    chips.push({ type: 'deadline', label: `Deadline: ${deadlineLabels[f.deadline] || f.deadline}` });
+  }
+
+  return chips;
+}
+
+function clearSingleTaskFilter(type) {
+  if (type === 'search') {
+    state.filters.tasks.search = '';
+
+    if (state.view === 'tasks') {
+      const searchInput = $('#global-search');
+      if (searchInput) searchInput.value = '';
+    }
+  } else if (type === 'status') {
+    state.filters.tasks.status = 'all';
+  } else if (type === 'priority') {
+    state.filters.tasks.priority = 'all';
+  } else if (type === 'project') {
+    state.filters.tasks.project = null;
+  } else if (type === 'assignee') {
+    state.filters.tasks.assignee = null;
+  } else if (type === 'deadline') {
+    state.filters.tasks.deadline = null;
+  }
+
+  closeAllTaskHeaderPopovers();
+  renderTasks();
+}
+
+function renderTasksActiveFilterChips() {
+  const container = $('#tasks-active-filters');
+  if (!container) return;
+
+  const chips = getTaskActiveFilterChips();
+
+  container.classList.toggle('hidden', chips.length === 0);
+
+  container.innerHTML = chips
+    .map(
+      (chip) => `
+        <span class="task-filter-chip">
+          <span class="truncate max-w-[10rem]">${escapeHtml(chip.label)}</span>
+          <button type="button" class="task-filter-chip-remove" data-clear-filter="${chip.type}" aria-label="Remove filter">
+            <i data-lucide="x" class="w-3 h-3"></i>
+          </button>
+        </span>
+      `
+    )
+    .join('');
+
+  refreshIcons();
+}
+
 function renderTasks() {
   const tbody = $('#tasks-table-body');
   const empty = $('#tasks-empty');
@@ -2028,6 +2115,7 @@ function renderTasks() {
     resetBtn.classList.toggle('hidden', !hasActiveFilter);
   }
 
+  renderTasksActiveFilterChips();
   renderTasksHeaderFilters();
 
   if (data.length === 0) {
@@ -5606,6 +5694,14 @@ $$('[data-th-popover-toggle]').forEach((btn) => {
       closeAllTaskHeaderPopovers();
     }
   });
+});
+
+document.addEventListener('click', (e) => {
+  const chipRemoveBtn = e.target.closest('[data-clear-filter]');
+  if (!chipRemoveBtn) return;
+
+  e.stopPropagation();
+  clearSingleTaskFilter(chipRemoveBtn.dataset.clearFilter);
 });
 
 document.addEventListener('click', (e) => {

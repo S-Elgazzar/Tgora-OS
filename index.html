@@ -716,7 +716,10 @@
 
   <!-- Tasks summary/reset row -->
   <div class="flex items-center justify-between gap-3 flex-wrap mb-3">
-    <p id="tasks-results-summary" class="text-xs text-gray-500"></p>
+    <div class="flex items-center flex-wrap gap-2 min-w-0">
+      <p id="tasks-results-summary" class="text-xs text-gray-500 whitespace-nowrap"></p>
+      <div id="tasks-active-filters" class="hidden"></div>
+    </div>
 
     <button
       id="tasks-reset-filters"
