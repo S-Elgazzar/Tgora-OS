@@ -3173,6 +3173,12 @@ function canDeleteTask(task) {
   return isAdmin() || isManager();
 }
 
+// Single source of truth for Performance feature access (ranking, monthly
+// history, hall of fame, snapshot generation).
+function canAccessPerformance() {
+  return isAdmin() || isManager();
+}
+
 // Fields a Manager may not edit on any task.
 const TASK_MANAGER_RESTRICTED_FIELDS = ['start_date', 'deadline'];
 
@@ -4332,6 +4338,11 @@ function isPerformanceEligibleMember(member) {
 }
 
 async function generatePerformanceSnapshot() {
+  if (!canAccessPerformance()) {
+    toast('You do not have permission to access performance features.', 'error');
+    return;
+  }
+
   const period = getCurrentPerformancePeriod();
 
   const confirmed = window.confirm(
@@ -4407,6 +4418,11 @@ function getPerformanceLabelForScore(score) {
 }
 
 async function openMonthlyHistoryModal() {
+  if (!canAccessPerformance()) {
+    toast('You do not have permission to access performance features.', 'error');
+    return;
+  }
+
   const content = $('#monthly-history-content');
   if (!content) return;
 
@@ -4507,6 +4523,11 @@ async function openMonthlyHistoryModal() {
 }
 
 async function openHallOfFameModal() {
+  if (!canAccessPerformance()) {
+    toast('You do not have permission to access performance features.', 'error');
+    return;
+  }
+
   const content = $('#hall-of-fame-content');
   if (!content) return;
 
@@ -4630,13 +4651,17 @@ function renderTeamPerformance() {
   if (snapshotBtn) snapshotBtn.classList.toggle('hidden', !isAdmin());
   if (snapshotLabelEl) snapshotLabelEl.textContent = `Generate ${period.label} Snapshot`;
 
+  const rankingCard = $('#performance-ranking-card');
+
+  if (rankingCard) rankingCard.classList.toggle('hidden', !canAccessPerformance());
+
   const historyBtn = $('#monthly-history-btn');
 
-  if (historyBtn) historyBtn.classList.toggle('hidden', !(isAdmin() || isManager()));
+  if (historyBtn) historyBtn.classList.toggle('hidden', !canAccessPerformance());
 
   const hallOfFameBtn = $('#hall-of-fame-btn');
 
-  if (hallOfFameBtn) hallOfFameBtn.classList.toggle('hidden', !(isAdmin() || isManager()));
+  if (hallOfFameBtn) hallOfFameBtn.classList.toggle('hidden', !canAccessPerformance());
 
   const allPerf = state.teamMembers
     .filter(isPerformanceEligibleMember)
@@ -5268,6 +5293,11 @@ function openAchievementDetailsModal(key) {
 }
 
 function openPerformanceRankingModal() {
+  if (!canAccessPerformance()) {
+    toast('You do not have permission to access performance features.', 'error');
+    return;
+  }
+
   const content = $('#performance-ranking-content');
   if (!content) return;
 
