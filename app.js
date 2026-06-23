@@ -173,6 +173,93 @@ const refreshIcons = () => {
   if (window.lucide) window.lucide.createIcons();
 };
 
+// ---------- Table Cell & Action Renderers ----------
+// First layer of the reusable Table System (Sprint 2.8.1A). Pure, presentation-only
+// helpers extracted from renderTasks(). They take plain data/flags and return markup
+// fragments — no role checks, no DOM lookups, no side effects.
+const renderStatusBadge = (status) => `
+  <span class="badge badge-${status}">
+    <span class="dot"></span>
+    ${labelize(status)}
+  </span>
+`;
+
+const renderPriorityBadge = (priority) => `
+  <span class="badge priority-${priority}">
+    <span class="dot"></span>
+    ${labelize(priority)}
+  </span>
+`;
+
+const renderDeadlineCell = (deadline) => `
+  <td class="px-5 py-3.5 text-sm text-gray-700 ${deadlineClass(deadline)}">
+    ${fmtDate(deadline)}
+  </td>
+`;
+
+const renderTaskLinkIcons = (task) => {
+  const materialsLink = task.materials_link
+    ? `<a href="${escapeHtml(task.materials_link)}" target="_blank" rel="noopener" class="icon-btn" title="Open materials"><i data-lucide="paperclip" class="w-4 h-4"></i></a>`
+    : '';
+
+  const taskLink = task.task_link
+    ? `<a href="${escapeHtml(task.task_link)}" target="_blank" rel="noopener" class="icon-btn" title="Open task link"><i data-lucide="external-link" class="w-4 h-4"></i></a>`
+    : '';
+
+  return `${materialsLink}\n${taskLink}`;
+};
+
+// canDelete must be computed by the caller (e.g. isAdmin() || isManager()) —
+// this helper deliberately does not contain role logic.
+const renderTaskActionsCell = (task, options = {}) => {
+  const { canDelete = false } = options;
+
+  return `
+    <td class="px-5 py-3.5 text-right">
+      <div class="inline-flex items-center gap-1">
+        ${renderTaskLinkIcons(task)}
+
+        <button class="icon-btn" data-action="edit-task" data-id="${task.id}" title="Edit task">
+          <i data-lucide="pencil" class="w-4 h-4"></i>
+        </button>
+
+        ${
+          canDelete
+            ? `
+              <button class="icon-btn danger" data-action="delete-task" data-id="${task.id}" title="Delete task">
+                <i data-lucide="trash-2" class="w-4 h-4"></i>
+              </button>
+            `
+            : ''
+        }
+      </div>
+    </td>
+  `;
+};
+
+// Row-level deadline highlight for the Tasks table only (Sprint 2.8.1A-fix).
+// Deliberately separate from deadlineClass() — that helper stays cell/text-only
+// and status-blind; this one is row-level and status-aware (excludes
+// completed/on_hold tasks from the overdue/soon warning).
+const renderTaskDeadlineRowClass = (task) => {
+  if (!task) return '';
+
+  const status = (task.status || '').toLowerCase();
+  if (status === 'completed' || status === 'on_hold') return '';
+
+  if (!task.deadline) return '';
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const target = new Date(task.deadline);
+  target.setHours(0, 0, 0, 0);
+  const diff = (target - today) / (1000 * 60 * 60 * 24);
+
+  if (diff < 0) return 'task-row-overdue';
+  if (diff <= 3) return 'task-row-soon';
+  return '';
+};
+
 // ---------- Toasts ----------
 const toast = (msg, type = 'info') => {
   const container = $('#toast-container');
@@ -2556,16 +2643,10 @@ function renderTasks() {
         `
         : '';
 
-      const materialsLink = t.materials_link
-        ? `<a href="${escapeHtml(t.materials_link)}" target="_blank" rel="noopener" class="icon-btn" title="Open materials"><i data-lucide="paperclip" class="w-4 h-4"></i></a>`
-        : '';
-
-      const link = t.task_link
-        ? `<a href="${escapeHtml(t.task_link)}" target="_blank" rel="noopener" class="icon-btn" title="Open task link"><i data-lucide="external-link" class="w-4 h-4"></i></a>`
-        : '';
+      const rowDeadlineClass = renderTaskDeadlineRowClass(t);
 
       return `
-        <tr>
+        <tr class="${rowDeadlineClass}">
           <td class="px-5 py-3.5 max-w-sm overflow-visible">
             <div class="text-sm font-medium text-gray-900 flex items-center gap-1.5 overflow-visible">
               <button
@@ -2636,43 +2717,16 @@ function renderTasks() {
           </td>
 
           <td class="px-5 py-3.5">
-            <span class="badge badge-${status}">
-              <span class="dot"></span>
-              ${labelize(status)}
-            </span>
+            ${renderStatusBadge(status)}
           </td>
 
           <td class="px-5 py-3.5">
-            <span class="badge priority-${priority}">
-              <span class="dot"></span>
-              ${labelize(priority)}
-            </span>
+            ${renderPriorityBadge(priority)}
           </td>
 
-          <td class="px-5 py-3.5 text-sm text-gray-700 ${deadlineClass(t.deadline)}">
-            ${fmtDate(t.deadline)}
-          </td>
+          ${renderDeadlineCell(t.deadline)}
 
-          <td class="px-5 py-3.5 text-right">
-            <div class="inline-flex items-center gap-1">
-              ${materialsLink}
-              ${link}
-
-              <button class="icon-btn" data-action="edit-task" data-id="${t.id}" title="Edit task">
-                <i data-lucide="pencil" class="w-4 h-4"></i>
-              </button>
-
-              ${
-                isAdmin() || isManager()
-                  ? `
-                    <button class="icon-btn danger" data-action="delete-task" data-id="${t.id}" title="Delete task">
-                      <i data-lucide="trash-2" class="w-4 h-4"></i>
-                    </button>
-                  `
-                  : ''
-              }
-            </div>
-          </td>
+          ${renderTaskActionsCell(t, { canDelete: isAdmin() || isManager() })}
         </tr>`;
     })
     .join('');

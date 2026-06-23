@@ -659,6 +659,23 @@ tbody tr:hover {
   font-weight: 500;
 }
 
+/* Row-level deadline highlight (Tasks table only). Subtle tint + inset left
+   border so it reads at a glance without competing with badges/text colors. */
+.task-row-overdue {
+  background-color: rgba(220, 38, 38, 0.05);
+  box-shadow: inset 3px 0 0 0 #dc2626;
+}
+.task-row-overdue:hover {
+  background-color: rgba(220, 38, 38, 0.09);
+}
+.task-row-soon {
+  background-color: rgba(217, 119, 6, 0.05);
+  box-shadow: inset 3px 0 0 0 #d97706;
+}
+.task-row-soon:hover {
+  background-color: rgba(217, 119, 6, 0.09);
+}
+
 /* Smooth links */
 a {
   -webkit-tap-highlight-color: transparent;
