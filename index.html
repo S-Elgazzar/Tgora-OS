@@ -1490,7 +1490,7 @@
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
           <label class="form-label">Assigned to <span class="text-rose-500">*</span></label>
-          <select name="assigned_to" id="assigned-to-select" class="form-input">
+          <select name="assigned_to" id="assigned-to-select" class="form-input" required>
             <option value="">Select Team Member</option>
           </select>
         </div>
@@ -1532,8 +1532,8 @@
         </div>
 
         <div>
-          <label class="form-label">Deadline</label>
-          <input name="deadline" type="date" class="form-input" />
+          <label class="form-label">Deadline <span class="text-rose-500">*</span></label>
+          <input name="deadline" type="date" class="form-input" required />
         </div>
       </div>
 
