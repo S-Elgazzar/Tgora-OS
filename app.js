@@ -2726,7 +2726,7 @@ function renderTasks() {
 
           ${renderDeadlineCell(t.deadline)}
 
-          ${renderTaskActionsCell(t, { canDelete: isAdmin() || isManager() })}
+          ${renderTaskActionsCell(t, { canDelete: canDeleteTask(t) })}
         </tr>`;
     })
     .join('');
@@ -3144,6 +3144,10 @@ function updateSidebarUserCard() {
   }
 }
 
+// ---------- Task Permission Helpers ----------
+// Centralized task business rules. Callers (modals, table renderers, etc.)
+// should ask these functions instead of checking isAdmin()/isManager()/
+// isMember() directly for task-related decisions.
 function isOwnTask(task) {
   const currentMember = getCurrentMember();
 
@@ -3163,6 +3167,30 @@ function canLimitedEditTask(task) {
 
 function canCreateTask() {
   return isAdmin() || isManager();
+}
+
+function canDeleteTask(task) {
+  return isAdmin() || isManager();
+}
+
+// Fields a Manager may not edit on any task.
+const TASK_MANAGER_RESTRICTED_FIELDS = ['start_date', 'deadline'];
+
+// Fields a Member may edit on their own task (see canLimitedEditTask).
+const TASK_MEMBER_EDITABLE_FIELDS = ['status', 'task_link', 'notes'];
+
+function canEditTaskField(fieldName, task) {
+  if (isAdmin()) return true;
+
+  if (isManager()) {
+    return !TASK_MANAGER_RESTRICTED_FIELDS.includes(fieldName);
+  }
+
+  if (isMember()) {
+    return TASK_MEMBER_EDITABLE_FIELDS.includes(fieldName);
+  }
+
+  return false;
 }
 
 // ---------- View Switching ----------
@@ -3688,6 +3716,16 @@ function openEditMemberModal(id) {
   openModal('member-modal');
 }
 
+// Small UX helper for the Task edit modal: disables a field per
+// canEditTaskField() and gives disabled fields a clear tooltip. Does not
+// itself decide permissions — it just applies the helper's verdict.
+function applyTaskFieldPermission(field, fieldName, task) {
+  const editable = canEditTaskField(fieldName, task);
+  field.disabled = !editable;
+  field.title = editable ? '' : 'You do not have permission to edit this field';
+  return editable;
+}
+
 function openEditTaskModal(id) {
   const task = state.tasks.find((t) => Number(t.id) === Number(id));
 
@@ -3707,6 +3745,11 @@ function openEditTaskModal(id) {
 
   syncTaskProjectSelect();
 
+  // Editing must never be blocked by legacy tasks that predate this
+  // requirement — required-ness only applies to creating new tasks.
+  form.assigned_to.required = false;
+  form.deadline.required = false;
+
   form.task_info.value = task.task_info || '';
   form.assigned_to.value = task.assigned_to || '';
   form.status.value = task.status || 'todo';
@@ -3718,28 +3761,32 @@ function openEditTaskModal(id) {
   form.task_link.value = task.task_link || '';
   form.project_id.value = task.project_id || '';
 
-  const isLimited = canLimitedEditTask(task) && !canFullyEditTask();
+  applyTaskFieldPermission(form.task_info, 'task_info', task);
+  applyTaskFieldPermission(form.assigned_to, 'assigned_to', task);
+  applyTaskFieldPermission(form.priority, 'priority', task);
+  applyTaskFieldPermission(form.start_date, 'start_date', task);
+  applyTaskFieldPermission(form.deadline, 'deadline', task);
+  applyTaskFieldPermission(form.project_id, 'project_id', task);
 
-  form.task_info.disabled = isLimited;
-  form.assigned_to.disabled = isLimited;
-  form.priority.disabled = isLimited;
-  form.start_date.disabled = isLimited;
-  form.deadline.disabled = isLimited;
-  form.project_id.disabled = isLimited;
+  applyTaskFieldPermission(form.status, 'status', task);
+  applyTaskFieldPermission(form.notes, 'notes', task);
 
-  form.status.disabled = false;
-  form.notes.disabled = false;
+  const canEditMaterialsLink = applyTaskFieldPermission(form.materials_link, 'materials_link', task);
+  applyTaskFieldPermission(form.task_link, 'task_link', task);
 
-  form.materials_link.disabled = isLimited;
-  form.task_link.disabled = false;
-
-  if (isLimited) {
+  // More specific than the generic permission tooltip above, so it's applied
+  // after and wins for this one field.
+  if (!canEditMaterialsLink) {
     form.materials_link.classList.add('bg-gray-100', 'text-gray-500', 'cursor-not-allowed');
     form.materials_link.title = 'Members can view this link but cannot edit it';
   } else {
     form.materials_link.classList.remove('bg-gray-100', 'text-gray-500', 'cursor-not-allowed');
     form.materials_link.title = '';
   }
+
+  // Member-only "status update" labeling — unrelated to the per-field
+  // edit permissions above, kept as its own UI-only distinction.
+  const isLimited = canLimitedEditTask(task) && !canFullyEditTask();
 
   const title = $('#task-modal-title');
   if (title) {
@@ -3762,6 +3809,28 @@ async function handleTaskSubmit(e) {
   const form = e.target;
   const submitBtn = form.querySelector('button[type=submit]');
   const isEditing = state.editingTaskId !== null;
+
+  // Only enforce on create — existing tasks may predate this requirement
+  // and must remain editable even with a missing assignee/deadline.
+  if (!isEditing) {
+    const missingAssignee = !form.assigned_to.value;
+    const missingDeadline = !form.deadline.value;
+
+    if (missingAssignee && missingDeadline) {
+      toast('Please select an assignee and set a deadline before creating a task', 'error');
+      return;
+    }
+
+    if (missingAssignee) {
+      toast('Please select an assignee before creating a task', 'error');
+      return;
+    }
+
+    if (missingDeadline) {
+      toast('Please set a deadline before creating a task', 'error');
+      return;
+    }
+  }
 
   submitBtn.disabled = true;
   submitBtn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> ${isEditing ? 'Updating…' : 'Saving…'}`;
@@ -5836,6 +5905,9 @@ window.addEventListener('popstate', () => {
       Array.from(form.elements).forEach((field) => {
         field.disabled = false;
       });
+
+      form.assigned_to.required = true;
+      form.deadline.required = true;
     }
 
     syncTaskProjectSelect();
@@ -5919,6 +5991,9 @@ document.addEventListener('click', (e) => {
     Array.from(form.elements).forEach((field) => {
       field.disabled = false;
     });
+
+    form.assigned_to.required = true;
+    form.deadline.required = true;
   }
 
   syncTaskProjectSelect();

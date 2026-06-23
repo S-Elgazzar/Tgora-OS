@@ -264,6 +264,23 @@ select.form-input {
   padding-right: 2.25rem;
 }
 
+/* Disabled state for any input/select/textarea using .form-input — applies
+   wherever a field is disabled (e.g. Task modal permission gating), not just
+   the Task modal, so it stays consistent across the app. */
+.form-input:disabled {
+  background-color: #f3f4f6;
+  color: #9ca3af;
+  border-color: #e5e7eb;
+  cursor: not-allowed;
+  opacity: 1;
+}
+.form-input:disabled::placeholder {
+  color: #c1c5cb;
+}
+select.form-input:disabled {
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23c1c5cb' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+}
+
 /* ============================================
    Modal
    ============================================ */
