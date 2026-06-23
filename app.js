@@ -3161,6 +3161,10 @@ function canLimitedEditTask(task) {
   return isMember() && isOwnTask(task);
 }
 
+function canCreateTask() {
+  return isAdmin() || isManager();
+}
+
 // ---------- View Switching ----------
 function syncSearchInputWithView() {
   const searchInput = $('#global-search');
@@ -5817,6 +5821,11 @@ window.addEventListener('popstate', () => {
   // Topbar new -> open project modal by default
   $('#topbar-new')?.addEventListener('click', () => {
   if (state.view === 'tasks') {
+    if (!canCreateTask()) {
+      toast('You do not have permission to create tasks', 'error');
+      return;
+    }
+
     state.editingTaskId = null;
 
     const form = $('#task-form');
@@ -5895,6 +5904,11 @@ document.addEventListener('click', (e) => {
 }
 
   if (action === 'open-task-modal') {
+  if (!canCreateTask()) {
+    toast('You do not have permission to create tasks', 'error');
+    return;
+  }
+
   state.editingTaskId = null;
 
   const form = $('#task-form');
