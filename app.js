@@ -278,6 +278,107 @@ const toast = (msg, type = 'info') => {
   }, 3200);
 };
 
+// ---------- UI Component: Button ----------
+// Foundation layer only (Sprint 2.9F.1): Contract + Validator + Normalizer.
+// Per Tgora Button Specification v1.0. No renderer, DOM adapter, state
+// manager, or CSS exists yet, and nothing in the app calls this yet.
+
+const BUTTON_VARIANTS = [
+  'primary',
+  'secondary',
+  'destructive',
+  'ghost',
+  'text',
+  'success',
+  'warning',
+  'info',
+  'icon',
+];
+
+const BUTTON_SIZES = ['xs', 'sm', 'md', 'lg'];
+
+// Throws on contract violations — validation is a hard gate, not a warning,
+// per the Component Blueprint (Sprint 2.9C.2).
+function validateButtonConfig(config) {
+  if (!config || typeof config !== 'object') {
+    throw new Error('Button: config must be an object');
+  }
+
+  if (!config.variant) {
+    throw new Error('Button: variant is required');
+  }
+  if (!BUTTON_VARIANTS.includes(config.variant)) {
+    throw new Error(`Button: invalid variant "${config.variant}"`);
+  }
+
+  if (config.size !== undefined && !BUTTON_SIZES.includes(config.size)) {
+    throw new Error(`Button: invalid size "${config.size}"`);
+  }
+
+  if (config.text !== undefined && config.html !== undefined) {
+    throw new Error('Button: text and html cannot both be set');
+  }
+
+  if (config.iconPosition === 'only' && !config.ariaLabel && !config.text) {
+    throw new Error('Button: iconPosition "only" requires ariaLabel or text');
+  }
+
+  if ((config.target !== undefined || config.download !== undefined) && !config.href) {
+    throw new Error('Button: target/download require href');
+  }
+
+  if ((config.type === 'submit' || config.type === 'reset') && config.href) {
+    throw new Error('Button: submit/reset type cannot be combined with href');
+  }
+}
+
+// Fills every unset optional field with its documented default. Assumes
+// config has already passed validateButtonConfig — does not re-validate.
+function normalizeButtonConfig(config) {
+  const normalized = { ...config };
+
+  normalized.size = normalized.size || 'md';
+
+  if (normalized.type === undefined) {
+    normalized.type = normalized.href ? undefined : 'button';
+  }
+
+  normalized.disabled = normalized.disabled || false;
+  normalized.loading = normalized.loading || false;
+  if (normalized.loading) {
+    normalized.disabled = true;
+  }
+
+  normalized.selected = normalized.selected || false;
+  normalized.fullWidth = normalized.fullWidth || false;
+
+  if (normalized.icon && normalized.iconPosition === undefined) {
+    normalized.iconPosition = 'left';
+  }
+
+  normalized.dataset = normalized.dataset || {};
+  normalized.attributes = normalized.attributes || {};
+  normalized.className = normalized.className || '';
+
+  let resolvedAriaLabel = normalized.ariaLabel;
+  if (resolvedAriaLabel === undefined && normalized.iconPosition === 'only' && normalized.text) {
+    resolvedAriaLabel = normalized.text;
+  }
+  normalized.ariaLabel = resolvedAriaLabel;
+
+  if (normalized.iconPosition === 'only' && normalized.tooltip === undefined) {
+    normalized.tooltip = resolvedAriaLabel;
+  }
+
+  return normalized;
+}
+
+// Validate + normalize -> a resolved descriptor. No DOM, no rendering.
+function createButtonDescriptor(config) {
+  validateButtonConfig(config);
+  return normalizeButtonConfig(config);
+}
+
 // ---------- Supabase Data Layer ----------
 async function fetchProjects() {
   const { data, error } = await supabaseClient
