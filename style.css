@@ -934,3 +934,260 @@ a:focus-visible {
     min-height: 0;
   }
 }
+
+/* ============================================
+   Button System (Sprint 2.9F.5)
+   CSS for the classes emitted by renderButton() (app.js, Sprint 2.9F.2).
+   Purely additive and not yet consumed by any existing button — .icon-btn
+   and all other current button styling are untouched. Tokens only; see
+   the Sprint 2.9F.5 report for the few cases (1px/2px border/outline
+   widths) where no --tg-* token exists and the rest of this file's own
+   convention (e.g. .form-input, .icon-btn above) was followed instead of
+   inventing one.
+
+   Note on .tg-btn-icon: "icon" is also a valid `variant`, so this class
+   already exists structurally as one of the --variant-- classes below.
+   Per-button-size icon GLYPH sizing (the literal <i data-lucide>/<svg>
+   inside a button) is handled separately via descendant selectors in the
+   Icon section, since renderButtonIcon() does not add a class to the
+   glyph itself and this sprint cannot modify app.js to add one.
+   ============================================ */
+
+.tg-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--tg-space-1-5);
+  border: 1px solid transparent;
+  border-radius: var(--tg-radius-md);
+  font-family: var(--tg-font-family);
+  font-weight: var(--tg-font-weight-medium);
+  white-space: nowrap;
+  user-select: none;
+  text-decoration: none;
+  cursor: pointer;
+  transition: all var(--tg-motion-normal);
+}
+
+/* ---- Variants ---- */
+.tg-btn-primary {
+  background-color: var(--tg-color-action-primary);
+  color: var(--tg-color-surface);
+  border-color: var(--tg-color-action-primary);
+  box-shadow: var(--tg-shadow-elevation-1);
+}
+.tg-btn-primary:hover {
+  background-color: var(--tg-color-action-primary-hover);
+  border-color: var(--tg-color-action-primary-hover);
+}
+.tg-btn-primary:active {
+  background-color: var(--tg-color-brand-700);
+  border-color: var(--tg-color-brand-700);
+}
+
+.tg-btn-secondary {
+  background-color: var(--tg-color-surface);
+  color: var(--tg-color-text-primary);
+  border-color: var(--tg-color-border-default);
+}
+.tg-btn-secondary:hover {
+  background-color: var(--tg-color-surface-muted);
+  border-color: var(--tg-color-border-hover);
+}
+.tg-btn-secondary:active {
+  background-color: var(--tg-color-neutral-100);
+}
+
+.tg-btn-destructive {
+  background-color: var(--tg-color-danger);
+  color: var(--tg-color-surface);
+  border-color: var(--tg-color-danger);
+}
+.tg-btn-destructive:hover {
+  background-color: var(--tg-color-danger-700);
+  border-color: var(--tg-color-danger-700);
+}
+.tg-btn-destructive:active {
+  background-color: var(--tg-color-danger-700);
+  border-color: var(--tg-color-danger-700);
+}
+
+.tg-btn-ghost {
+  background-color: transparent;
+  color: var(--tg-color-text-primary);
+  border-color: transparent;
+}
+.tg-btn-ghost:hover {
+  background-color: var(--tg-color-surface-muted);
+}
+.tg-btn-ghost:active {
+  background-color: var(--tg-color-neutral-100);
+}
+
+.tg-btn-text {
+  background-color: transparent;
+  color: var(--tg-color-action-primary);
+  border-color: transparent;
+}
+.tg-btn-text:hover {
+  color: var(--tg-color-action-primary-hover);
+}
+.tg-btn-text:active {
+  color: var(--tg-color-brand-700);
+}
+
+.tg-btn-success {
+  background-color: var(--tg-color-success);
+  color: var(--tg-color-surface);
+  border-color: var(--tg-color-success);
+}
+.tg-btn-success:hover {
+  background-color: var(--tg-color-success-700);
+  border-color: var(--tg-color-success-700);
+}
+.tg-btn-success:active {
+  background-color: var(--tg-color-success-700);
+  border-color: var(--tg-color-success-700);
+}
+
+.tg-btn-warning {
+  background-color: var(--tg-color-warning);
+  color: var(--tg-color-surface);
+  border-color: var(--tg-color-warning);
+}
+.tg-btn-warning:hover {
+  background-color: var(--tg-color-warning-800);
+  border-color: var(--tg-color-warning-800);
+}
+.tg-btn-warning:active {
+  background-color: var(--tg-color-warning-800);
+  border-color: var(--tg-color-warning-800);
+}
+
+.tg-btn-info {
+  background-color: var(--tg-color-info);
+  color: var(--tg-color-surface);
+  border-color: var(--tg-color-info);
+}
+.tg-btn-info:hover {
+  background-color: var(--tg-color-info-700);
+  border-color: var(--tg-color-info-700);
+}
+.tg-btn-info:active {
+  background-color: var(--tg-color-info-700);
+  border-color: var(--tg-color-info-700);
+}
+
+.tg-btn-icon {
+  background-color: transparent;
+  color: var(--tg-color-text-secondary);
+  border-color: transparent;
+}
+.tg-btn-icon:hover {
+  background-color: var(--tg-color-surface-muted);
+  color: var(--tg-color-text-primary);
+}
+.tg-btn-icon:active {
+  background-color: var(--tg-color-neutral-100);
+}
+
+/* ---- Sizes ----
+   Radius is included here even though section 4 of the spec only calls
+   out height/padding/font-size/line-height, to stay aligned with the
+   per-size radiusToken already defined in resolveButtonTheme() (app.js,
+   Sprint 2.9F.4) — xs/lg get distinct radii there, not just a flat
+   default. No --tg-size-control-xs token exists (only sm/md/lg), so
+   .tg-btn-xs intentionally has no explicit height and sizes itself from
+   padding + line-height instead of an invented pixel value. */
+.tg-btn-xs {
+  padding: var(--tg-space-1) var(--tg-space-1-5);
+  font-size: var(--tg-font-size-small);
+  line-height: var(--tg-line-height-tight);
+  border-radius: var(--tg-radius-sm);
+}
+.tg-btn-sm {
+  height: var(--tg-size-control-sm);
+  padding: 0 var(--tg-space-2);
+  font-size: var(--tg-font-size-small);
+  line-height: var(--tg-line-height-normal);
+  border-radius: var(--tg-radius-md);
+}
+.tg-btn-md {
+  height: var(--tg-size-control-md);
+  padding: 0 var(--tg-space-3);
+  font-size: var(--tg-font-size-body);
+  line-height: var(--tg-line-height-normal);
+  border-radius: var(--tg-radius-md);
+}
+.tg-btn-lg {
+  height: var(--tg-size-control-lg);
+  padding: 0 var(--tg-space-4);
+  font-size: var(--tg-font-size-body);
+  line-height: var(--tg-line-height-normal);
+  border-radius: var(--tg-radius-lg);
+}
+
+/* ---- Icon ----
+   Icon-only buttons become square via aspect-ratio (no token needed — it's
+   a ratio, not a length) so width tracks whatever height the size class
+   (or, for xs, the padding/line-height) produces. Glyph sizing targets the
+   Lucide markup directly: `i[data-lucide]` before lucide.createIcons() has
+   hydrated it, `svg` after — covering both states with the existing
+   --tg-size-icon-* tokens already used elsewhere in this file. */
+.tg-btn-icon-only {
+  aspect-ratio: 1 / 1;
+  padding-left: 0;
+  padding-right: 0;
+  gap: 0;
+}
+
+.tg-btn :where(svg, i[data-lucide]) {
+  width: var(--tg-size-icon-base);
+  height: var(--tg-size-icon-base);
+  flex-shrink: 0;
+}
+.tg-btn-xs :where(svg, i[data-lucide]),
+.tg-btn-sm :where(svg, i[data-lucide]) {
+  width: var(--tg-size-icon-sm);
+  height: var(--tg-size-icon-sm);
+}
+.tg-btn-lg :where(svg, i[data-lucide]) {
+  width: var(--tg-size-icon-md);
+  height: var(--tg-size-icon-md);
+}
+
+/* ---- Full width ---- */
+.tg-btn-full {
+  width: 100%;
+}
+
+/* ---- Loading ----
+   Content (icon + text) is already rendered together by renderButtonContent()
+   (app.js), so layout stays stable without any extra CSS here — this rule
+   only needs to communicate the non-interactive state. Actual disabling of
+   pointer interaction happens via the [aria-disabled="true"] rule below,
+   since loading always sets aria-disabled="true" on the descriptor. */
+.tg-btn-loading {
+  cursor: wait;
+}
+
+/* ---- States ---- */
+.tg-btn:focus-visible {
+  outline: 2px solid var(--tg-color-brand-500);
+  outline-offset: 2px;
+}
+
+/* Covers both native <button disabled> and the aria-disabled="true"
+   attribute renderButton() always sets alongside it (per Sprint 2.9F.2),
+   plus disabled/loading <a> tags, which have no native :disabled state —
+   pointer-events: none is what actually stops anchors from being
+   clickable. */
+.tg-btn:disabled,
+.tg-btn[aria-disabled="true"] {
+  background-color: var(--tg-color-neutral-100);
+  border-color: var(--tg-color-neutral-100);
+  color: var(--tg-color-neutral-disabled-muted);
+  box-shadow: none;
+  cursor: not-allowed;
+  pointer-events: none;
+}
