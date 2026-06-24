@@ -543,6 +543,202 @@ function __buttonRendererSelfCheck() {
   return true;
 }
 
+// ---------- Button Theme (Sprint 2.9F.4) ----------
+// Maps a button descriptor to *token names* describing visual intent —
+// never raw colors or CSS. Every non-null string below is a real --tg-*
+// custom property already defined in style.css's :root design-token
+// foundation (Sprint 2.9B) — verified against style.css directly, not
+// guessed. Nothing in the app calls resolveButtonTheme() yet; renderButton()
+// is untouched.
+//
+// `null` means "no token" (e.g. a transparent background/border, or no
+// shadow) — it is intentionally NOT a fake tg-* string like
+// 'tg-color-transparent' or 'tg-shadow-none', since those don't exist as
+// CSS variables. Consumers should treat a null token as "omit this
+// declaration" rather than looking it up.
+
+const BUTTON_VARIANT_THEME_TOKENS = {
+  primary: {
+    backgroundToken: 'tg-color-action-primary',
+    textToken: 'tg-color-surface',
+    borderToken: 'tg-color-action-primary',
+    hoverBackgroundToken: 'tg-color-action-primary-hover',
+    hoverBorderToken: 'tg-color-action-primary-hover',
+  },
+  secondary: {
+    backgroundToken: 'tg-color-surface',
+    textToken: 'tg-color-text-primary',
+    borderToken: 'tg-color-border-default',
+    hoverBackgroundToken: 'tg-color-surface-muted',
+    hoverBorderToken: 'tg-color-border-hover',
+  },
+  destructive: {
+    backgroundToken: 'tg-color-danger',
+    textToken: 'tg-color-surface',
+    borderToken: 'tg-color-danger',
+    hoverBackgroundToken: 'tg-color-danger-700',
+    hoverBorderToken: 'tg-color-danger-700',
+  },
+  ghost: {
+    backgroundToken: null,
+    textToken: 'tg-color-text-primary',
+    borderToken: null,
+    hoverBackgroundToken: 'tg-color-surface-muted',
+    hoverBorderToken: null,
+  },
+  text: {
+    backgroundToken: null,
+    textToken: 'tg-color-action-primary',
+    borderToken: null,
+    hoverBackgroundToken: null,
+    hoverBorderToken: null,
+  },
+  success: {
+    backgroundToken: 'tg-color-success',
+    textToken: 'tg-color-surface',
+    borderToken: 'tg-color-success',
+    hoverBackgroundToken: 'tg-color-success-700',
+    hoverBorderToken: 'tg-color-success-700',
+  },
+  warning: {
+    backgroundToken: 'tg-color-warning',
+    textToken: 'tg-color-surface',
+    borderToken: 'tg-color-warning',
+    hoverBackgroundToken: 'tg-color-warning-800',
+    hoverBorderToken: 'tg-color-warning-800',
+  },
+  info: {
+    backgroundToken: 'tg-color-info',
+    textToken: 'tg-color-surface',
+    borderToken: 'tg-color-info',
+    hoverBackgroundToken: 'tg-color-info-700',
+    hoverBorderToken: 'tg-color-info-700',
+  },
+  icon: {
+    backgroundToken: null,
+    textToken: 'tg-color-text-secondary',
+    borderToken: null,
+    hoverBackgroundToken: 'tg-color-surface-muted',
+    hoverBorderToken: null,
+  },
+};
+
+const BUTTON_SIZE_THEME_TOKENS = {
+  xs: {
+    paddingToken: 'tg-space-1-5',
+    fontToken: 'tg-font-size-small',
+    iconSizeToken: 'tg-size-icon-sm',
+    radiusToken: 'tg-radius-sm',
+  },
+  sm: {
+    paddingToken: 'tg-space-2',
+    fontToken: 'tg-font-size-small',
+    iconSizeToken: 'tg-size-icon-sm',
+    radiusToken: 'tg-radius-md',
+  },
+  md: {
+    paddingToken: 'tg-space-3',
+    fontToken: 'tg-font-size-body',
+    iconSizeToken: 'tg-size-icon-base',
+    radiusToken: 'tg-radius-md',
+  },
+  lg: {
+    paddingToken: 'tg-space-4',
+    fontToken: 'tg-font-size-body',
+    iconSizeToken: 'tg-size-icon-md',
+    radiusToken: 'tg-radius-lg',
+  },
+};
+
+// Filled variants (solid background) read an elevation shadow; flat
+// variants (ghost/text/icon) stay shadow-less (null — no fake
+// 'tg-shadow-none' token, since style.css only defines elevation-1..4).
+const BUTTON_FLAT_VARIANTS = ['ghost', 'text', 'icon'];
+
+// Returns a plain object of token NAMES (strings) or null describing visual
+// intent for this descriptor — never colors, never CSS, never DOM. Purely
+// data.
+function resolveButtonTheme(descriptor) {
+  const variantTokens = BUTTON_VARIANT_THEME_TOKENS[descriptor.variant] || {};
+  const sizeTokens = BUTTON_SIZE_THEME_TOKENS[descriptor.size] || {};
+
+  return {
+    variant: descriptor.variant,
+    size: descriptor.size,
+
+    backgroundToken: variantTokens.backgroundToken,
+    textToken: variantTokens.textToken,
+    borderToken: variantTokens.borderToken,
+
+    hoverBackgroundToken: variantTokens.hoverBackgroundToken,
+    hoverBorderToken: variantTokens.hoverBorderToken,
+
+    disabledBackgroundToken: 'tg-color-neutral-100',
+    disabledTextToken: 'tg-color-neutral-disabled-muted',
+
+    radiusToken: sizeTokens.radiusToken,
+    paddingToken: sizeTokens.paddingToken,
+    fontToken: sizeTokens.fontToken,
+    iconSizeToken: sizeTokens.iconSizeToken,
+
+    shadowToken: BUTTON_FLAT_VARIANTS.includes(descriptor.variant)
+      ? null
+      : 'tg-shadow-elevation-1',
+  };
+}
+
+// Dev-only helper: flattens every non-null token name referenced across all
+// variant/size combinations into a deduped, sorted list — for manually
+// diff-ing against style.css's :root block. Never called during normal app
+// runtime.
+function listButtonThemeTokens() {
+  const tokens = new Set();
+
+  BUTTON_VARIANTS.forEach((variant) => {
+    BUTTON_SIZES.forEach((size) => {
+      const theme = resolveButtonTheme({ variant, size });
+      Object.entries(theme).forEach(([key, value]) => {
+        if (key === 'variant' || key === 'size') return;
+        if (value) tokens.add(value);
+      });
+    });
+  });
+
+  return Array.from(tokens).sort();
+}
+
+// Dev-only smoke test: confirms every token resolveButtonTheme() returns is
+// either null or a string matching the real --tg-* names defined in
+// style.css's :root block (checked here as a hardcoded snapshot list — keep
+// it in sync if style.css's tokens change). Never called during normal app
+// runtime; run manually from the console after editing the theme tables.
+function __buttonThemeSelfCheck() {
+  const DEFINED_STYLE_CSS_TOKENS = new Set([
+    'tg-color-action-primary', 'tg-color-action-primary-hover',
+    'tg-color-surface', 'tg-color-surface-muted',
+    'tg-color-text-primary', 'tg-color-text-secondary',
+    'tg-color-border-default', 'tg-color-border-hover',
+    'tg-color-danger', 'tg-color-danger-700',
+    'tg-color-success', 'tg-color-success-700',
+    'tg-color-warning', 'tg-color-warning-800',
+    'tg-color-info', 'tg-color-info-700',
+    'tg-color-neutral-100', 'tg-color-neutral-disabled-muted',
+    'tg-color-action-primary',
+    'tg-radius-sm', 'tg-radius-md', 'tg-radius-lg',
+    'tg-space-1-5', 'tg-space-2', 'tg-space-3', 'tg-space-4',
+    'tg-font-size-small', 'tg-font-size-body',
+    'tg-size-icon-sm', 'tg-size-icon-base', 'tg-size-icon-md',
+    'tg-shadow-elevation-1',
+  ]);
+
+  const referenced = listButtonThemeTokens();
+  const unknown = referenced.filter((token) => !DEFINED_STYLE_CSS_TOKENS.has(token));
+
+  console.assert(unknown.length === 0, 'resolveButtonTheme references undefined tokens:', unknown);
+
+  return unknown.length === 0;
+}
+
 // ---------- Supabase Data Layer ----------
 async function fetchProjects() {
   const { data, error } = await supabaseClient
