@@ -379,6 +379,136 @@ function createButtonDescriptor(config) {
   return normalizeButtonConfig(config);
 }
 
+// ---------- Button Renderer (Sprint 2.9F.2) ----------
+// Pure markup layer on top of the Sprint 2.9F.1 Contract/Validator/Normalizer.
+// Every function here returns a string only — no DOM access, no event
+// listeners, no side effects. Nothing in the app calls renderButton yet.
+
+function createButtonClassList(descriptor) {
+  const classes = [
+    'tg-btn',
+    `tg-btn-${descriptor.variant}`,
+    `tg-btn-${descriptor.size}`,
+  ];
+
+  if (descriptor.fullWidth) classes.push('tg-btn-full');
+  if (descriptor.iconPosition === 'only') classes.push('tg-btn-icon-only');
+  if (descriptor.loading) classes.push('tg-btn-loading');
+  if (descriptor.className) classes.push(descriptor.className);
+
+  return classes.join(' ');
+}
+
+// iconName is passed explicitly (rather than read from descriptor.icon) so
+// the loading spinner ('loader-2') can reuse this without faking a config.
+function renderButtonIcon(iconName, descriptor) {
+  if (!iconName) return '';
+
+  const isSpinner = Boolean(descriptor.loading) && iconName === 'loader-2';
+  const classAttr = isSpinner ? ' class="animate-spin"' : '';
+
+  return `<i data-lucide="${escapeHtml(iconName)}"${classAttr} aria-hidden="true"></i>`;
+}
+
+function renderButtonContent(descriptor) {
+  const iconName = descriptor.loading ? 'loader-2' : descriptor.icon;
+  const iconHtml = renderButtonIcon(iconName, descriptor);
+
+  if (descriptor.iconPosition === 'only') {
+    return iconHtml;
+  }
+
+  const bodyHtml = descriptor.html !== undefined
+    ? descriptor.html
+    : (descriptor.text !== undefined ? escapeHtml(descriptor.text) : '');
+
+  return descriptor.iconPosition === 'right'
+    ? `${bodyHtml}${iconHtml}`
+    : `${iconHtml}${bodyHtml}`;
+}
+
+function renderButtonAttributes(descriptor) {
+  const isLink = Boolean(descriptor.href);
+  const isDisabled = Boolean(descriptor.disabled) || Boolean(descriptor.loading);
+  const attrs = [];
+
+  if (descriptor.id) attrs.push(`id="${escapeHtml(descriptor.id)}"`);
+
+  if (!isLink && descriptor.type) {
+    attrs.push(`type="${escapeHtml(descriptor.type)}"`);
+  }
+
+  if (isLink && !isDisabled) {
+    attrs.push(`href="${escapeHtml(descriptor.href)}"`);
+    if (descriptor.target) attrs.push(`target="${escapeHtml(descriptor.target)}"`);
+    if (descriptor.download !== undefined) {
+      attrs.push(
+        descriptor.download === true || descriptor.download === ''
+          ? 'download'
+          : `download="${escapeHtml(descriptor.download)}"`
+      );
+    }
+  }
+
+  if (isDisabled) {
+    if (!isLink) attrs.push('disabled');
+    attrs.push('aria-disabled="true"');
+  }
+
+  if (descriptor.loading) attrs.push('aria-busy="true"');
+
+  if (descriptor.ariaLabel) attrs.push(`aria-label="${escapeHtml(descriptor.ariaLabel)}"`);
+  if (descriptor.tooltip) attrs.push(`title="${escapeHtml(descriptor.tooltip)}"`);
+  if (descriptor.tabindex !== undefined) attrs.push(`tabindex="${escapeHtml(descriptor.tabindex)}"`);
+  if (descriptor.testId) attrs.push(`data-testid="${escapeHtml(descriptor.testId)}"`);
+
+  Object.entries(descriptor.dataset || {}).forEach(([key, value]) => {
+    attrs.push(`data-${escapeHtml(key)}="${escapeHtml(value)}"`);
+  });
+
+  Object.entries(descriptor.attributes || {}).forEach(([key, value]) => {
+    attrs.push(`${escapeHtml(key)}="${escapeHtml(value)}"`);
+  });
+
+  return attrs.join(' ');
+}
+
+// Renders an HTML string only. No DOM access, no event listeners, no side
+// effects. descriptor is expected to already be validated/normalized via
+// createButtonDescriptor() — this function does not re-validate.
+function renderButton(descriptor) {
+  const tag = descriptor.href ? 'a' : 'button';
+  const classList = createButtonClassList(descriptor);
+  const attributes = renderButtonAttributes(descriptor);
+  const content = renderButtonContent(descriptor);
+
+  return `<${tag} class="${classList}"${attributes ? ` ${attributes}` : ''}>${content}</${tag}>`;
+}
+
+// Dev-only smoke test for this layer. Never called during normal app
+// runtime — invoke manually from the console if you need to sanity-check
+// the renderer after editing it.
+function __buttonRendererSelfCheck() {
+  const basic = renderButton(createButtonDescriptor({ variant: 'primary', text: 'Save' }));
+  console.assert(basic.startsWith('<button'), 'basic button should render a <button> tag');
+  console.assert(basic.includes('tg-btn-primary'), 'basic button should carry its variant class');
+
+  const link = renderButton(createButtonDescriptor({ variant: 'text', text: 'Open', href: 'https://example.com', target: '_blank' }));
+  console.assert(link.startsWith('<a'), 'href descriptor should render an <a> tag');
+  console.assert(link.includes('href="https://example.com"'), 'link should include href');
+
+  const iconOnly = renderButton(createButtonDescriptor({ variant: 'icon', icon: 'pencil', iconPosition: 'only', ariaLabel: 'Edit' }));
+  console.assert(iconOnly.includes('tg-btn-icon-only'), 'icon-only button should carry the icon-only class');
+  console.assert(!/>\s*Edit\s*</.test(iconOnly), 'icon-only button should not render visible text');
+
+  const loadingDisabled = renderButton(createButtonDescriptor({ variant: 'primary', text: 'Save', loading: true }));
+  console.assert(loadingDisabled.includes('disabled'), 'loading button should be disabled');
+  console.assert(loadingDisabled.includes('aria-busy="true"'), 'loading button should set aria-busy');
+  console.assert(loadingDisabled.includes('loader-2'), 'loading button should render the loader icon');
+
+  return true;
+}
+
 // ---------- Supabase Data Layer ----------
 async function fetchProjects() {
   const { data, error } = await supabaseClient
