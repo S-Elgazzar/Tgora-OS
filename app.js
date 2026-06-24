@@ -533,11 +533,14 @@ async function notifyAssignedMember({
 async function fetchNotifications() {
   if (!state.currentUser?.id) return [];
 
-  const { data, error } = await supabaseClient
-    .from('notifications')
-    .select('*')
-    .eq('user_id', state.currentUser.id)
-    .order('created_at', { ascending: false });
+  let query = supabaseClient.from('notifications').select('*');
+
+  // Admin/Manager see all notifications; Members only see their own.
+  if (!(isAdmin() || isManager())) {
+    query = query.eq('user_id', state.currentUser.id);
+  }
+
+  const { data, error } = await query.order('created_at', { ascending: false });
 
   if (error) {
     console.error('fetchNotifications', error);
@@ -3274,10 +3277,17 @@ function canDeleteTask(task) {
   return isAdmin() || isManager();
 }
 
-// Single source of truth for Performance feature access (ranking, monthly
-// history, hall of fame, snapshot generation).
+// Single source of truth for Performance feature access (monthly history,
+// hall of fame, snapshot generation). Ranking has its own, more permissive
+// rule — see canViewPerformanceRanking().
 function canAccessPerformance() {
   return isAdmin() || isManager();
+}
+
+// Performance Ranking is visible to every role, unlike the rest of the
+// Performance features gated by canAccessPerformance().
+function canViewPerformanceRanking() {
+  return isAdmin() || isManager() || isMember();
 }
 
 // Fields a Manager may not edit on any task.
@@ -4754,7 +4764,7 @@ function renderTeamPerformance() {
 
   const rankingCard = $('#performance-ranking-card');
 
-  if (rankingCard) rankingCard.classList.toggle('hidden', !canAccessPerformance());
+  if (rankingCard) rankingCard.classList.toggle('hidden', !canViewPerformanceRanking());
 
   const historyBtn = $('#monthly-history-btn');
 
@@ -5394,7 +5404,7 @@ function openAchievementDetailsModal(key) {
 }
 
 function openPerformanceRankingModal() {
-  if (!canAccessPerformance()) {
+  if (!canViewPerformanceRanking()) {
     toast('You do not have permission to access performance features.', 'error');
     return;
   }
