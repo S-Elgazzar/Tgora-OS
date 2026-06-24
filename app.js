@@ -384,19 +384,53 @@ function createButtonDescriptor(config) {
 // Every function here returns a string only — no DOM access, no event
 // listeners, no side effects. Nothing in the app calls renderButton yet.
 
-function createButtonClassList(descriptor) {
-  const classes = [
+// ---------- UI Class Resolver (Sprint 2.9F.3) ----------
+// Generic class-list utility, factored out of the Button renderer so any
+// future component can reuse it. Accepts strings, arrays (nested any depth),
+// and falsy values (null/undefined/false/''); returns a deduped array of
+// individual class names in first-occurrence order. Does not join.
+function resolveClasses(...parts) {
+  const result = [];
+  const seen = new Set();
+
+  const visit = (value) => {
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
+    }
+    if (!value) return;
+
+    String(value)
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+      .forEach((cls) => {
+        if (seen.has(cls)) return;
+        seen.add(cls);
+        result.push(cls);
+      });
+  };
+
+  parts.forEach(visit);
+
+  return result;
+}
+
+// Button-specific class rules, expressed as resolveClasses() inputs.
+function resolveButtonClasses(descriptor) {
+  return resolveClasses(
     'tg-btn',
     `tg-btn-${descriptor.variant}`,
     `tg-btn-${descriptor.size}`,
-  ];
+    descriptor.fullWidth && 'tg-btn-full',
+    descriptor.iconPosition === 'only' && 'tg-btn-icon-only',
+    descriptor.loading && 'tg-btn-loading',
+    descriptor.className
+  );
+}
 
-  if (descriptor.fullWidth) classes.push('tg-btn-full');
-  if (descriptor.iconPosition === 'only') classes.push('tg-btn-icon-only');
-  if (descriptor.loading) classes.push('tg-btn-loading');
-  if (descriptor.className) classes.push(descriptor.className);
-
-  return classes.join(' ');
+function createButtonClassList(descriptor) {
+  return resolveButtonClasses(descriptor).join(' ');
 }
 
 // iconName is passed explicitly (rather than read from descriptor.icon) so
