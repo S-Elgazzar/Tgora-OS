@@ -3,6 +3,205 @@
    Complements Tailwind utilities
    ============================================ */
 
+/* ============================================
+   Design Tokens (Sprint 2.9B, polished in 2.9B.1)
+   Centralized visual decisions extracted from values already in use
+   throughout the app. Tokens are defined here first; existing rules are
+   migrated to reference them incrementally, only where the substitution
+   is value-for-value identical (zero visual change). Tailwind utility
+   classes in index.html are intentionally left untouched this sprint.
+
+   Usage rule of thumb:
+   - Primitive tokens  = the raw color/scale values. Rarely referenced
+     directly outside this file — they exist so semantic tokens (and any
+     future component tokens) have a single source of truth to point at.
+   - Semantic tokens    = the preferred tokens for components to use
+     (e.g. "this is a border" rather than "this is neutral-200"). Always
+     defined as a var() reference to a primitive, never a raw literal.
+   - Component tokens   = not introduced yet. A future sprint may add
+     scoped tokens (e.g. --tg-button-radius) that reference semantic
+     tokens, once enough components have been migrated to justify it.
+   ============================================ */
+:root {
+  /* ============================================
+     Colors: Primitive
+     Raw scales. Prefer the semantic tokens below in component CSS;
+     these exist as the single source of truth those tokens point to.
+     ============================================ */
+  --tg-color-brand-50: #EEF2FF;
+  --tg-color-brand-100: #E0E7FF;
+  --tg-color-brand-500: #6366F1;
+  --tg-color-brand-600: #4F46E5;
+  --tg-color-brand-700: #4338CA;
+
+  --tg-color-neutral-0: #ffffff;
+  --tg-color-neutral-50: #f9fafb;
+  --tg-color-neutral-100: #f3f4f6;
+  --tg-color-neutral-200: #e5e7eb;
+  --tg-color-neutral-300: #d1d5db;
+  --tg-color-neutral-400: #9ca3af;
+  --tg-color-neutral-500: #6b7280;
+  --tg-color-neutral-600: #4b5563;
+  --tg-color-neutral-700: #374151;
+  --tg-color-neutral-900: #111827;
+  /* Distinct near-white used for row/page hover surfaces — not the same
+     hex as neutral-50, kept separate to avoid merging two real colors. */
+  --tg-color-bg-hover-subtle: #fafafa;
+  /* Distinct muted tone used only for disabled-field placeholders/icons —
+     not the same hex as neutral-400, kept separate for the same reason. */
+  --tg-color-neutral-disabled-muted: #c1c5cb;
+
+  --tg-color-success-50: #ecfdf5;
+  --tg-color-success-500: #10b981;
+  --tg-color-success-700: #047857;
+
+  --tg-color-warning-100: #fef3c7;
+  --tg-color-warning-500: #f59e0b;
+  --tg-color-warning-600: #d97706;
+  --tg-color-warning-800: #92400e;
+
+  --tg-color-danger-50: #fef2f2;
+  --tg-color-danger-500: #ef4444;
+  --tg-color-danger-600: #dc2626;
+  --tg-color-danger-700: #b91c1c;
+
+  /* Reserved for the status-badge "blue" tones (Planning status, Medium
+     priority) specifically — distinct from the generic --tg-color-info
+     semantic below, which currently aliases brand-500 to match the one
+     existing generic "info" usage (.toast.info). Kept separate so a
+     future sprint can see both real usages instead of guessing. */
+  --tg-color-info-50: #eff6ff;
+  --tg-color-info-500: #3b82f6;
+  --tg-color-info-700: #1d4ed8;
+  --tg-color-info-800: #1e40af;
+
+  /* ============================================
+     Colors: Semantic
+     Preferred tokens for component CSS. Each points at a primitive above
+     — never a raw literal — so the mapping stays explicit and auditable.
+     ============================================ */
+  --tg-color-surface: var(--tg-color-neutral-0);
+  --tg-color-surface-muted: var(--tg-color-neutral-50);
+
+  --tg-color-text-primary: var(--tg-color-neutral-900);
+  --tg-color-text-secondary: var(--tg-color-neutral-700);
+  --tg-color-text-tertiary: var(--tg-color-neutral-500);
+  --tg-color-text-muted: var(--tg-color-neutral-400);
+
+  --tg-color-border-default: var(--tg-color-neutral-200);
+  --tg-color-border-hover: var(--tg-color-neutral-300);
+
+  /* Mirrors the brand-600/700 pair already used for primary actions via
+     Tailwind utilities (bg-brand-600 hover:bg-brand-700) in index.html —
+     available for any future component CSS, not yet referenced here. */
+  --tg-color-action-primary: var(--tg-color-brand-600);
+  --tg-color-action-primary-hover: var(--tg-color-brand-700);
+
+  /* "Main" tone per status, chosen to match each color's most-used
+     existing instance: danger-600 (deadline-overdue, icon-btn.danger),
+     warning-600 (deadline-soon), success-500 (toast.success). */
+  --tg-color-danger: var(--tg-color-danger-600);
+  --tg-color-warning: var(--tg-color-warning-600);
+  --tg-color-success: var(--tg-color-success-500);
+  /* See the info-* primitive comment above re: why this is brand-500
+     rather than the info-* ramp. */
+  --tg-color-info: var(--tg-color-brand-500);
+
+  /* Backward-compatible alias — superseded by --tg-color-surface above,
+     kept in case anything still expects the original 2.9B name. */
+  --tg-color-bg-surface: var(--tg-color-surface);
+
+  /* ============================================
+     Spacing
+     ============================================ */
+  --tg-space-1: 0.25rem;
+  --tg-space-1-5: 0.375rem;
+  --tg-space-2: 0.5rem;
+  --tg-space-2-5: 0.625rem;
+  --tg-space-3: 0.75rem;
+  --tg-space-3-5: 0.875rem;
+  --tg-space-4: 1rem;
+  --tg-space-5: 1.25rem;
+  --tg-space-6: 1.5rem;
+  --tg-space-8: 2rem;
+
+  /* ============================================
+     Radius
+     ============================================ */
+  --tg-radius-sm: 0.375rem;
+  --tg-radius-md: 0.5rem;
+  --tg-radius-lg: 0.625rem;
+  --tg-radius-xl: 0.75rem;
+  --tg-radius-2xl: 1rem;
+  --tg-radius-full: 9999px;
+
+  /* ============================================
+     Shadows / Elevation
+     ============================================ */
+  --tg-shadow-elevation-1: 0 1px 2px 0 rgba(0,0,0,0.04), 0 2px 8px -2px rgba(0,0,0,0.04);
+  --tg-shadow-elevation-2: 0 4px 12px -2px rgba(0,0,0,0.1), 0 2px 4px 0 rgba(0,0,0,0.05);
+  --tg-shadow-elevation-3: 0 10px 25px -5px rgba(0,0,0,0.1), 0 4px 6px -2px rgba(0,0,0,0.05);
+  --tg-shadow-elevation-4: 0 25px 50px -12px rgba(0,0,0,0.25);
+
+  /* ============================================
+     Typography
+     ============================================ */
+  --tg-font-family: 'Inter', system-ui, sans-serif;
+  --tg-font-size-display: 1.875rem;
+  --tg-font-size-heading: 1.125rem;
+  --tg-font-size-body: 0.875rem;
+  --tg-font-size-small: 0.75rem;
+  --tg-font-size-micro: 0.6875rem;
+  --tg-font-weight-normal: 400;
+  --tg-font-weight-medium: 500;
+  --tg-font-weight-semibold: 600;
+  --tg-font-weight-bold: 700;
+  --tg-line-height-tight: 1.4;
+  --tg-line-height-normal: 1.5;
+  --tg-letter-spacing-tight: -0.01em;
+
+  /* ============================================
+     Z-Index
+     ============================================ */
+  --tg-z-dropdown: 30;
+  --tg-z-sticky: 20;
+  --tg-z-overlay: 40;
+  --tg-z-modal: 50;
+  --tg-z-toast: 50;
+  --tg-z-tooltip: 50;
+
+  /* ============================================
+     Motion
+     Preferred names are --tg-duration-* / --tg-ease-*. The old
+     --tg-motion-* combined (duration+easing) tokens are kept below as
+     backward-compatible aliases, recomposed from the new primitives with
+     identical resulting values, since they're already referenced by
+     several rules migrated in Sprint 2.9B.
+     ============================================ */
+  --tg-duration-fast: 0.12s;
+  --tg-duration-normal: 0.15s;
+  --tg-duration-slow: 0.24s;
+  --tg-ease-standard: ease;
+  --tg-ease-emphasized: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* Backward-compatible aliases (Sprint 2.9B naming) — identical values. */
+  --tg-motion-fast: var(--tg-duration-fast) var(--tg-ease-standard);
+  --tg-motion-normal: var(--tg-duration-normal) var(--tg-ease-standard);
+  --tg-motion-slow: var(--tg-duration-slow) var(--tg-ease-emphasized);
+  --tg-motion-easing-emphasized: var(--tg-ease-emphasized);
+
+  /* ============================================
+     Control Sizes
+     ============================================ */
+  --tg-size-control-sm: 2rem;
+  --tg-size-control-md: 2.25rem;
+  --tg-size-control-lg: 2.5rem;
+  --tg-size-icon-sm: 0.75rem;
+  --tg-size-icon-base: 1rem;
+  --tg-size-icon-md: 1.25rem;
+  --tg-size-icon-lg: 1.5rem;
+}
+
 * {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -22,8 +221,8 @@ html, body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #e5e7eb;
-  border-radius: 6px;
+  background: var(--tg-color-border-default);
+  border-radius: var(--tg-radius-sm);
   border: 2px solid transparent;
   background-clip: padding-box;
 }
@@ -53,11 +252,11 @@ aside::-webkit-scrollbar-thumb:hover {
   align-items: center;
   gap: 0.625rem;
   padding: 0.5rem 0.75rem;
-  border-radius: 0.5rem;
+  border-radius: var(--tg-radius-md);
   font-size: 0.8125rem;
   font-weight: 500;
   color: #A1A1AA;
-  transition: all 0.15s ease;
+  transition: all var(--tg-motion-normal);
 }
 .nav-item:hover {
   background-color: #1A1A20;
@@ -76,17 +275,17 @@ aside::-webkit-scrollbar-thumb:hover {
    Stat cards
    ============================================ */
 .stat-card {
-  background-color: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 0.75rem;
-  padding: 1rem;
-  box-shadow: 0 1px 2px 0 rgba(0,0,0,0.04), 0 2px 8px -2px rgba(0,0,0,0.04);
-  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+  background-color: var(--tg-color-neutral-0);
+  border: 1px solid var(--tg-color-border-default);
+  border-radius: var(--tg-radius-xl);
+  padding: var(--tg-space-4);
+  box-shadow: var(--tg-shadow-elevation-1);
+  transition: transform var(--tg-motion-normal), box-shadow var(--tg-motion-normal), border-color var(--tg-motion-normal);
 }
 .stat-card:hover {
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px -2px rgba(0,0,0,0.1), 0 2px 4px 0 rgba(0,0,0,0.05);
-  border-color: #d1d5db;
+  box-shadow: var(--tg-shadow-elevation-2);
+  border-color: var(--tg-color-border-hover);
 }
 
 /* ============================================
@@ -123,7 +322,7 @@ aside::-webkit-scrollbar-thumb:hover {
   text-transform: inherit;
   letter-spacing: inherit;
   cursor: pointer;
-  transition: color 0.15s ease;
+  transition: color var(--tg-motion-normal);
 }
 .task-th-filter-btn:hover {
   color: #111827;
@@ -147,10 +346,10 @@ aside::-webkit-scrollbar-thumb:hover {
   max-width: calc(100vw - 1rem);
   max-height: 16rem;
   overflow-y: auto;
-  background-color: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 0.5rem;
-  box-shadow: 0 4px 12px -2px rgba(0,0,0,0.1), 0 2px 4px 0 rgba(0,0,0,0.05);
+  background-color: var(--tg-color-neutral-0);
+  border: 1px solid var(--tg-color-border-default);
+  border-radius: var(--tg-radius-md);
+  box-shadow: var(--tg-shadow-elevation-2);
   padding: 0.25rem;
 }
 .task-th-popover-option {
@@ -206,19 +405,19 @@ aside::-webkit-scrollbar-thumb:hover {
   padding: 0.25rem 0.5rem;
   font-size: 0.75rem;
   font-weight: 500;
-  color: #4b5563;
-  background-color: #f9fafb;
-  border: 1px solid #e5e7eb;
-  border-radius: 9999px;
+  color: var(--tg-color-neutral-600);
+  background-color: var(--tg-color-neutral-50);
+  border: 1px solid var(--tg-color-border-default);
+  border-radius: var(--tg-radius-full);
   white-space: nowrap;
 }
 .task-filter-chip-remove {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: #9ca3af;
-  border-radius: 9999px;
-  transition: color 0.15s ease, background-color 0.15s ease;
+  color: var(--tg-color-neutral-400);
+  border-radius: var(--tg-radius-full);
+  transition: color var(--tg-motion-normal), background-color var(--tg-motion-normal);
 }
 .task-filter-chip-remove:hover {
   color: #4b5563;
@@ -240,15 +439,15 @@ aside::-webkit-scrollbar-thumb:hover {
   height: 2.5rem;
   padding: 0 0.75rem;
   font-size: 0.875rem;
-  color: #111827;
-  background-color: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 0.5rem;
-  transition: all 0.15s ease;
+  color: var(--tg-color-text-primary);
+  background-color: var(--tg-color-neutral-0);
+  border: 1px solid var(--tg-color-border-default);
+  border-radius: var(--tg-radius-md);
+  transition: all var(--tg-motion-normal);
   outline: none;
 }
 .form-input:focus {
-  border-color: #6366f1;
+  border-color: var(--tg-color-brand-500);
   box-shadow: 0 0 0 3px rgba(99,102,241,0.12);
 }
 textarea.form-input {
@@ -268,14 +467,14 @@ select.form-input {
    wherever a field is disabled (e.g. Task modal permission gating), not just
    the Task modal, so it stays consistent across the app. */
 .form-input:disabled {
-  background-color: #f3f4f6;
-  color: #9ca3af;
-  border-color: #e5e7eb;
+  background-color: var(--tg-color-neutral-100);
+  color: var(--tg-color-neutral-400);
+  border-color: var(--tg-color-border-default);
   cursor: not-allowed;
   opacity: 1;
 }
 .form-input:disabled::placeholder {
-  color: #c1c5cb;
+  color: var(--tg-color-neutral-disabled-muted);
 }
 select.form-input:disabled {
   background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23c1c5cb' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
@@ -287,11 +486,11 @@ select.form-input:disabled {
 .modal {
   position: fixed;
   inset: 0;
-  z-index: 50;
+  z-index: var(--tg-z-modal);
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 1rem;
+  padding: var(--tg-space-4);
 }
 .modal-overlay {
   position: absolute;
@@ -305,12 +504,12 @@ select.form-input:disabled {
   position: relative;
   width: 100%;
   max-width: 32rem;
-  background-color: #fff;
-  border-radius: 1rem;
-  box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25);
+  background-color: var(--tg-color-neutral-0);
+  border-radius: var(--tg-radius-2xl);
+  box-shadow: var(--tg-shadow-elevation-4);
   max-height: 90vh;
   overflow-y: auto;
-  animation: slideUp 0.24s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation: slideUp var(--tg-motion-slow) forwards;
 }
 @keyframes fadeIn {
   from { opacity: 0; }
@@ -335,16 +534,16 @@ select.form-input:disabled {
   align-items: center;
   gap: 0.25rem;
   padding: 0.125rem 0.5rem;
-  font-size: 0.6875rem;
+  font-size: var(--tg-font-size-micro);
   font-weight: 500;
-  border-radius: 9999px;
+  border-radius: var(--tg-radius-full);
   white-space: nowrap;
-  line-height: 1.4;
+  line-height: var(--tg-line-height-tight);
 }
 .badge .dot {
   width: 6px;
   height: 6px;
-  border-radius: 9999px;
+  border-radius: var(--tg-radius-full);
 }
 
 /* Status badges */
@@ -377,32 +576,32 @@ select.form-input:disabled {
    Table row hover
    ============================================ */
 tbody tr {
-  transition: background-color 0.15s ease;
+  transition: background-color var(--tg-motion-normal);
 }
 tbody tr:hover {
-  background-color: #fafafa;
+  background-color: var(--tg-color-bg-hover-subtle);
 }
 
 /* ============================================
    Action buttons in tables
    ============================================ */
 .icon-btn {
-  width: 2rem;
-  height: 2rem;
+  width: var(--tg-size-control-sm);
+  height: var(--tg-size-control-sm);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 0.5rem;
-  color: #6b7280;
-  transition: all 0.15s ease;
+  border-radius: var(--tg-radius-md);
+  color: var(--tg-color-text-tertiary);
+  transition: all var(--tg-motion-normal);
 }
 .icon-btn:hover {
-  background-color: #f3f4f6;
-  color: #111827;
+  background-color: var(--tg-color-neutral-100);
+  color: var(--tg-color-text-primary);
 }
 .icon-btn.danger:hover {
-  background-color: #fef2f2;
-  color: #dc2626;
+  background-color: var(--tg-color-danger-50);
+  color: var(--tg-color-danger-600);
 }
 
 /* ============================================
@@ -413,7 +612,7 @@ tbody tr:hover {
   align-items: center;
   gap: 0.875rem;
   padding: 0.75rem 1.25rem;
-  transition: background-color 0.12s ease;
+  transition: background-color var(--tg-motion-fast);
   cursor: pointer;
   position: relative;
   width: 100%;
@@ -431,7 +630,7 @@ tbody tr:hover {
   bottom: 0;
   width: 2px;
   background: transparent;
-  transition: background-color 0.12s ease;
+  transition: background-color var(--tg-motion-fast);
 }
 .recent-row:hover {
   background-color: #f1f5f9;
@@ -448,7 +647,7 @@ tbody tr:hover {
   background-color: #c7d2fe;
 }
 .recent-row .row-title {
-  transition: color 0.12s ease;
+  transition: color var(--tg-motion-fast);
   min-width: 0;
 }
 .recent-row:hover .row-title {
@@ -503,7 +702,7 @@ tbody tr:hover {
   );
   background-size: 200% 100%;
   animation: shimmer 1.4s ease-in-out infinite;
-  border-radius: 0.375rem;
+  border-radius: var(--tg-radius-sm);
 }
 @keyframes shimmer {
   0% { background-position: 200% 0; }
@@ -516,29 +715,29 @@ tbody tr:hover {
 .toast {
   display: flex;
   align-items: center;
-  gap: 0.625rem;
-  padding: 0.75rem 1rem;
-  background-color: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 0.625rem;
-  box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1), 0 4px 6px -2px rgba(0,0,0,0.05);
+  gap: var(--tg-space-2-5);
+  padding: var(--tg-space-3) var(--tg-space-4);
+  background-color: var(--tg-color-neutral-0);
+  border: 1px solid var(--tg-color-border-default);
+  border-radius: var(--tg-radius-lg);
+  box-shadow: var(--tg-shadow-elevation-3);
   font-size: 0.8125rem;
   font-weight: 500;
-  color: #111827;
+  color: var(--tg-color-text-primary);
   min-width: 260px;
   animation: toastIn 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
-.toast.success { border-left: 3px solid #10b981; }
-.toast.error   { border-left: 3px solid #ef4444; }
-.toast.info    { border-left: 3px solid #6366f1; }
+.toast.success { border-left: 3px solid var(--tg-color-success-500); }
+.toast.error   { border-left: 3px solid var(--tg-color-danger-500); }
+.toast.info    { border-left: 3px solid var(--tg-color-brand-500); }
 
 .toast .toast-icon {
   width: 1rem;
   height: 1rem;
 }
-.toast.success .toast-icon { color: #10b981; }
-.toast.error   .toast-icon { color: #ef4444; }
-.toast.info    .toast-icon { color: #6366f1; }
+.toast.success .toast-icon { color: var(--tg-color-success-500); }
+.toast.error   .toast-icon { color: var(--tg-color-danger-500); }
+.toast.info    .toast-icon { color: var(--tg-color-brand-500); }
 
 @keyframes toastIn {
   from {
@@ -657,7 +856,7 @@ tbody tr:hover {
 .client-avatar {
   width: 2rem;
   height: 2rem;
-  border-radius: 0.5rem;
+  border-radius: var(--tg-radius-md);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -668,11 +867,11 @@ tbody tr:hover {
 }
 
 .deadline-overdue {
-  color: #dc2626;
+  color: var(--tg-color-danger-600);
   font-weight: 500;
 }
 .deadline-soon {
-  color: #d97706;
+  color: var(--tg-color-warning-600);
   font-weight: 500;
 }
 
@@ -680,14 +879,14 @@ tbody tr:hover {
    border so it reads at a glance without competing with badges/text colors. */
 .task-row-overdue {
   background-color: rgba(220, 38, 38, 0.05);
-  box-shadow: inset 3px 0 0 0 #dc2626;
+  box-shadow: inset 3px 0 0 0 var(--tg-color-danger-600);
 }
 .task-row-overdue:hover {
   background-color: rgba(220, 38, 38, 0.09);
 }
 .task-row-soon {
   background-color: rgba(217, 119, 6, 0.05);
-  box-shadow: inset 3px 0 0 0 #d97706;
+  box-shadow: inset 3px 0 0 0 var(--tg-color-warning-600);
 }
 .task-row-soon:hover {
   background-color: rgba(217, 119, 6, 0.09);
