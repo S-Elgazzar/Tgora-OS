@@ -3706,7 +3706,7 @@ function renderCrmLeads() {
 
   if (search) {
     leads = leads.filter((l) =>
-      [l.lead_name, l.company_name, l.contact_person, l.phone, l.email]
+      [l.lead_name, l.company_name, l.contact_person, l.phone, l.email, l.referred_by]
         .some((v) => v && String(v).toLowerCase().includes(search))
     );
   }
@@ -3837,6 +3837,7 @@ function renderLeadDetails() {
   setText('lead-details-phone',    lead.phone);
   setText('lead-details-whatsapp', lead.whatsapp);
   setText('lead-details-email',    lead.email);
+  setText('lead-details-referred-by', lead.referred_by);
   setText('lead-details-service',  lead.service_interest);
   setText('lead-details-budget',   lead.expected_budget);
   setText('lead-details-followup', fmtDate(lead.next_follow_up));
@@ -4448,6 +4449,7 @@ function openEditLeadModal(id) {
   form.whatsapp.value          = lead.whatsapp || '';
   form.email.value             = lead.email || '';
   form.source.value            = lead.source || 'unknown';
+  form.referred_by.value       = lead.referred_by || '';
   form.service_interest.value  = lead.service_interest || '';
   form.expected_budget.value   = lead.expected_budget || '';
   form.priority.value          = lead.priority || 'medium';
