@@ -7546,15 +7546,17 @@ renderStaticButtonMounts();
   });
 
   try {
-    const [projects, tasks, teamMembers] = await Promise.all([
+    const [projects, tasks, teamMembers, crmLeads] = await Promise.all([
       fetchProjects(),
       fetchTasks(),
-      fetchTeamMembers()
+      fetchTeamMembers(),
+      fetchCrmLeads()
     ]);
 
     state.projects = projects;
     state.tasks = tasks;
     state.teamMembers = teamMembers;
+    state.crmLeads = crmLeads;
 
     const {
       data: { user },
