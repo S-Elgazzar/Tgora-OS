@@ -855,6 +855,33 @@ function createBackButtonDescriptor(options = {}) {
   });
 }
 
+// Unlike Close/Cancel/Back, there is no single safe default label or
+// data-action for a "create" button (New Member, New Project, New Task,
+// ... each says something different and triggers a different modal), so
+// both text and dataset.action are entirely caller-supplied — text is
+// required (no safe default to fall back to), and dataset is passed
+// through as-is rather than merged with an invented default action.
+function createCreateButtonDescriptor(options = {}) {
+  const { id, text, className, dataset, attributes, disabled, loading } = options;
+
+  if (text === undefined) {
+    throw new Error('createCreateButtonDescriptor: text is required');
+  }
+
+  return createButtonDescriptor({
+    id,
+    variant: 'primary',
+    size: 'md',
+    icon: 'plus',
+    text,
+    className,
+    dataset,
+    attributes,
+    disabled,
+    loading,
+  });
+}
+
 // ---------- Static Button Mounts (Sprint 2.9G.9) ----------
 // index.html is static and can't call renderButton() itself, so a handful
 // of buttons there are replaced with empty `[data-button-mount="..."]`
