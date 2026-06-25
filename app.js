@@ -799,6 +799,25 @@ function createBackButtonDescriptor(options = {}) {
   });
 }
 
+// ---------- Static Button Mounts (Sprint 2.9G.9) ----------
+// index.html is static and can't call renderButton() itself, so a handful
+// of buttons there are replaced with empty `[data-button-mount="..."]`
+// containers. This hydrates those mount points with real Button System
+// markup at startup. Safe to call more than once (each call just
+// re-renders the same descriptor into the same container) and a no-op for
+// any mount point that isn't present in the DOM.
+function renderStaticButtonMounts() {
+  const projectCancelMount = document.querySelector('[data-button-mount="project-modal-cancel"]');
+  if (projectCancelMount) {
+    projectCancelMount.innerHTML = renderButton(createCloseButtonDescriptor({ text: 'Cancel' }));
+  }
+
+  const taskCancelMount = document.querySelector('[data-button-mount="task-modal-cancel"]');
+  if (taskCancelMount) {
+    taskCancelMount.innerHTML = renderButton(createCloseButtonDescriptor({ text: 'Cancel' }));
+  }
+}
+
 // ---------- Supabase Data Layer ----------
 async function fetchProjects() {
   const { data, error } = await supabaseClient
@@ -7036,6 +7055,7 @@ async function init() {
 
 refreshIcons();
 wireEvents();
+renderStaticButtonMounts();
 
   // Show skeleton placeholders for stat numbers initially
   ['stat-total-projects', 'stat-completed-tasks', 'stat-in-progress', 'stat-overdue'].forEach((id) => {
