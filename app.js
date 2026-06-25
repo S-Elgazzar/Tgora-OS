@@ -209,19 +209,27 @@ const renderTaskLinkIcons = (task) => {
   return `${materialsLink}\n${taskLink}`;
 };
 
-// canDelete must be computed by the caller (e.g. isAdmin() || isManager()) —
-// this helper deliberately does not contain role logic.
+// canDelete/canEdit must be computed by the caller (e.g. isAdmin() || isManager(),
+// or canFullyEditTask() || canLimitedEditTask(task)) — this helper deliberately
+// does not contain role logic. canEdit defaults to true so existing call sites
+// that never gated the Edit button keep their current behavior unchanged.
 const renderTaskActionsCell = (task, options = {}) => {
-  const { canDelete = false } = options;
+  const { canDelete = false, canEdit = true } = options;
 
   return `
     <td class="px-5 py-3.5 text-right">
       <div class="inline-flex items-center gap-1">
         ${renderTaskLinkIcons(task)}
 
-        <button class="icon-btn" data-action="edit-task" data-id="${task.id}" title="Edit task">
-          <i data-lucide="pencil" class="w-4 h-4"></i>
-        </button>
+        ${
+          canEdit
+            ? `
+              <button class="icon-btn" data-action="edit-task" data-id="${task.id}" title="Edit task">
+                <i data-lucide="pencil" class="w-4 h-4"></i>
+              </button>
+            `
+            : ''
+        }
 
         ${
           canDelete
@@ -2536,21 +2544,11 @@ function getFilteredProjects() {
 }
 
 function getFilteredTasks() {
-  let data = [...state.tasks];
-
-  if (isMember()) {
-    const currentMember = getCurrentMember();
-
-    if (!currentMember) {
-      return [];
-    }
-
-    data = data.filter(
-      (t) =>
-        (t.assigned_to || '').toLowerCase().trim() ===
-        (currentMember.name || '').toLowerCase().trim()
-    );
-  }
+  // getVisibleTasks() is the single source of truth for role-based task
+  // visibility (Admin/Manager see everything, everyone else sees only their
+  // own) — filtering builds on top of it rather than re-implementing the
+  // same scoping here.
+  let data = [...getVisibleTasks()];
 
   if (state.filters.tasks.status !== 'all') {
     data = data.filter(
@@ -3204,6 +3202,14 @@ function renderTasks() {
   const empty = $('#tasks-empty');
   const data = getFilteredTasks();
 
+  // Re-applied here (not only in setView()) so the toolbar and empty-state
+  // "New Task" buttons stay correctly hidden for Members across every path
+  // that re-renders the Tasks table — filter changes, data refreshes, and
+  // empty states — not just full view switches.
+  $$('[data-action="open-task-modal"]').forEach((btn) => {
+    btn.classList.toggle('hidden', isMember());
+  });
+
   const summaryEl = $('#tasks-results-summary');
   if (summaryEl) {
     const total = getVisibleTasks().length;
@@ -3250,7 +3256,7 @@ function renderTasks() {
         : 'Add a task to start tracking your work.';
     }
 
-    $('#tasks-empty-new-task-btn')?.classList.toggle('hidden', isFilteredEmpty);
+    $('#tasks-empty-new-task-btn')?.classList.toggle('hidden', isFilteredEmpty || isMember());
     $('#tasks-empty-reset-btn')?.classList.toggle('hidden', !isFilteredEmpty);
 
     refreshIcons();
@@ -6115,7 +6121,10 @@ localStorage.setItem(
 
             ${renderDeadlineCell(task.deadline)}
 
-            ${renderTaskActionsCell(task, { canDelete: isAdmin() || isManager() })}
+            ${renderTaskActionsCell(task, {
+              canDelete: isAdmin() || isManager(),
+              canEdit: canFullyEditTask() || canLimitedEditTask(task),
+            })}
           </tr>
         `;
       })
