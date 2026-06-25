@@ -933,6 +933,23 @@ function renderStaticButtonMounts() {
       dataset: { action: 'open-project-modal' },
     }));
   }
+
+  const tasksNewTaskMount = document.querySelector('[data-button-mount="tasks-new-task"]');
+  if (tasksNewTaskMount) {
+    tasksNewTaskMount.innerHTML = renderButton(createCreateButtonDescriptor({
+      text: 'New Task',
+      dataset: { action: 'open-task-modal' },
+    }));
+  }
+
+  const tasksEmptyNewTaskMount = document.querySelector('[data-button-mount="tasks-empty-new-task"]');
+  if (tasksEmptyNewTaskMount) {
+    tasksEmptyNewTaskMount.innerHTML = renderButton(createCreateButtonDescriptor({
+      id: 'tasks-empty-new-task-btn',
+      text: 'New Task',
+      dataset: { action: 'open-task-modal' },
+    }));
+  }
 }
 
 // ---------- Supabase Data Layer ----------

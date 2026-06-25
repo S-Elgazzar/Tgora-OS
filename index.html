@@ -734,9 +734,7 @@
       <p class="text-sm text-gray-500 mt-1">Track everything your team is working on.</p>
     </div>
 
-    <button data-action="open-task-modal" class="h-9 px-3 inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg transition shadow-sm">
-      <i data-lucide="plus" class="w-4 h-4"></i> New Task
-    </button>
+    <div data-button-mount="tasks-new-task"></div>
   </div>
 
   <!-- Tasks summary/reset row -->
@@ -833,9 +831,7 @@
       <p id="tasks-empty-title" class="text-sm font-medium text-gray-900">No tasks yet</p>
       <p id="tasks-empty-message" class="text-xs text-gray-500 mt-1">Add a task to start tracking your work.</p>
 
-      <button id="tasks-empty-new-task-btn" data-action="open-task-modal" class="mt-4 inline-flex items-center gap-2 h-9 px-3 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg">
-        <i data-lucide="plus" class="w-4 h-4"></i> New Task
-      </button>
+      <div class="mt-4" data-button-mount="tasks-empty-new-task"></div>
 
       <button id="tasks-empty-reset-btn" type="button" class="hidden mt-4 inline-flex items-center gap-2 h-9 px-3 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-medium rounded-lg">
         <i data-lucide="rotate-ccw" class="w-4 h-4"></i> Reset Filters
