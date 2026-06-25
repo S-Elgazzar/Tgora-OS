@@ -157,30 +157,44 @@
           <span class="ml-auto text-[10px] bg-sidebar-active text-zinc-300 px-1.5 py-0.5 rounded" id="nav-tasks-count">0</span>
         </a>
 
-        <p class="px-3 mt-6 mb-2 text-[10px] uppercase tracking-wider text-zinc-500 font-medium">Analytics</p>
-        <a href="#" class="nav-item opacity-60 cursor-not-allowed">
-          <i data-lucide="bar-chart-3" class="w-4 h-4"></i>
-          <span>Reports</span>
-          <span class="ml-auto text-[9px] bg-zinc-800 text-zinc-400 px-1.5 py-0.5 rounded">SOON</span>
+        <p class="px-3 mt-6 mb-2 text-[10px] uppercase tracking-wider text-zinc-500 font-medium">Business</p>
+        <a href="#" data-view="crm" id="nav-crm-item" class="nav-item">
+          <i data-lucide="briefcase" class="w-4 h-4"></i>
+          <span>CRM</span>
         </a>
-<a href="#" data-view="team" class="nav-item">
-  <i data-lucide="users" class="w-4 h-4"></i>
-  <span>Team</span>
-  <span class="ml-auto text-[10px] bg-sidebar-active text-zinc-300 px-1.5 py-0.5 rounded" id="nav-team-count">0</span>
-</a>
-        <a href="#" class="nav-item opacity-60 cursor-not-allowed">
-          <i data-lucide="calendar" class="w-4 h-4"></i>
-          <span>Calendar</span>
+        <a href="#" data-view="finance" class="nav-item">
+          <i data-lucide="wallet" class="w-4 h-4"></i>
+          <span>Finance</span>
+          <span class="sidebar-badge-soon">Soon</span>
+        </a>
+        <a href="#" data-view="hr" class="nav-item">
+          <i data-lucide="id-card" class="w-4 h-4"></i>
+          <span>HR</span>
+          <span class="sidebar-badge-soon">Soon</span>
+        </a>
+        <a href="#" data-view="assets" class="nav-item">
+          <i data-lucide="boxes" class="w-4 h-4"></i>
+          <span>Assets</span>
+          <span class="sidebar-badge-soon">Soon</span>
         </a>
 
-        <p class="px-3 mt-6 mb-2 text-[10px] uppercase tracking-wider text-zinc-500 font-medium">Settings</p>
-        <a href="#" class="nav-item opacity-60 cursor-not-allowed">
-          <i data-lucide="settings" class="w-4 h-4"></i>
-          <span>Preferences</span>
+        <p class="px-3 mt-6 mb-2 text-[10px] uppercase tracking-wider text-zinc-500 font-medium">Analytics</p>
+        <a href="#" data-view="reports" class="nav-item">
+          <i data-lucide="bar-chart-3" class="w-4 h-4"></i>
+          <span>Reports</span>
+          <span class="sidebar-badge-soon">Soon</span>
         </a>
-        <a href="#" class="nav-item opacity-60 cursor-not-allowed">
-          <i data-lucide="help-circle" class="w-4 h-4"></i>
-          <span>Help &amp; Support</span>
+
+        <p class="px-3 mt-6 mb-2 text-[10px] uppercase tracking-wider text-zinc-500 font-medium">Administration</p>
+        <a href="#" data-view="team" class="nav-item">
+          <i data-lucide="users" class="w-4 h-4"></i>
+          <span>Team</span>
+          <span class="ml-auto text-[10px] bg-sidebar-active text-zinc-300 px-1.5 py-0.5 rounded" id="nav-team-count">0</span>
+        </a>
+        <a href="#" data-view="settings" class="nav-item">
+          <i data-lucide="settings" class="w-4 h-4"></i>
+          <span>Settings</span>
+          <span class="sidebar-badge-soon">Soon</span>
         </a>
       </nav>
 
@@ -1232,6 +1246,148 @@
         <i data-lucide="rotate-ccw" class="w-4 h-4"></i> Reset Filters
       </button>
     </div>
+  </div>
+</section>
+
+<!-- ============ CRM VIEW ============ -->
+<section id="view-crm" class="view hidden">
+  <div class="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-7">
+    <div>
+      <p class="text-xs font-medium text-brand-600 uppercase tracking-wider mb-1">Business</p>
+      <h2 class="text-2xl sm:text-3xl font-semibold tracking-tight text-gray-900">CRM</h2>
+      <p class="text-sm text-gray-500 mt-1">Manage leads, clients, deals, proposals, and business relationships.</p>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+    <div class="stat-card">
+      <div class="flex items-center gap-2 mb-1">
+        <i data-lucide="target" class="w-5 h-5 text-gray-400"></i>
+        <p class="text-xs text-gray-500 font-medium">Coming Soon</p>
+      </div>
+      <h4 class="text-base font-semibold text-gray-900">Leads</h4>
+      <p class="text-xs text-gray-500 mt-1">Track and qualify incoming leads.</p>
+    </div>
+
+    <div class="stat-card">
+      <div class="flex items-center gap-2 mb-1">
+        <i data-lucide="building-2" class="w-5 h-5 text-gray-400"></i>
+        <p class="text-xs text-gray-500 font-medium">Coming Soon</p>
+      </div>
+      <h4 class="text-base font-semibold text-gray-900">Clients</h4>
+      <p class="text-xs text-gray-500 mt-1">Manage client relationships and history.</p>
+    </div>
+
+    <div class="stat-card">
+      <div class="flex items-center gap-2 mb-1">
+        <i data-lucide="handshake" class="w-5 h-5 text-gray-400"></i>
+        <p class="text-xs text-gray-500 font-medium">Coming Soon</p>
+      </div>
+      <h4 class="text-base font-semibold text-gray-900">Deals</h4>
+      <p class="text-xs text-gray-500 mt-1">Track deal stages and proposals.</p>
+    </div>
+
+    <div class="stat-card">
+      <div class="flex items-center gap-2 mb-1">
+        <i data-lucide="activity" class="w-5 h-5 text-gray-400"></i>
+        <p class="text-xs text-gray-500 font-medium">Coming Soon</p>
+      </div>
+      <h4 class="text-base font-semibold text-gray-900">Activities</h4>
+      <p class="text-xs text-gray-500 mt-1">Calls, emails, and meeting history.</p>
+    </div>
+
+    <div class="stat-card">
+      <div class="flex items-center gap-2 mb-1">
+        <i data-lucide="layers" class="w-5 h-5 text-gray-400"></i>
+        <p class="text-xs text-gray-500 font-medium">Coming Soon</p>
+      </div>
+      <h4 class="text-base font-semibold text-gray-900">Services</h4>
+      <p class="text-xs text-gray-500 mt-1">Catalog of services offered to clients.</p>
+    </div>
+
+    <div class="stat-card">
+      <div class="flex items-center gap-2 mb-1">
+        <i data-lucide="book-open" class="w-5 h-5 text-gray-400"></i>
+        <p class="text-xs text-gray-500 font-medium">Coming Soon</p>
+      </div>
+      <h4 class="text-base font-semibold text-gray-900">Handbook</h4>
+      <p class="text-xs text-gray-500 mt-1">Business playbooks and reference docs.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ FINANCE VIEW (COMING SOON) ============ -->
+<section id="view-finance" class="view hidden">
+  <div class="mb-7">
+    <p class="text-xs font-medium text-brand-600 uppercase tracking-wider mb-1">Business</p>
+    <h2 class="text-2xl sm:text-3xl font-semibold tracking-tight text-gray-900">Finance</h2>
+    <p class="text-sm text-gray-500 mt-1">This module is coming soon.</p>
+  </div>
+
+  <div class="stat-card flex flex-col items-center justify-center text-center py-16">
+    <i data-lucide="wallet" class="w-10 h-10 text-gray-300 mb-3"></i>
+    <h4 class="text-base font-semibold text-gray-900">Finance is coming soon</h4>
+    <p class="text-sm text-gray-500 mt-1 max-w-sm">This area is reserved for upcoming functionality.</p>
+  </div>
+</section>
+
+<!-- ============ HR VIEW (COMING SOON) ============ -->
+<section id="view-hr" class="view hidden">
+  <div class="mb-7">
+    <p class="text-xs font-medium text-brand-600 uppercase tracking-wider mb-1">Business</p>
+    <h2 class="text-2xl sm:text-3xl font-semibold tracking-tight text-gray-900">HR</h2>
+    <p class="text-sm text-gray-500 mt-1">This module is coming soon.</p>
+  </div>
+
+  <div class="stat-card flex flex-col items-center justify-center text-center py-16">
+    <i data-lucide="id-card" class="w-10 h-10 text-gray-300 mb-3"></i>
+    <h4 class="text-base font-semibold text-gray-900">HR is coming soon</h4>
+    <p class="text-sm text-gray-500 mt-1 max-w-sm">This area is reserved for upcoming functionality.</p>
+  </div>
+</section>
+
+<!-- ============ ASSETS VIEW (COMING SOON) ============ -->
+<section id="view-assets" class="view hidden">
+  <div class="mb-7">
+    <p class="text-xs font-medium text-brand-600 uppercase tracking-wider mb-1">Business</p>
+    <h2 class="text-2xl sm:text-3xl font-semibold tracking-tight text-gray-900">Assets</h2>
+    <p class="text-sm text-gray-500 mt-1">This module is coming soon.</p>
+  </div>
+
+  <div class="stat-card flex flex-col items-center justify-center text-center py-16">
+    <i data-lucide="boxes" class="w-10 h-10 text-gray-300 mb-3"></i>
+    <h4 class="text-base font-semibold text-gray-900">Assets is coming soon</h4>
+    <p class="text-sm text-gray-500 mt-1 max-w-sm">This area is reserved for upcoming functionality.</p>
+  </div>
+</section>
+
+<!-- ============ REPORTS VIEW (COMING SOON) ============ -->
+<section id="view-reports" class="view hidden">
+  <div class="mb-7">
+    <p class="text-xs font-medium text-brand-600 uppercase tracking-wider mb-1">Analytics</p>
+    <h2 class="text-2xl sm:text-3xl font-semibold tracking-tight text-gray-900">Reports</h2>
+    <p class="text-sm text-gray-500 mt-1">This module is coming soon.</p>
+  </div>
+
+  <div class="stat-card flex flex-col items-center justify-center text-center py-16">
+    <i data-lucide="bar-chart-3" class="w-10 h-10 text-gray-300 mb-3"></i>
+    <h4 class="text-base font-semibold text-gray-900">Reports is coming soon</h4>
+    <p class="text-sm text-gray-500 mt-1 max-w-sm">This area is reserved for upcoming functionality.</p>
+  </div>
+</section>
+
+<!-- ============ SETTINGS VIEW (COMING SOON) ============ -->
+<section id="view-settings" class="view hidden">
+  <div class="mb-7">
+    <p class="text-xs font-medium text-brand-600 uppercase tracking-wider mb-1">Administration</p>
+    <h2 class="text-2xl sm:text-3xl font-semibold tracking-tight text-gray-900">Settings</h2>
+    <p class="text-sm text-gray-500 mt-1">This module is coming soon.</p>
+  </div>
+
+  <div class="stat-card flex flex-col items-center justify-center text-center py-16">
+    <i data-lucide="settings" class="w-10 h-10 text-gray-300 mb-3"></i>
+    <h4 class="text-base font-semibold text-gray-900">Settings is coming soon</h4>
+    <p class="text-sm text-gray-500 mt-1 max-w-sm">This area is reserved for upcoming functionality.</p>
   </div>
 </section>
 

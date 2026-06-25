@@ -3830,6 +3830,10 @@ function syncSearchInputWithView() {
 }
 
 function setView(view) {
+  if (view === 'crm' && !isAdmin()) {
+    view = 'dashboard';
+  }
+
   closeAllHeaderFilterPopovers();
 
   state.view = view;
@@ -3903,6 +3907,11 @@ if (view === 'team') {
 
   renderTeamPerformance();
 }
+
+  const crmNavItem = $('#nav-crm-item');
+  if (crmNavItem) {
+    crmNavItem.classList.toggle('hidden', !isAdmin());
+  }
 
   $$('[data-action="open-project-modal"]').forEach((btn) => {
     btn.classList.toggle('hidden', !(isAdmin() || isManager()));
