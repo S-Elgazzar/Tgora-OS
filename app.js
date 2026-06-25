@@ -237,6 +237,62 @@ const renderTaskActionsCell = (task, options = {}) => {
   `;
 };
 
+// canManage/canDelete must be computed by the caller (e.g. isAdmin(),
+// canEditTeamMember(), canDeleteTeamMember()) — this helper deliberately
+// does not contain role logic, matching renderTaskActionsCell() above.
+// Unlike renderTaskActionsCell(), this does NOT include the surrounding
+// <td> — its two call sites (renderTeam(), setView()) use different <td>
+// classes, so each keeps its own wrapper and only delegates the inner
+// actions/"View only" markup that was previously duplicated between them
+// (Sprint 2.10B).
+const renderMemberActionsCell = (member, options = {}) => {
+  const { canManage = false, canDelete = false } = options;
+
+  if (!canManage) {
+    return '<span class="text-xs text-gray-400">View only</span>';
+  }
+
+  return `
+    <div class="inline-flex items-center gap-1">
+      <button
+        type="button"
+        class="icon-btn"
+        title="View member details"
+        data-action="open-member-details"
+        data-id="${member.id}"
+      >
+        <i data-lucide="eye" class="w-4 h-4"></i>
+      </button>
+
+      <button
+        type="button"
+        class="icon-btn"
+        title="Edit member"
+        data-action="edit-member"
+        data-id="${member.id}"
+      >
+        <i data-lucide="pencil" class="w-4 h-4"></i>
+      </button>
+
+      ${
+        canDelete
+          ? `
+            <button
+              type="button"
+              class="icon-btn danger"
+              title="Delete member"
+              data-action="delete-member"
+              data-id="${member.id}"
+            >
+              <i data-lucide="trash-2" class="w-4 h-4"></i>
+            </button>
+          `
+          : ''
+      }
+    </div>
+  `;
+};
+
 // Row-level deadline highlight for the Tasks table only (Sprint 2.8.1A-fix).
 // Deliberately separate from deadlineClass() — that helper stays cell/text-only
 // and status-blind; this one is row-level and status-aware (excludes
@@ -3454,43 +3510,10 @@ function renderTeam() {
           </td>
 
           <td class="px-5 py-3.5 text-right">
-            ${
-              state.currentRole === 'admin'
-                ? `
-                  <div class="inline-flex items-center gap-1">
-                    <button
-                      type="button"
-                      class="icon-btn"
-                      title="View member details"
-                      data-action="open-member-details"
-                      data-id="${member.id}"
-                    >
-                      <i data-lucide="eye" class="w-4 h-4"></i>
-                    </button>
-
-                    <button
-                      type="button"
-                      class="icon-btn"
-                      title="Edit member"
-                      data-action="edit-member"
-                      data-id="${member.id}"
-                    >
-                      <i data-lucide="pencil" class="w-4 h-4"></i>
-                    </button>
-
-                    <button
-                      type="button"
-                      class="icon-btn danger"
-                      title="Delete member"
-                      data-action="delete-member"
-                      data-id="${member.id}"
-                    >
-                      <i data-lucide="trash-2" class="w-4 h-4"></i>
-                    </button>
-                  </div>
-                `
-                : `<span class="text-xs text-gray-400">View only</span>`
-            }
+            ${renderMemberActionsCell(member, {
+              canManage: state.currentRole === 'admin',
+              canDelete: state.currentRole === 'admin',
+            })}
           </td>
         </tr>
       `;
@@ -3826,49 +3849,10 @@ if (view === 'team') {
         </td>
 
         <td class="px-5 py-3.5 text-right text-xs text-gray-400">
-          ${
-  canEditTeamMember()
-    ? `
-      <div class="inline-flex items-center gap-1">
-                  <button
-                    type="button"
-                    class="icon-btn"
-                    title="View member details"
-                    data-action="open-member-details"
-                    data-id="${member.id}"
-                  >
-                    <i data-lucide="eye" class="w-4 h-4"></i>
-                  </button>
-
-                  <button
-  type="button"
-  class="icon-btn"
-  title="Edit member"
-  data-action="edit-member"
-  data-id="${member.id}"
->
-  <i data-lucide="pencil" class="w-4 h-4"></i>
-</button>
-
-${
-  canDeleteTeamMember()
-    ? `
-      <button
-        type="button"
-        class="icon-btn danger"
-        title="Delete member"
-        data-action="delete-member"
-        data-id="${member.id}"
-      >
-        <i data-lucide="trash-2" class="w-4 h-4"></i>
-      </button>
-    `
-    : ''
-}
-                </div>
-              `
-              : '<span class="text-xs text-gray-400">View only</span>'
-          }
+          ${renderMemberActionsCell(member, {
+            canManage: canEditTeamMember(),
+            canDelete: canDeleteTeamMember(),
+          })}
         </td>
       </tr>
     `).join('');
