@@ -902,11 +902,8 @@ function renderStaticButtonMounts() {
 
   const newMemberMount = document.querySelector('[data-button-mount="new-member-toolbar"]');
   if (newMemberMount) {
-    newMemberMount.innerHTML = renderButton(createButtonDescriptor({
+    newMemberMount.innerHTML = renderButton(createCreateButtonDescriptor({
       id: 'new-member-btn',
-      variant: 'primary',
-      size: 'md',
-      icon: 'plus',
       text: 'New Member',
       dataset: { action: 'open-member-modal' },
     }));
