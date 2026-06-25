@@ -872,6 +872,18 @@ function renderStaticButtonMounts() {
   if (taskCancelMount) {
     taskCancelMount.innerHTML = renderButton(createCloseButtonDescriptor({ text: 'Cancel' }));
   }
+
+  const newMemberMount = document.querySelector('[data-button-mount="new-member-toolbar"]');
+  if (newMemberMount) {
+    newMemberMount.innerHTML = renderButton(createButtonDescriptor({
+      id: 'new-member-btn',
+      variant: 'primary',
+      size: 'md',
+      icon: 'plus',
+      text: 'New Member',
+      dataset: { action: 'open-member-modal' },
+    }));
+  }
 }
 
 // ---------- Supabase Data Layer ----------
