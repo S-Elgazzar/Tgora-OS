@@ -4615,14 +4615,6 @@ function renderProjectDetails() {
                     (t.assigned_to || '').toLowerCase().trim()
                 );
 
-                const materialsLink = t.materials_link
-                  ? `<a href="${escapeHtml(t.materials_link)}" target="_blank" rel="noopener" class="icon-btn" title="Open materials"><i data-lucide="paperclip" class="w-4 h-4"></i></a>`
-                  : '';
-
-                const taskLink = t.task_link
-                  ? `<a href="${escapeHtml(t.task_link)}" target="_blank" rel="noopener" class="icon-btn" title="Open task link"><i data-lucide="external-link" class="w-4 h-4"></i></a>`
-                  : '';
-
                 return `
                   <tr class="hover:bg-gray-50 transition">
                     <td class="px-5 py-3.5 max-w-sm">
@@ -4692,26 +4684,7 @@ function renderProjectDetails() {
                       ${fmtDate(t.deadline)}
                     </td>
 
-                    <td class="px-5 py-3.5 text-right">
-                      <div class="inline-flex items-center gap-1">
-                        ${materialsLink}
-                        ${taskLink}
-
-                        <button class="icon-btn" data-action="edit-task" data-id="${t.id}" title="Edit task">
-                          <i data-lucide="pencil" class="w-4 h-4"></i>
-                        </button>
-
-                        ${
-                          isAdmin() || isManager()
-                            ? `
-                              <button class="icon-btn danger" data-action="delete-task" data-id="${t.id}" title="Delete task">
-                                <i data-lucide="trash-2" class="w-4 h-4"></i>
-                              </button>
-                            `
-                            : ''
-                        }
-                      </div>
-                    </td>
+                    ${renderTaskActionsCell(t, { canDelete: isAdmin() || isManager() })}
                   </tr>
                 `;
               })
@@ -6054,14 +6027,6 @@ localStorage.setItem(
         const taskStatus = (task.status || 'todo').toLowerCase();
         const taskPriority = (task.priority || 'medium').toLowerCase();
 
-        const materialsLink = task.materials_link
-          ? `<a href="${escapeHtml(task.materials_link)}" target="_blank" rel="noopener" class="icon-btn" title="Open materials"><i data-lucide="paperclip" class="w-4 h-4"></i></a>`
-          : '';
-
-        const taskLink = task.task_link
-          ? `<a href="${escapeHtml(task.task_link)}" target="_blank" rel="noopener" class="icon-btn" title="Open task link"><i data-lucide="external-link" class="w-4 h-4"></i></a>`
-          : '';
-
         return `
           <tr class="hover:bg-gray-50 transition">
             <td class="px-5 py-3.5 max-w-sm">
@@ -6114,26 +6079,7 @@ localStorage.setItem(
               ${fmtDate(task.deadline)}
             </td>
 
-            <td class="px-5 py-3.5 text-right">
-              <div class="inline-flex items-center gap-1">
-                ${materialsLink}
-                ${taskLink}
-
-                <button class="icon-btn" data-action="edit-task" data-id="${task.id}" title="Edit task">
-                  <i data-lucide="pencil" class="w-4 h-4"></i>
-                </button>
-
-                ${
-                  isAdmin() || isManager()
-                    ? `
-                      <button class="icon-btn danger" data-action="delete-task" data-id="${task.id}" title="Delete task">
-                        <i data-lucide="trash-2" class="w-4 h-4"></i>
-                      </button>
-                    `
-                    : ''
-                }
-              </div>
-            </td>
+            ${renderTaskActionsCell(task, { canDelete: isAdmin() || isManager() })}
           </tr>
         `;
       })
