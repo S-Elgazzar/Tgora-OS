@@ -3297,9 +3297,12 @@ function openTaskDetailsModal(id) {
       </div>
 
       <div class="pt-4 border-t border-gray-100 flex items-center justify-end gap-2">
-        <button type="button" class="h-9 px-4 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg" data-action="close-modal">
-          Close
-        </button>
+        ${renderButton(createButtonDescriptor({
+          variant: 'ghost',
+          size: 'md',
+          text: 'Close',
+          dataset: { action: 'close-modal' },
+        }))}
 
         <button type="button" class="h-9 px-4 inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg shadow-sm" data-action="edit-task" data-id="${task.id}">
           <i data-lucide="pencil" class="w-4 h-4"></i>
