@@ -4745,22 +4745,14 @@ function renderProjectDetails() {
                     </td>
 
                     <td class="px-5 py-3.5">
-                      <span class="badge badge-${taskStatus}">
-                        <span class="dot"></span>
-                        ${labelize(taskStatus)}
-                      </span>
+                      ${renderStatusBadge(taskStatus)}
                     </td>
 
                     <td class="px-5 py-3.5">
-                      <span class="badge priority-${taskPriority}">
-                        <span class="dot"></span>
-                        ${labelize(taskPriority)}
-                      </span>
+                      ${renderPriorityBadge(taskPriority)}
                     </td>
 
-                    <td class="px-5 py-3.5 text-sm text-gray-700 ${deadlineClass(t.deadline)}">
-                      ${fmtDate(t.deadline)}
-                    </td>
+                    ${renderDeadlineCell(t.deadline)}
 
                     ${renderTaskActionsCell(t, { canDelete: isAdmin() || isManager() })}
                   </tr>
@@ -6140,22 +6132,14 @@ localStorage.setItem(
             </td>
 
             <td class="px-5 py-3.5">
-              <span class="badge badge-${taskStatus}">
-                <span class="dot"></span>
-                ${labelize(taskStatus)}
-              </span>
+              ${renderStatusBadge(taskStatus)}
             </td>
 
             <td class="px-5 py-3.5">
-              <span class="badge priority-${taskPriority}">
-                <span class="dot"></span>
-                ${labelize(taskPriority)}
-              </span>
+              ${renderPriorityBadge(taskPriority)}
             </td>
 
-            <td class="px-5 py-3.5 text-sm text-gray-700 ${deadlineClass(task.deadline)}">
-              ${fmtDate(task.deadline)}
-            </td>
+            ${renderDeadlineCell(task.deadline)}
 
             ${renderTaskActionsCell(task, { canDelete: isAdmin() || isManager() })}
           </tr>
