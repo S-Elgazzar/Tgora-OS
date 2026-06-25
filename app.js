@@ -1205,6 +1205,32 @@ async function refreshNotifications() {
   renderNotifications();
 }
 
+// fetchNotifications() already scopes rows server-side by user_id for
+// non-admin/manager, which is the real security boundary (notifications are
+// only ever inserted for the specific recipient — see notifyAdmins()/
+// notifyAssignedMember()). This is an additional, defense-in-depth display
+// filter: for task-related notifications (entity_type === 'task'), also
+// cross-check entity_id against getVisibleTasks() so a stale or incorrect
+// entity_id can never surface a task that isn't visible to this user.
+// Notifications without a reliable entity_id (no schema guarantee one
+// always exists) fall back to the existing user_id-based scope as-is —
+// known limitation, see Sprint 3.0A.3 report.
+function getVisibleNotifications() {
+  if (isAdmin() || isManager()) {
+    return state.notifications;
+  }
+
+  const visibleTaskIds = new Set(getVisibleTasks().map((t) => String(t.id)));
+
+  return state.notifications.filter((notification) => {
+    if (notification.entity_type !== 'task' || notification.entity_id == null) {
+      return true;
+    }
+
+    return visibleTaskIds.has(String(notification.entity_id));
+  });
+}
+
 function renderNotifications() {
   const list = $('#notifications-list');
   const badge = $('#notifications-count');
@@ -1213,11 +1239,13 @@ function renderNotifications() {
 
   if (!list || !badge) return;
 
-  const unreadCount = state.notifications.filter(
+  const visibleNotifications = getVisibleNotifications();
+
+  const unreadCount = visibleNotifications.filter(
     (notification) => !notification.is_read
   ).length;
 
-  const readCount = state.notifications.length - unreadCount;
+  const readCount = visibleNotifications.length - unreadCount;
 
   if (unreadCount > 0) {
     badge.classList.remove('hidden');
@@ -1234,7 +1262,7 @@ function renderNotifications() {
     clearReadBtn.classList.toggle('hidden', readCount === 0);
   }
 
-  if (state.notifications.length === 0) {
+  if (visibleNotifications.length === 0) {
     list.innerHTML = `
       <div class="px-6 py-10 text-center text-sm text-gray-500">
         <div class="w-10 h-10 mx-auto rounded-full bg-gray-100 flex items-center justify-center mb-2">
@@ -1247,7 +1275,7 @@ function renderNotifications() {
     return;
   }
 
-  list.innerHTML = state.notifications
+  list.innerHTML = visibleNotifications
     .slice(0, 20)
     .map((notification) => {
       const { icon, bg, color } = getNotificationIcon(notification.type);
@@ -3203,11 +3231,13 @@ function renderTasks() {
   const data = getFilteredTasks();
 
   // Re-applied here (not only in setView()) so the toolbar and empty-state
-  // "New Task" buttons stay correctly hidden for Members across every path
-  // that re-renders the Tasks table — filter changes, data refreshes, and
-  // empty states — not just full view switches.
+  // "New Task" buttons stay correctly hidden across every path that
+  // re-renders the Tasks table — filter changes, data refreshes, and empty
+  // states — not just full view switches. Gated by canCreateTask() (positive
+  // Admin/Manager check) rather than isMember() so an unmapped role_type
+  // string fails closed (button hidden) instead of failing open.
   $$('[data-action="open-task-modal"]').forEach((btn) => {
-    btn.classList.toggle('hidden', isMember());
+    btn.classList.toggle('hidden', !canCreateTask());
   });
 
   const summaryEl = $('#tasks-results-summary');
@@ -3256,7 +3286,7 @@ function renderTasks() {
         : 'Add a task to start tracking your work.';
     }
 
-    $('#tasks-empty-new-task-btn')?.classList.toggle('hidden', isFilteredEmpty || isMember());
+    $('#tasks-empty-new-task-btn')?.classList.toggle('hidden', isFilteredEmpty || !canCreateTask());
     $('#tasks-empty-reset-btn')?.classList.toggle('hidden', !isFilteredEmpty);
 
     refreshIcons();
@@ -3372,7 +3402,10 @@ function renderTasks() {
 
           ${renderDeadlineCell(t.deadline)}
 
-          ${renderTaskActionsCell(t, { canDelete: canDeleteTask(t) })}
+          ${renderTaskActionsCell(t, {
+            canDelete: canDeleteTask(t),
+            canEdit: canFullyEditTask() || canLimitedEditTask(t),
+          })}
         </tr>`;
     })
     .join('');
@@ -3772,8 +3805,14 @@ function canFullyEditTask() {
   return isAdmin() || isManager();
 }
 
+// Deliberately not gated by isMember() (exact currentRole === 'member' match)
+// — gated by ownership instead. A non-admin/non-manager who owns this task
+// can always limited-edit it, even if their role_type string is unmapped;
+// non-owners are never granted access regardless. This mirrors the same
+// fail-open-on-identity / fail-closed-on-data-access pattern already applied
+// to canViewPerformanceRanking().
 function canLimitedEditTask(task) {
-  return isMember() && isOwnTask(task);
+  return !isAdmin() && !isManager() && isOwnTask(task);
 }
 
 function canCreateTask() {
@@ -3792,9 +3831,13 @@ function canAccessPerformance() {
 }
 
 // Performance Ranking is visible to every role, unlike the rest of the
-// Performance features gated by canAccessPerformance().
+// Performance features gated by canAccessPerformance(). Also permissive for
+// any resolved team-member identity (not only an exact currentRole==='member'
+// match) — viewing the ranking carries no data-exposure risk the way task
+// scoping does, so this intentionally fails open rather than hiding the
+// ranking from a recognized user whose role_type string is unmapped.
 function canViewPerformanceRanking() {
-  return isAdmin() || isManager() || isMember();
+  return isAdmin() || isManager() || isMember() || !!getCurrentMember();
 }
 
 // Fields a Manager may not edit on any task.
@@ -3810,11 +3853,12 @@ function canEditTaskField(fieldName, task) {
     return !TASK_MANAGER_RESTRICTED_FIELDS.includes(fieldName);
   }
 
-  if (isMember()) {
-    return TASK_MEMBER_EDITABLE_FIELDS.includes(fieldName);
-  }
-
-  return false;
+  // Not admin, not manager: this is only ever reached via
+  // openEditTaskModal(), which already required canLimitedEditTask(task) —
+  // i.e. ownership of this exact task — to get this far. Matches
+  // canLimitedEditTask()'s identity check rather than re-testing isMember()
+  // so the two stay consistent regardless of an unmapped role_type string.
+  return TASK_MEMBER_EDITABLE_FIELDS.includes(fieldName);
 }
 
 // ---------- View Switching ----------
@@ -3928,7 +3972,7 @@ if (view === 'team') {
   });
 
     $$('[data-action="open-task-modal"]').forEach((btn) => {
-    btn.classList.toggle('hidden', isMember());
+    btn.classList.toggle('hidden', !canCreateTask());
   });
 
   // close mobile sidebar
@@ -4328,7 +4372,13 @@ function openEditTaskModal(id) {
     return;
   }
 
-  if (!canFullyEditTask() && !canLimitedEditTask(task)) {
+  // Explicit OR: allow if EITHER full or limited (own-task) edit access is
+  // granted — never required to have both, and never blocked just because
+  // canFullyEditTask() alone is false.
+  const canOpenEdit = canFullyEditTask() || canLimitedEditTask(task);
+
+  if (!canOpenEdit) {
+    console.warn('You do not have permission to edit this task');
     toast('You do not have permission to edit this task', 'error');
     return;
   }
@@ -4732,7 +4782,10 @@ function renderProjectDetails() {
 
                     ${renderDeadlineCell(t.deadline)}
 
-                    ${renderTaskActionsCell(t, { canDelete: isAdmin() || isManager() })}
+                    ${renderTaskActionsCell(t, {
+                      canDelete: isAdmin() || isManager(),
+                      canEdit: canFullyEditTask() || canLimitedEditTask(t),
+                    })}
                   </tr>
                 `;
               })
