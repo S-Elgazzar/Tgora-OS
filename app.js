@@ -739,6 +739,66 @@ function __buttonThemeSelfCheck() {
   return unknown.length === 0;
 }
 
+// ---------- Button Intent Helpers (Sprint 2.9G.5, descriptors as of 2.9G.5A) ----------
+// Thin, opinionated wrappers around createButtonDescriptor() for the
+// handful of generic, repeated button intents (Close/Cancel/Back) seen
+// across modals. Each one returns a ButtonDescriptor — NOT rendered HTML —
+// so callers must still pass the result to renderButton() themselves
+// (renderButton(createCloseButtonDescriptor())). Keeping the Intent layer
+// decoupled from the Renderer means a descriptor can also be inspected,
+// composed, or fed into something other than renderButton() later.
+// variant/size are intentionally fixed per intent (not overridable); only
+// text/className/dataset/attributes/disabled/loading can be overridden.
+// Not wired into any existing button yet — this sprint only renamed/
+// refactored the helpers, it does not migrate anything.
+
+function createCloseButtonDescriptor(options = {}) {
+  const { text = 'Close', className, dataset, attributes, disabled, loading } = options;
+
+  return createButtonDescriptor({
+    variant: 'ghost',
+    size: 'md',
+    text,
+    className,
+    // 'close-modal' is the sensible default action; callers can still
+    // override it (or add more dataset keys) via options.dataset.
+    dataset: { action: 'close-modal', ...dataset },
+    attributes,
+    disabled,
+    loading,
+  });
+}
+
+function createCancelButtonDescriptor(options = {}) {
+  const { text = 'Cancel', className, dataset, attributes, disabled, loading } = options;
+
+  return createButtonDescriptor({
+    variant: 'secondary',
+    size: 'md',
+    text,
+    className,
+    dataset,
+    attributes,
+    disabled,
+    loading,
+  });
+}
+
+function createBackButtonDescriptor(options = {}) {
+  const { text = 'Back', className, dataset, attributes, disabled, loading } = options;
+
+  return createButtonDescriptor({
+    variant: 'ghost',
+    size: 'md',
+    text,
+    className,
+    dataset,
+    attributes,
+    disabled,
+    loading,
+  });
+}
+
 // ---------- Supabase Data Layer ----------
 async function fetchProjects() {
   const { data, error } = await supabaseClient
