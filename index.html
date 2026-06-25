@@ -362,13 +362,7 @@
 
       <div class="flex items-center gap-2">
 
-        <button
-          data-action="open-project-modal"
-          class="h-9 px-3 inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg transition shadow-sm"
-        >
-          <i data-lucide="plus" class="w-4 h-4"></i>
-          New Project
-        </button>
+        <div data-button-mount="dashboard-new-project"></div>
 
       </div>
     </div>
@@ -638,9 +632,7 @@
               <p class="text-sm text-gray-500 mt-1">Manage all client engagements in one place.</p>
             </div>
             <div class="flex items-center gap-2">
-              <button data-action="open-project-modal" class="h-9 px-3 inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg transition shadow-sm">
-                <i data-lucide="plus" class="w-4 h-4"></i> New Project
-              </button>
+              <div data-button-mount="projects-new-project"></div>
             </div>
           </div>
 
@@ -725,9 +717,7 @@
               </div>
               <p id="projects-empty-title" class="text-sm font-medium text-gray-900">No projects yet</p>
               <p id="projects-empty-message" class="text-xs text-gray-500 mt-1">Get started by creating your first project.</p>
-              <button id="projects-empty-new-project-btn" data-action="open-project-modal" class="mt-4 inline-flex items-center gap-2 h-9 px-3 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg">
-                <i data-lucide="plus" class="w-4 h-4"></i> New Project
-              </button>
+              <div class="mt-4" data-button-mount="projects-empty-new-project"></div>
               <button id="projects-empty-reset-btn" type="button" class="hidden mt-4 inline-flex items-center gap-2 h-9 px-3 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-medium rounded-lg">
                 <i data-lucide="rotate-ccw" class="w-4 h-4"></i> Reset Filters
               </button>
