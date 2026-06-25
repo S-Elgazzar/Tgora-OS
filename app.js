@@ -21,6 +21,7 @@ const state = {
   currentRole: null,
   selectedMemberId: Number(localStorage.getItem('tgora_selected_member_id')) || null,
   selectedProjectId: Number(localStorage.getItem('tgora_selected_project_id')) || null,
+  selectedLeadId: Number(localStorage.getItem('tgora_selected_lead_id')) || null,
   editingMemberId: null,
   editingTaskId: null,
   editingProjectId: null,
@@ -61,6 +62,7 @@ const state = {
   pendingDelete: null, // { type: 'project' | 'task', id }
   crmLeads: [],
   editingLeadId: null,
+  leadEditReturnView: null,
   alertsFilter: 'all', // 'all' | 'overdue' | 'due_today'
   teamPerformanceRanking: [],
   teamPerformanceNotEnoughData: [],
@@ -3760,7 +3762,11 @@ function renderCrmLeads() {
         <tr>
           <td class="px-5 py-3.5">
             <div class="min-w-0">
-              <p class="text-sm font-medium text-gray-900 truncate">${escapeHtml(l.lead_name)}</p>
+              <button
+                class="text-sm font-medium text-gray-900 truncate hover:text-indigo-600 text-left"
+                data-action="open-lead-details"
+                data-id="${l.id}"
+              >${escapeHtml(l.lead_name)}</button>
               ${l.email ? `<p class="text-xs text-gray-500 truncate">${escapeHtml(l.email)}</p>` : ''}
             </div>
           </td>
@@ -3776,6 +3782,96 @@ function renderCrmLeads() {
     .join('');
 
   refreshIcons();
+}
+
+// ---------- Lead Details ----------
+function renderLeadDetails() {
+  const lead = state.crmLeads.find(
+    (l) => Number(l.id) === Number(state.selectedLeadId)
+  );
+
+  if (!lead) {
+    state.selectedLeadId = null;
+    localStorage.removeItem('tgora_selected_lead_id');
+    setView('crm');
+    return;
+  }
+
+  const status   = (lead.status   || 'new').toLowerCase();
+  const priority = (lead.priority || 'medium').toLowerCase();
+  const owner    = state.teamMembers.find((m) => Number(m.id) === Number(lead.owner_id));
+
+  const nameEl = $('#lead-details-name');
+  if (nameEl) nameEl.textContent = lead.lead_name || 'Untitled';
+
+  const sourceEl = $('#lead-details-source');
+  if (sourceEl) sourceEl.textContent = `Source: ${labelize(lead.source)}`;
+
+  const statusEl = $('#lead-details-status');
+  if (statusEl) {
+    statusEl.className = `badge badge-${status}`;
+    statusEl.innerHTML = `<span class="dot"></span>${labelize(status)}`;
+  }
+
+  const priorityEl = $('#lead-details-priority');
+  if (priorityEl) {
+    priorityEl.className = `badge priority-${priority}`;
+    priorityEl.innerHTML = `<span class="dot"></span>${labelize(priority)}`;
+  }
+
+  const ownerChip = $('#lead-details-owner-chip');
+  if (ownerChip) {
+    ownerChip.innerHTML = owner
+      ? `<div class="w-6 h-6 rounded-full ${avatarColor(owner.name)} flex items-center justify-center text-white text-[10px] font-semibold">${initials(owner.name)}</div>
+         <span class="text-sm text-gray-700">${escapeHtml(owner.name)}</span>`
+      : '<span class="text-sm text-gray-400">No owner assigned</span>';
+  }
+
+  const setText = (id, val) => {
+    const el = $(`#${id}`);
+    if (el) el.textContent = val || '—';
+  };
+
+  setText('lead-details-company',  lead.company_name);
+  setText('lead-details-contact',  lead.contact_person);
+  setText('lead-details-phone',    lead.phone);
+  setText('lead-details-whatsapp', lead.whatsapp);
+  setText('lead-details-email',    lead.email);
+  setText('lead-details-service',  lead.service_interest);
+  setText('lead-details-budget',   lead.expected_budget);
+  setText('lead-details-followup', fmtDate(lead.next_follow_up));
+  setText('lead-details-activity', timeAgo(lead.updated_at));
+
+  const notesEl = $('#lead-details-notes');
+  if (notesEl) notesEl.textContent = lead.notes || 'No notes yet.';
+
+  const editBtn = $('#lead-details-edit-btn');
+  if (editBtn) editBtn.dataset.id = lead.id;
+
+  const archiveBtn = $('#lead-details-archive-btn');
+  if (archiveBtn) {
+    archiveBtn.dataset.id = lead.id;
+    archiveBtn.classList.toggle('hidden', !!lead.is_archived);
+  }
+
+  refreshIcons();
+}
+
+function openLeadDetails(id) {
+  const lead = state.crmLeads.find((l) => Number(l.id) === id);
+  if (!lead) { toast('Lead not found', 'error'); return; }
+
+  state.selectedLeadId = id;
+  localStorage.setItem('tgora_selected_lead_id', id);
+
+  window.history.pushState(
+    { view: 'lead-details', leadId: id },
+    '',
+    `#lead-details-${id}`
+  );
+
+  setView('lead-details');
+  renderLeadDetails();
 }
 
 async function refreshDataAndRender() {
@@ -3851,6 +3947,13 @@ function renderAll() {
     resetProjectDetailsFiltersForProject(state.selectedProjectId);
     setView('project-details');
     renderProjectDetails();
+  } else if (
+    savedView === 'lead-details' &&
+    state.selectedLeadId
+  ) {
+    state.selectedLeadId = Number(state.selectedLeadId);
+    setView('lead-details');
+    renderLeadDetails();
   } else if (savedView && $(`#view-${savedView}`)) {
     setView(savedView);
   } else {
@@ -4059,7 +4162,7 @@ function syncSearchInputWithView() {
 }
 
 function setView(view) {
-  if (view === 'crm' && !isAdmin()) {
+  if ((view === 'crm' || view === 'lead-details') && !isAdmin()) {
     view = 'dashboard';
   }
 
@@ -4334,6 +4437,7 @@ function openEditLeadModal(id) {
   const lead = state.crmLeads.find((l) => Number(l.id) === id);
   if (!lead) { toast('Lead not found', 'error'); return; }
   state.editingLeadId = id;
+  state.leadEditReturnView = state.view;
   const form = $('#lead-form');
   form.reset();
   populateLeadOwnerSelect();
@@ -4391,11 +4495,18 @@ async function handleLeadSubmit(e) {
   if (!result) return;
 
   toast(isEditing ? 'Lead updated' : 'Lead created', 'success');
+  const returnView = state.leadEditReturnView;
   state.editingLeadId = null;
+  state.leadEditReturnView = null;
   form.reset();
   closeModal();
   await refreshDataAndRender();
-  setView('crm');
+  if (returnView === 'lead-details' && state.selectedLeadId) {
+    setView('lead-details');
+    renderLeadDetails();
+  } else {
+    setView('crm');
+  }
 }
 
 async function handleMemberSubmit(e) {
@@ -7000,6 +7111,19 @@ if (action === 'delete-member') {
   const id = Number(trigger.dataset.id);
   const member = state.teamMembers.find((m) => Number(m.id) === id);
   openConfirm('member', id, member ? `Member “${member.name}”` : 'This member');
+  return;
+}
+
+if (action === 'open-lead-details') {
+  const id = Number(trigger.dataset.id);
+  openLeadDetails(id);
+  return;
+}
+
+if (action === 'back-to-crm') {
+  state.selectedLeadId = null;
+  localStorage.removeItem('tgora_selected_lead_id');
+  setView('crm');
   return;
 }
 
