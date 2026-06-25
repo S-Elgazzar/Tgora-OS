@@ -2453,6 +2453,38 @@ function renderRecentTasks() {
   refreshIcons();
 }
 
+// Pure predicate for the deadline filter buckets (overdue/due_today/due_this_week/no_deadline)
+// shared by getFilteredProjects(), getFilteredTasks(), and getFilteredProjectDetailsTasks().
+// No DOM, no rendering, no role logic, no state mutation. `today` is passed in
+// (computed once per filter pass by the caller) rather than read here, matching
+// how each call site already computed it before this extraction.
+function matchesDeadlineFilter(deadline, status, bucket, today) {
+  if (bucket === 'no_deadline') {
+    return !deadline;
+  }
+
+  if (!deadline) return false;
+
+  const d = new Date(deadline);
+  d.setHours(0, 0, 0, 0);
+
+  if (bucket === 'overdue') {
+    return d < today && (status || '').toLowerCase() !== 'completed';
+  }
+
+  if (bucket === 'due_today') {
+    return d.getTime() === today.getTime();
+  }
+
+  if (bucket === 'due_this_week') {
+    const weekFromNow = new Date(today);
+    weekFromNow.setDate(weekFromNow.getDate() + 7);
+    return d >= today && d < weekFromNow;
+  }
+
+  return true;
+}
+
 function getFilteredProjects() {
   let data = [...state.projects];
 
@@ -2495,32 +2527,9 @@ function getFilteredProjects() {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    data = data.filter((p) => {
-      if (state.filters.projects.deadline === 'no_deadline') {
-        return !p.deadline;
-      }
-
-      if (!p.deadline) return false;
-
-      const d = new Date(p.deadline);
-      d.setHours(0, 0, 0, 0);
-
-      if (state.filters.projects.deadline === 'overdue') {
-        return d < today && (p.status || '').toLowerCase() !== 'completed';
-      }
-
-      if (state.filters.projects.deadline === 'due_today') {
-        return d.getTime() === today.getTime();
-      }
-
-      if (state.filters.projects.deadline === 'due_this_week') {
-        const weekFromNow = new Date(today);
-        weekFromNow.setDate(weekFromNow.getDate() + 7);
-        return d >= today && d < weekFromNow;
-      }
-
-      return true;
-    });
+    data = data.filter((p) =>
+      matchesDeadlineFilter(p.deadline, p.status, state.filters.projects.deadline, today)
+    );
   }
 
   return data;
@@ -2588,32 +2597,9 @@ function getFilteredTasks() {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    data = data.filter((t) => {
-      if (state.filters.tasks.deadline === 'no_deadline') {
-        return !t.deadline;
-      }
-
-      if (!t.deadline) return false;
-
-      const d = new Date(t.deadline);
-      d.setHours(0, 0, 0, 0);
-
-      if (state.filters.tasks.deadline === 'overdue') {
-        return d < today && (t.status || '').toLowerCase() !== 'completed';
-      }
-
-      if (state.filters.tasks.deadline === 'due_today') {
-        return d.getTime() === today.getTime();
-      }
-
-      if (state.filters.tasks.deadline === 'due_this_week') {
-        const weekFromNow = new Date(today);
-        weekFromNow.setDate(weekFromNow.getDate() + 7);
-        return d >= today && d < weekFromNow;
-      }
-
-      return true;
-    });
+    data = data.filter((t) =>
+      matchesDeadlineFilter(t.deadline, t.status, state.filters.tasks.deadline, today)
+    );
   }
 
   return data;
@@ -3151,32 +3137,9 @@ function getFilteredProjectDetailsTasks(projectId) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    data = data.filter((t) => {
-      if (f.deadline === 'no_deadline') {
-        return !t.deadline;
-      }
-
-      if (!t.deadline) return false;
-
-      const d = new Date(t.deadline);
-      d.setHours(0, 0, 0, 0);
-
-      if (f.deadline === 'overdue') {
-        return d < today && (t.status || '').toLowerCase() !== 'completed';
-      }
-
-      if (f.deadline === 'due_today') {
-        return d.getTime() === today.getTime();
-      }
-
-      if (f.deadline === 'due_this_week') {
-        const weekFromNow = new Date(today);
-        weekFromNow.setDate(weekFromNow.getDate() + 7);
-        return d >= today && d < weekFromNow;
-      }
-
-      return true;
-    });
+    data = data.filter((t) =>
+      matchesDeadlineFilter(t.deadline, t.status, f.deadline, today)
+    );
   }
 
   return data;
