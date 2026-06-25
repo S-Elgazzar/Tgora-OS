@@ -51,8 +51,16 @@ const state = {
       deadline: null,
     },
     selectedProjectId: null,
+    crmLeads: {
+      status: 'active',
+      search: '',
+      source: 'all',
+      priority: 'all',
+    },
   },
   pendingDelete: null, // { type: 'project' | 'task', id }
+  crmLeads: [],
+  editingLeadId: null,
   alertsFilter: 'all', // 'all' | 'overdue' | 'due_today'
   teamPerformanceRanking: [],
   teamPerformanceNotEnoughData: [],
@@ -1000,6 +1008,57 @@ async function fetchTeamMembers() {
   }
 
   return data || [];
+}
+
+// ---------- CRM Leads Data Layer ----------
+async function fetchCrmLeads() {
+  const { data, error } = await supabaseClient
+    .from('crm_leads')
+    .select('*')
+    .order('created_at', { ascending: false });
+  if (error) {
+    console.error('fetchCrmLeads', error);
+    toast('Could not load leads', 'error');
+    return [];
+  }
+  return data || [];
+}
+
+async function createCrmLead(payload) {
+  const { data, error } = await supabaseClient
+    .from('crm_leads')
+    .insert([payload])
+    .select()
+    .single();
+  if (error) {
+    console.error('createCrmLead', error);
+    toast(error.message || 'Failed to create lead', 'error');
+    return null;
+  }
+  return data;
+}
+
+async function updateCrmLead(id, payload) {
+  const { data, error } = await supabaseClient
+    .from('crm_leads')
+    .update(payload)
+    .eq('id', id)
+    .select()
+    .single();
+  if (error) {
+    console.error('updateCrmLead', error);
+    toast(error.message || 'Failed to update lead', 'error');
+    return null;
+  }
+  return data;
+}
+
+async function archiveCrmLead(id) {
+  return updateCrmLead(id, {
+    is_archived: true,
+    status: 'archived',
+    updated_at: new Date().toISOString(),
+  });
 }
 
 async function insertNotification(payload) {
@@ -3623,18 +3682,21 @@ async function refreshDataAndRender() {
     projects,
     tasks,
     teamMembers,
-    notifications
+    notifications,
+    crmLeads
   ] = await Promise.all([
     fetchProjects(),
     fetchTasks(),
     fetchTeamMembers(),
-    fetchNotifications()
+    fetchNotifications(),
+    fetchCrmLeads()
   ]);
 
   state.projects = projects;
   state.tasks = tasks;
   state.teamMembers = teamMembers;
   state.notifications = notifications;
+  state.crmLeads = crmLeads;
 
   renderAll();
   renderNotifications();
