@@ -5977,7 +5977,7 @@ function openPerformanceRankingModal() {
           <td class="px-4 py-2.5 text-sm font-semibold text-brand-700">${perf.performanceScore}%</td>
           <td class="px-4 py-2.5 text-sm text-gray-600">${escapeHtml(perf.performanceLabel)}</td>
           <td class="px-4 py-2.5 text-sm text-gray-600">${perf.monthlyTasks.length}</td>
-          <td class="px-4 py-2.5 text-sm text-gray-600">${perf.totalPoints} / ${perf.maxPoints}</td>
+          <td class="px-4 py-2.5 text-sm text-gray-600 whitespace-nowrap text-center">${perf.totalPoints} / ${perf.maxPoints}</td>
         </tr>
       `;
     })
@@ -5987,23 +5987,25 @@ function openPerformanceRankingModal() {
     <h3 class="text-base font-semibold text-gray-900 mb-3">${escapeHtml(monthTitle)}</h3>
     ${periodSubtitle}
     <div class="border border-gray-200 rounded-lg overflow-hidden">
-      <table class="w-full text-sm">
-        <thead class="bg-gray-50 border-b border-gray-100">
-          <tr class="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-            <th class="px-4 py-2.5">Rank</th>
-            <th class="px-4 py-2.5">Badge</th>
-            <th class="px-4 py-2.5">Member</th>
-            <th class="px-4 py-2.5">Job Title</th>
-            <th class="px-4 py-2.5">Score</th>
-            <th class="px-4 py-2.5">Label</th>
-            <th class="px-4 py-2.5">Counted Tasks</th>
-            <th class="px-4 py-2.5">Points</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${rows}
-        </tbody>
-      </table>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-50 border-b border-gray-100">
+            <tr class="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <th class="px-4 py-2.5">Rank</th>
+              <th class="px-4 py-2.5">Badge</th>
+              <th class="px-4 py-2.5">Member</th>
+              <th class="px-4 py-2.5">Job Title</th>
+              <th class="px-4 py-2.5">Score</th>
+              <th class="px-4 py-2.5">Label</th>
+              <th class="px-4 py-2.5">Counted Tasks</th>
+              <th class="px-4 py-2.5 whitespace-nowrap text-center">Points</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows}
+          </tbody>
+        </table>
+      </div>
     </div>
     ${notEnoughDataSection}
   `;
