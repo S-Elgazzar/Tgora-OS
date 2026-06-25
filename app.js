@@ -958,6 +958,19 @@ function renderStaticButtonMounts() {
       dataset: { action: 'open-task-modal' },
     }));
   }
+
+  // CRM Leads — descriptor only; 'open-lead-modal' is intentionally unwired
+  // until a future sprint adds the Lead modal/CRUD. No handler for this
+  // action exists yet in the click-delegation switch, so clicking it is a
+  // safe no-op for now.
+  const crmNewLeadMount = document.querySelector('[data-button-mount="crm-new-lead"]');
+  if (crmNewLeadMount) {
+    crmNewLeadMount.innerHTML = renderButton(createCreateButtonDescriptor({
+      id: 'crm-new-lead-btn',
+      text: 'New Lead',
+      dataset: { action: 'open-lead-modal' },
+    }));
+  }
 }
 
 // ---------- Supabase Data Layer ----------
@@ -3961,6 +3974,11 @@ if (view === 'team') {
   const crmNavItem = $('#nav-crm-item');
   if (crmNavItem) {
     crmNavItem.classList.toggle('hidden', !isAdmin());
+  }
+
+  const crmNewLeadBtn = $('#crm-new-lead-btn');
+  if (crmNewLeadBtn) {
+    crmNewLeadBtn.classList.toggle('hidden', !isAdmin());
   }
 
   $$('[data-action="open-project-modal"]').forEach((btn) => {
