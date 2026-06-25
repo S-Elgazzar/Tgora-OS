@@ -1315,16 +1315,78 @@
     </div>
   </div>
 
-  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-    <div class="stat-card">
-      <div class="flex items-center gap-2 mb-1">
-        <i data-lucide="building-2" class="w-5 h-5 text-gray-400"></i>
-        <p class="text-xs text-gray-500 font-medium">Coming Soon</p>
+  <!-- ============ CLIENTS SECTION ============ -->
+  <div class="mb-7">
+    <div class="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-4">
+      <div>
+        <h3 class="text-lg font-semibold text-gray-900">Clients</h3>
+        <p class="text-sm text-gray-500 mt-1">Master client records.</p>
       </div>
-      <h4 class="text-base font-semibold text-gray-900">Clients</h4>
-      <p class="text-xs text-gray-500 mt-1">Manage client relationships and history.</p>
+
+      <div class="flex items-center gap-2 flex-wrap">
+        <input
+          id="crm-clients-search"
+          type="search"
+          placeholder="Search clients…"
+          class="h-9 px-3 text-sm bg-white border border-gray-200 rounded-lg focus:border-brand-500 focus:ring-2 focus:ring-brand-100 outline-none transition w-44 sm:w-48"
+        />
+
+        <select
+          id="crm-clients-status-filter"
+          class="h-9 px-3 text-sm bg-white border border-gray-200 rounded-lg outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100 transition"
+        >
+          <option value="active" selected>Active</option>
+          <option value="archived">Archived</option>
+        </select>
+
+        <select
+          id="crm-clients-type-filter"
+          class="h-9 px-3 text-sm bg-white border border-gray-200 rounded-lg outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100 transition"
+        >
+          <option value="all">All Types</option>
+          <option value="individual">Individual</option>
+          <option value="company">Company</option>
+          <option value="clinic">Clinic</option>
+          <option value="restaurant">Restaurant</option>
+          <option value="real_estate">Real Estate</option>
+          <option value="school">School</option>
+          <option value="store">Store</option>
+          <option value="charity">Charity</option>
+          <option value="other">Other</option>
+        </select>
+
+        <div data-button-mount="crm-new-client"></div>
+      </div>
     </div>
 
+    <div id="crm-clients-empty" class="stat-card flex flex-col items-center justify-center text-center py-16">
+      <div class="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center mb-3">
+        <i data-lucide="building-2" class="w-6 h-6 text-gray-400"></i>
+      </div>
+      <h4 class="text-base font-semibold text-gray-900">No clients yet</h4>
+      <p class="text-sm text-gray-500 mt-1 max-w-sm">Clients will be created manually or from converted leads.</p>
+    </div>
+
+    <div id="crm-clients-table-wrapper" class="hidden bg-white rounded-xl border border-gray-200 shadow-card overflow-hidden">
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-50 border-b border-gray-100">
+            <tr class="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <th class="px-5 py-3">Client</th>
+              <th class="px-5 py-3">Type</th>
+              <th class="px-5 py-3">Industry</th>
+              <th class="px-5 py-3">Owner</th>
+              <th class="px-5 py-3">Status</th>
+              <th class="px-5 py-3 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="crm-clients-table-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
     <div class="stat-card">
       <div class="flex items-center gap-2 mb-1">
         <i data-lucide="handshake" class="w-5 h-5 text-gray-400"></i>
@@ -2154,6 +2216,124 @@
           <button type="submit" class="h-9 px-4 inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg shadow-sm">
             <i data-lucide="check" class="w-4 h-4"></i>
             Create Lead
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ============ CLIENT MODAL ============ -->
+  <div id="client-modal" class="modal hidden">
+    <div class="modal-overlay" data-action="close-modal"></div>
+    <div class="modal-panel max-w-2xl">
+      <div class="px-6 py-5 border-b border-gray-100 flex items-center justify-between">
+        <div>
+          <h3 id="client-modal-title" class="text-lg font-semibold text-gray-900">New Client</h3>
+          <p class="text-xs text-gray-500 mt-0.5">Add or update a CRM client.</p>
+        </div>
+        <button data-action="close-modal" class="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center">
+          <i data-lucide="x" class="w-4 h-4 text-gray-500"></i>
+        </button>
+      </div>
+
+      <form id="client-form" class="px-6 py-5 space-y-4">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+
+          <div class="sm:col-span-2">
+            <label class="form-label">Client Name <span class="text-rose-500">*</span></label>
+            <input name="client_name" type="text" class="form-input" placeholder="e.g. Nile Pharma" required />
+          </div>
+
+          <div>
+            <label class="form-label">Client Type</label>
+            <select name="client_type" class="form-input">
+              <option value="company" selected>Company</option>
+              <option value="individual">Individual</option>
+              <option value="clinic">Clinic</option>
+              <option value="restaurant">Restaurant</option>
+              <option value="real_estate">Real Estate</option>
+              <option value="school">School</option>
+              <option value="store">Store</option>
+              <option value="charity">Charity</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="form-label">Industry</label>
+            <input name="industry" type="text" class="form-input" placeholder="e.g. Healthcare" />
+          </div>
+
+          <div>
+            <label class="form-label">Website</label>
+            <input name="website" type="url" class="form-input" placeholder="https://example.com" />
+          </div>
+
+          <div>
+            <label class="form-label">Phone</label>
+            <input name="phone" type="tel" class="form-input" placeholder="+20 1xx xxx xxxx" />
+          </div>
+
+          <div>
+            <label class="form-label">WhatsApp</label>
+            <input name="whatsapp" type="tel" class="form-input" placeholder="+20 1xx xxx xxxx" />
+          </div>
+
+          <div>
+            <label class="form-label">Email</label>
+            <input name="email" type="email" class="form-input" placeholder="client@example.com" />
+          </div>
+
+          <div>
+            <label class="form-label">Source</label>
+            <select name="source" class="form-input">
+              <option value="unknown">Unknown</option>
+              <option value="lead_conversion">Lead Conversion</option>
+              <option value="referral">Referral</option>
+              <option value="social_media">Social Media</option>
+              <option value="website">Website</option>
+              <option value="phone">Phone</option>
+              <option value="email">Email</option>
+              <option value="walk_in">Walk In</option>
+              <option value="existing_client">Existing Client</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+
+          <div class="sm:col-span-2">
+            <label class="form-label">Address</label>
+            <input name="address" type="text" class="form-input" placeholder="Street, City, Country" />
+          </div>
+
+          <div>
+            <label class="form-label">Owner</label>
+            <select name="owner_id" id="client-owner-id" class="form-input">
+              <option value="">No owner</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="form-label">Status</label>
+            <select name="status" class="form-input">
+              <option value="active" selected>Active</option>
+              <option value="inactive">Inactive</option>
+            </select>
+          </div>
+
+          <div class="sm:col-span-2">
+            <label class="form-label">Notes</label>
+            <textarea name="notes" rows="3" class="form-input" placeholder="Additional context or notes…"></textarea>
+          </div>
+
+        </div>
+
+        <div class="flex items-center justify-end gap-2 pt-4 border-t border-gray-100">
+          <button type="button" data-action="close-modal" class="h-9 px-4 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50">
+            Cancel
+          </button>
+          <button type="submit" class="h-9 px-4 inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg shadow-sm">
+            <i data-lucide="check" class="w-4 h-4"></i>
+            Create Client
           </button>
         </div>
       </form>

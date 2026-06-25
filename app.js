@@ -58,10 +58,17 @@ const state = {
       source: 'all',
       priority: 'all',
     },
+    crmClients: {
+      status: 'active',
+      search: '',
+      type: 'all',
+    },
   },
   pendingDelete: null, // { type: 'project' | 'task', id }
   crmLeads: [],
+  crmClients: [],
   editingLeadId: null,
+  editingClientId: null,
   leadEditReturnView: null,
   alertsFilter: 'all', // 'all' | 'overdue' | 'due_today'
   teamPerformanceRanking: [],
@@ -977,6 +984,15 @@ function renderStaticButtonMounts() {
       dataset: { action: 'open-lead-modal' },
     }));
   }
+
+  const crmNewClientMount = document.querySelector('[data-button-mount="crm-new-client"]');
+  if (crmNewClientMount) {
+    crmNewClientMount.innerHTML = renderButton(createCreateButtonDescriptor({
+      id: 'crm-new-client-btn',
+      text: 'New Client',
+      dataset: { action: 'open-client-modal' },
+    }));
+  }
 }
 
 // ---------- Supabase Data Layer ----------
@@ -1053,6 +1069,59 @@ async function updateCrmLead(id, payload) {
 
 async function archiveCrmLead(id) {
   return updateCrmLead(id, {
+    is_archived: true,
+    status: 'archived',
+    updated_at: new Date().toISOString(),
+  });
+}
+
+// ---------- CRM Clients Data Layer ----------
+async function fetchCrmClients() {
+  const { data, error } = await supabaseClient
+    .from('crm_clients')
+    .select('*')
+    .order('created_at', { ascending: false });
+  if (error) {
+    console.error('fetchCrmClients', error);
+    toast('Could not load clients', 'error');
+    return [];
+  }
+  return data || [];
+}
+
+async function createCrmClient(payload) {
+  if (!isAdmin()) return null;
+  const { data, error } = await supabaseClient
+    .from('crm_clients')
+    .insert([payload])
+    .select()
+    .single();
+  if (error) {
+    console.error('createCrmClient', error);
+    toast(error.message || 'Failed to create client', 'error');
+    return null;
+  }
+  return data;
+}
+
+async function updateCrmClient(id, payload) {
+  if (!isAdmin()) return null;
+  const { data, error } = await supabaseClient
+    .from('crm_clients')
+    .update(payload)
+    .eq('id', id)
+    .select()
+    .single();
+  if (error) {
+    console.error('updateCrmClient', error);
+    toast(error.message || 'Failed to update client', 'error');
+    return null;
+  }
+  return data;
+}
+
+async function archiveCrmClient(id) {
+  return updateCrmClient(id, {
     is_archived: true,
     status: 'archived',
     updated_at: new Date().toISOString(),
@@ -1985,6 +2054,22 @@ function populateTeamMembers() {
 
 function populateLeadOwnerSelect() {
   const select = $('#lead-owner-id');
+  if (!select) return;
+  const active = state.teamMembers.filter(
+    (m) => (m.status || '').toLowerCase() !== 'inactive'
+  );
+  select.innerHTML =
+    '<option value="">No owner</option>' +
+    active
+      .map(
+        (m) =>
+          `<option value="${m.id}">${escapeHtml(m.name)}${m.job_title ? ` — ${escapeHtml(m.job_title)}` : ''}</option>`
+      )
+      .join('');
+}
+
+function populateClientOwnerSelect() {
+  const select = $('#client-owner-id');
   if (!select) return;
   const active = state.teamMembers.filter(
     (m) => (m.status || '').toLowerCase() !== 'inactive'
@@ -3784,6 +3869,92 @@ function renderCrmLeads() {
   refreshIcons();
 }
 
+// ---------- CRM Clients Render ----------
+function renderCrmClients() {
+  const tbody = $('#crm-clients-table-body');
+  const empty = $('#crm-clients-empty');
+  const wrapper = $('#crm-clients-table-wrapper');
+
+  if (!tbody || !empty || !wrapper) return;
+
+  const f = state.filters.crmClients;
+  const search = (f.search || '').toLowerCase();
+
+  let clients = state.crmClients.filter((c) =>
+    f.status === 'archived' ? c.is_archived : !c.is_archived
+  );
+
+  if (search) {
+    clients = clients.filter((c) =>
+      [c.client_name, c.industry, c.email, c.phone, c.website]
+        .some((v) => v && String(v).toLowerCase().includes(search))
+    );
+  }
+
+  if (f.type && f.type !== 'all') {
+    clients = clients.filter((c) => c.client_type === f.type);
+  }
+
+  if (clients.length === 0) {
+    tbody.innerHTML = '';
+    empty.classList.remove('hidden');
+    wrapper.classList.add('hidden');
+    refreshIcons();
+    return;
+  }
+
+  empty.classList.add('hidden');
+  wrapper.classList.remove('hidden');
+
+  const admin = isAdmin();
+
+  tbody.innerHTML = clients
+    .map((c) => {
+      const owner = state.teamMembers.find((m) => Number(m.id) === Number(c.owner_id));
+      const ownerCell = owner
+        ? `<div class="flex items-center gap-2">
+             <div class="w-6 h-6 rounded-full ${avatarColor(owner.name)} flex items-center justify-center text-white text-[10px] font-semibold flex-shrink-0">${initials(owner.name)}</div>
+             <span>${escapeHtml(owner.name)}</span>
+           </div>`
+        : '—';
+
+      const editBtn = admin
+        ? `<button class="icon-btn" data-action="edit-client" data-id="${c.id}" title="Edit client">
+             <i data-lucide="pencil" class="w-4 h-4"></i>
+           </button>`
+        : '';
+
+      const archiveBtn = admin && !c.is_archived
+        ? `<button class="icon-btn" data-action="archive-client" data-id="${c.id}" title="Archive client">
+             <i data-lucide="archive" class="w-4 h-4"></i>
+           </button>`
+        : '';
+
+      const actionsCell = admin
+        ? `<div class="inline-flex items-center gap-1">${editBtn}${archiveBtn}</div>`
+        : '<span class="text-xs text-gray-400">View only</span>';
+
+      return `
+        <tr>
+          <td class="px-5 py-3.5">
+            <div class="min-w-0">
+              <p class="text-sm font-medium text-gray-900">${escapeHtml(c.client_name)}</p>
+              ${c.email ? `<p class="text-xs text-gray-500 truncate">${escapeHtml(c.email)}</p>` : ''}
+            </div>
+          </td>
+          <td class="px-5 py-3.5 text-sm text-gray-700">${labelize(c.client_type)}</td>
+          <td class="px-5 py-3.5 text-sm text-gray-700">${escapeHtml(c.industry || '—')}</td>
+          <td class="px-5 py-3.5 text-sm text-gray-700">${ownerCell}</td>
+          <td class="px-5 py-3.5">${renderStatusBadge(c.status)}</td>
+          <td class="px-5 py-3.5 text-right">${actionsCell}</td>
+        </tr>
+      `;
+    })
+    .join('');
+
+  refreshIcons();
+}
+
 // ---------- Lead Details ----------
 function renderLeadDetails() {
   const lead = state.crmLeads.find(
@@ -3883,13 +4054,15 @@ async function refreshDataAndRender() {
     tasks,
     teamMembers,
     notifications,
-    crmLeads
+    crmLeads,
+    crmClients
   ] = await Promise.all([
     fetchProjects(),
     fetchTasks(),
     fetchTeamMembers(),
     fetchNotifications(),
-    fetchCrmLeads()
+    fetchCrmLeads(),
+    fetchCrmClients()
   ]);
 
   state.projects = projects;
@@ -3897,6 +4070,7 @@ async function refreshDataAndRender() {
   state.teamMembers = teamMembers;
   state.notifications = notifications;
   state.crmLeads = crmLeads;
+  state.crmClients = crmClients;
 
   renderAll();
   renderNotifications();
@@ -3932,6 +4106,7 @@ function renderAll() {
   renderMyPerformanceTrend();
   renderMyAchievements();
   renderCrmLeads();
+  renderCrmClients();
 
   const savedView = localStorage.getItem('tgora_current_view');
 
@@ -4251,6 +4426,11 @@ if (view === 'team') {
     crmNewLeadBtn.classList.toggle('hidden', !isAdmin());
   }
 
+  const crmNewClientBtn = $('#crm-new-client-btn');
+  if (crmNewClientBtn) {
+    crmNewClientBtn.classList.toggle('hidden', !isAdmin());
+  }
+
   $$('[data-action="open-project-modal"]').forEach((btn) => {
     btn.classList.toggle('hidden', !(isAdmin() || isManager()));
   });
@@ -4286,10 +4466,14 @@ function closeModal() {
 function openConfirm(type, id, label) {
   state.pendingDelete = { type, id };
 
-  const isArchive = type === 'lead_archive';
+  const isArchive = type === 'lead_archive' || type === 'client_archive';
 
   const titleEl = $('#confirm-modal-title');
-  if (titleEl) titleEl.textContent = isArchive ? 'Archive this lead?' : 'Delete this item?';
+  if (titleEl) {
+    if (type === 'lead_archive') titleEl.textContent = 'Archive this lead?';
+    else if (type === 'client_archive') titleEl.textContent = 'Archive this client?';
+    else titleEl.textContent = 'Delete this item?';
+  }
 
   const btn = $('#confirm-delete-btn');
   if (btn) {
@@ -4509,6 +4693,87 @@ async function handleLeadSubmit(e) {
   } else {
     setView('crm');
   }
+}
+
+// ---------- Client Modal Helpers ----------
+function openNewClientModal() {
+  if (!isAdmin()) return;
+  state.editingClientId = null;
+  const form = $('#client-form');
+  form.reset();
+  populateClientOwnerSelect();
+  $('#client-modal-title').textContent = 'New Client';
+  const submitBtn = form.querySelector('button[type=submit]');
+  if (submitBtn) submitBtn.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i> Create Client';
+  refreshIcons();
+  openModal('client-modal');
+}
+
+function openEditClientModal(id) {
+  if (!isAdmin()) return;
+  const client = state.crmClients.find((c) => Number(c.id) === id);
+  if (!client) { toast('Client not found', 'error'); return; }
+  state.editingClientId = id;
+  const form = $('#client-form');
+  form.reset();
+  populateClientOwnerSelect();
+  form.client_name.value = client.client_name || '';
+  form.client_type.value = client.client_type || 'company';
+  form.industry.value    = client.industry || '';
+  form.website.value     = client.website || '';
+  form.phone.value       = client.phone || '';
+  form.whatsapp.value    = client.whatsapp || '';
+  form.email.value       = client.email || '';
+  form.address.value     = client.address || '';
+  form.source.value      = client.source || 'unknown';
+  form.owner_id.value    = client.owner_id != null ? String(client.owner_id) : '';
+  form.status.value      = client.status || 'active';
+  form.notes.value       = client.notes || '';
+  $('#client-modal-title').textContent = 'Edit Client';
+  const submitBtn = form.querySelector('button[type=submit]');
+  if (submitBtn) submitBtn.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i> Update Client';
+  refreshIcons();
+  openModal('client-modal');
+}
+
+async function handleClientSubmit(e) {
+  e.preventDefault();
+  if (!isAdmin()) return;
+
+  const form = e.target;
+  const submitBtn = form.querySelector('button[type=submit]');
+  const isEditing = state.editingClientId !== null;
+
+  submitBtn.disabled = true;
+  submitBtn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> ${isEditing ? 'Updating…' : 'Saving…'}`;
+  refreshIcons();
+
+  const payload = normalizePayload(new FormData(form));
+
+  if (payload.owner_id) payload.owner_id = Number(payload.owner_id);
+
+  let result = null;
+  if (isEditing) {
+    payload.updated_at = new Date().toISOString();
+    result = await updateCrmClient(state.editingClientId, payload);
+  } else {
+    result = await createCrmClient(payload);
+  }
+
+  submitBtn.disabled = false;
+  submitBtn.innerHTML = isEditing
+    ? '<i data-lucide="check" class="w-4 h-4"></i> Update Client'
+    : '<i data-lucide="check" class="w-4 h-4"></i> Create Client';
+  refreshIcons();
+
+  if (!result) return;
+
+  toast(isEditing ? 'Client updated' : 'Client created', 'success');
+  state.editingClientId = null;
+  form.reset();
+  closeModal();
+  await refreshDataAndRender();
+  setView('crm');
 }
 
 async function handleMemberSubmit(e) {
@@ -4969,8 +5234,12 @@ async function confirmDelete() {
     ok = !!(await archiveCrmLead(id));
   }
 
+  if (type === 'client_archive') {
+    ok = !!(await archiveCrmClient(id));
+  }
+
   btn.disabled = false;
-  btn.innerHTML = type === 'lead_archive'
+  btn.innerHTML = (type === 'lead_archive' || type === 'client_archive')
     ? '<i data-lucide="archive" class="w-4 h-4"></i> Archive'
     : '<i data-lucide="trash-2" class="w-4 h-4"></i> Delete';
   refreshIcons();
@@ -4979,7 +5248,9 @@ async function confirmDelete() {
 
   if (ok) {
     toast(
-      type === 'lead_archive' ? 'Lead archived' : `${labelize(type)} deleted`,
+      type === 'lead_archive' ? 'Lead archived'
+      : type === 'client_archive' ? 'Client archived'
+      : `${labelize(type)} deleted`,
       'success'
     );
 
@@ -7146,6 +7417,24 @@ if (action === 'archive-lead') {
   openConfirm('lead_archive', id, lead ? `”${lead.lead_name}”` : 'This lead');
   return;
 }
+
+if (action === 'open-client-modal') {
+  openNewClientModal();
+  return;
+}
+
+if (action === 'edit-client') {
+  const id = Number(trigger.dataset.id);
+  openEditClientModal(id);
+  return;
+}
+
+if (action === 'archive-client') {
+  const id = Number(trigger.dataset.id);
+  const client = state.crmClients.find((c) => Number(c.id) === id);
+  openConfirm('client_archive', id, client ? `”${client.client_name}”` : 'This client');
+  return;
+}
 });
 
   // Forms
@@ -7154,6 +7443,7 @@ if (action === 'archive-lead') {
   $('#member-form').addEventListener('submit', handleMemberSubmit);
   $('#task-form').addEventListener('submit', handleTaskSubmit);
   $('#lead-form')?.addEventListener('submit', handleLeadSubmit);
+  $('#client-form')?.addEventListener('submit', handleClientSubmit);
   $('#confirm-delete-btn').addEventListener('click', confirmDelete);
 
   // CRM Leads filters
@@ -7164,6 +7454,20 @@ if (action === 'archive-lead') {
   $('#crm-leads-status-filter')?.addEventListener('change', (e) => {
     state.filters.crmLeads.status = e.target.value;
     renderCrmLeads();
+  });
+
+  // CRM Clients filters
+  $('#crm-clients-search')?.addEventListener('input', (e) => {
+    state.filters.crmClients.search = e.target.value;
+    renderCrmClients();
+  });
+  $('#crm-clients-status-filter')?.addEventListener('change', (e) => {
+    state.filters.crmClients.status = e.target.value;
+    renderCrmClients();
+  });
+  $('#crm-clients-type-filter')?.addEventListener('change', (e) => {
+    state.filters.crmClients.type = e.target.value;
+    renderCrmClients();
   });
 
 document.addEventListener('click', async (e) => {
@@ -7546,17 +7850,19 @@ renderStaticButtonMounts();
   });
 
   try {
-    const [projects, tasks, teamMembers, crmLeads] = await Promise.all([
+    const [projects, tasks, teamMembers, crmLeads, crmClients] = await Promise.all([
       fetchProjects(),
       fetchTasks(),
       fetchTeamMembers(),
-      fetchCrmLeads()
+      fetchCrmLeads(),
+      fetchCrmClients()
     ]);
 
     state.projects = projects;
     state.tasks = tasks;
     state.teamMembers = teamMembers;
     state.crmLeads = crmLeads;
+    state.crmClients = crmClients;
 
     const {
       data: { user },
