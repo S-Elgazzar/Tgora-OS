@@ -4875,6 +4875,16 @@ function isPerformanceEligibleMember(member) {
   return (member.role_type || '').toLowerCase() !== 'admin';
 }
 
+// Pure helper shared by every ranking/leaderboard view: keeps only members with
+// enough counted tasks this month (>= 3) and orders them by performance score,
+// highest first. No DOM, no rendering, no role logic, no state mutation; does
+// not mutate the input array.
+function rankEligiblePerformers(allPerf) {
+  return allPerf
+    .filter(({ perf }) => perf.monthlyTasks.length >= 3)
+    .sort((a, b) => b.perf.performanceScore - a.perf.performanceScore);
+}
+
 async function generatePerformanceSnapshot() {
   if (!canAccessPerformance()) {
     toast('You do not have permission to access performance features.', 'error');
@@ -4903,9 +4913,7 @@ async function generatePerformanceSnapshot() {
       return { member, perf };
     });
 
-  const eligible = allPerf
-    .filter(({ perf }) => perf.monthlyTasks.length >= 3)
-    .sort((a, b) => b.perf.performanceScore - a.perf.performanceScore);
+  const eligible = rankEligiblePerformers(allPerf);
 
   if (eligible.length === 0) {
     toast('Not enough data to generate snapshot.', 'error');
@@ -5215,9 +5223,7 @@ function renderTeamPerformance() {
       return { member, perf };
     });
 
-  const ranking = allPerf
-    .filter(({ perf }) => perf.monthlyTasks.length >= 3)
-    .sort((a, b) => b.perf.performanceScore - a.perf.performanceScore);
+  const ranking = rankEligiblePerformers(allPerf);
 
   const notEnoughData = allPerf.filter(
     ({ perf }) => perf.monthlyTasks.length > 0 && perf.monthlyTasks.length < 3
@@ -5278,9 +5284,7 @@ function renderMyPerformance() {
       return { member: m, perf };
     });
 
-  const ranking = allPerf
-    .filter(({ perf }) => perf.monthlyTasks.length >= 3)
-    .sort((a, b) => b.perf.performanceScore - a.perf.performanceScore);
+  const ranking = rankEligiblePerformers(allPerf);
 
   const mine = allPerf.find(({ member: m }) => Number(m.id) === Number(member.id));
 
@@ -5351,9 +5355,7 @@ function renderTeamLeaderboard() {
       return { member: m, perf };
     });
 
-  const ranking = allPerf
-    .filter(({ perf }) => perf.monthlyTasks.length >= 3)
-    .sort((a, b) => b.perf.performanceScore - a.perf.performanceScore);
+  const ranking = rankEligiblePerformers(allPerf);
 
   if (ranking.length === 0) {
     body.innerHTML = `
