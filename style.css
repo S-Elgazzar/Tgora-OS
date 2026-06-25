@@ -571,6 +571,22 @@ select.form-input:disabled {
 .badge-completed  { background: #ecfdf5; color: #047857; }
 .badge-completed .dot  { background: #10b981; }
 
+/* CRM Lead status badges */
+.badge-new            { background: #eff6ff; color: #1d4ed8; }
+.badge-new .dot       { background: #3b82f6; }
+.badge-contacted      { background: #f3e8ff; color: #6b21a8; }
+.badge-contacted .dot { background: #a855f7; }
+.badge-qualified      { background: #ecfdf5; color: #047857; }
+.badge-qualified .dot { background: #10b981; }
+.badge-proposal_sent  { background: #fff7ed; color: #9a3412; }
+.badge-proposal_sent .dot { background: #f97316; }
+.badge-won            { background: #dcfce7; color: #14532d; }
+.badge-won .dot       { background: #16a34a; }
+.badge-lost           { background: #fef2f2; color: #991b1b; }
+.badge-lost .dot      { background: #ef4444; }
+.badge-archived       { background: #f3f4f6; color: #6b7280; }
+.badge-archived .dot  { background: #9ca3af; }
+
 /* Priority badges */
 .priority-low     { background: #f3f4f6; color: #4b5563; }
 .priority-low .dot    { background: #9ca3af; }

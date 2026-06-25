@@ -967,10 +967,6 @@ function renderStaticButtonMounts() {
     }));
   }
 
-  // CRM Leads — descriptor only; 'open-lead-modal' is intentionally unwired
-  // until a future sprint adds the Lead modal/CRUD. No handler for this
-  // action exists yet in the click-delegation switch, so clicking it is a
-  // safe no-op for now.
   const crmNewLeadMount = document.querySelector('[data-button-mount="crm-new-lead"]');
   if (crmNewLeadMount) {
     crmNewLeadMount.innerHTML = renderButton(createCreateButtonDescriptor({
@@ -1983,6 +1979,22 @@ function populateTeamMembers() {
       )
       .join('')}
   `;
+}
+
+function populateLeadOwnerSelect() {
+  const select = $('#lead-owner-id');
+  if (!select) return;
+  const active = state.teamMembers.filter(
+    (m) => (m.status || '').toLowerCase() !== 'inactive'
+  );
+  select.innerHTML =
+    '<option value="">No owner</option>' +
+    active
+      .map(
+        (m) =>
+          `<option value="${m.id}">${escapeHtml(m.name)}${m.job_title ? ` — ${escapeHtml(m.job_title)}` : ''}</option>`
+      )
+      .join('');
 }
 
 function renderStats() {
@@ -3675,6 +3687,97 @@ function renderTeam() {
   refreshIcons();
 }
 
+// ---------- CRM Leads Render ----------
+function renderCrmLeads() {
+  const tbody = $('#crm-leads-table-body');
+  const empty = $('#crm-leads-empty');
+  const wrapper = $('#crm-leads-table-wrapper');
+
+  if (!tbody || !empty || !wrapper) return;
+
+  const f = state.filters.crmLeads;
+  const search = (f.search || '').toLowerCase();
+
+  let leads = state.crmLeads.filter((l) =>
+    f.status === 'archived' ? l.is_archived : !l.is_archived
+  );
+
+  if (search) {
+    leads = leads.filter((l) =>
+      [l.lead_name, l.company_name, l.contact_person, l.phone, l.email]
+        .some((v) => v && String(v).toLowerCase().includes(search))
+    );
+  }
+
+  if (f.source && f.source !== 'all') {
+    leads = leads.filter((l) => l.source === f.source);
+  }
+
+  if (f.priority && f.priority !== 'all') {
+    leads = leads.filter((l) => l.priority === f.priority);
+  }
+
+  if (leads.length === 0) {
+    tbody.innerHTML = '';
+    empty.classList.remove('hidden');
+    wrapper.classList.add('hidden');
+    refreshIcons();
+    return;
+  }
+
+  empty.classList.add('hidden');
+  wrapper.classList.remove('hidden');
+
+  const admin = isAdmin();
+
+  tbody.innerHTML = leads
+    .map((l) => {
+      const owner = state.teamMembers.find((m) => Number(m.id) === Number(l.owner_id));
+      const ownerCell = owner
+        ? `<div class="flex items-center gap-2">
+             <div class="w-6 h-6 rounded-full ${avatarColor(owner.name)} flex items-center justify-center text-white text-[10px] font-semibold flex-shrink-0">${initials(owner.name)}</div>
+             <span>${escapeHtml(owner.name)}</span>
+           </div>`
+        : '—';
+
+      const editBtn = admin
+        ? `<button class="icon-btn" data-action="edit-lead" data-id="${l.id}" title="Edit lead">
+             <i data-lucide="pencil" class="w-4 h-4"></i>
+           </button>`
+        : '';
+
+      const archiveBtn = admin && !l.is_archived
+        ? `<button class="icon-btn" data-action="archive-lead" data-id="${l.id}" title="Archive lead">
+             <i data-lucide="archive" class="w-4 h-4"></i>
+           </button>`
+        : '';
+
+      const actionsCell = admin
+        ? `<div class="inline-flex items-center gap-1">${editBtn}${archiveBtn}</div>`
+        : '<span class="text-xs text-gray-400">View only</span>';
+
+      return `
+        <tr>
+          <td class="px-5 py-3.5">
+            <div class="min-w-0">
+              <p class="text-sm font-medium text-gray-900 truncate">${escapeHtml(l.lead_name)}</p>
+              ${l.email ? `<p class="text-xs text-gray-500 truncate">${escapeHtml(l.email)}</p>` : ''}
+            </div>
+          </td>
+          <td class="px-5 py-3.5 text-sm text-gray-700">${escapeHtml(l.company_name || '—')}</td>
+          <td class="px-5 py-3.5 text-sm text-gray-700">${labelize(l.source)}</td>
+          <td class="px-5 py-3.5">${renderStatusBadge(l.status)}</td>
+          <td class="px-5 py-3.5 text-sm text-gray-700">${ownerCell}</td>
+          <td class="px-5 py-3.5 text-sm text-gray-500">${timeAgo(l.updated_at)}</td>
+          <td class="px-5 py-3.5 text-right">${actionsCell}</td>
+        </tr>
+      `;
+    })
+    .join('');
+
+  refreshIcons();
+}
+
 async function refreshDataAndRender() {
   console.log('refreshDataAndRender started');
 
@@ -3731,6 +3834,7 @@ function renderAll() {
   renderTeamLeaderboard();
   renderMyPerformanceTrend();
   renderMyAchievements();
+  renderCrmLeads();
 
   const savedView = localStorage.getItem('tgora_current_view');
 
@@ -4077,9 +4181,28 @@ function closeModal() {
 
 function openConfirm(type, id, label) {
   state.pendingDelete = { type, id };
-  $('#confirm-msg').textContent = `${label} will be permanently removed.${
-    type === 'project' ? ' Tasks under this project will also be deleted.' : ''
-  }`;
+
+  const isArchive = type === 'lead_archive';
+
+  const titleEl = $('#confirm-modal-title');
+  if (titleEl) titleEl.textContent = isArchive ? 'Archive this lead?' : 'Delete this item?';
+
+  const btn = $('#confirm-delete-btn');
+  if (btn) {
+    if (isArchive) {
+      btn.className = 'h-9 px-4 inline-flex items-center gap-2 bg-amber-500 hover:bg-amber-600 text-white text-sm font-medium rounded-lg shadow-sm';
+      btn.innerHTML = '<i data-lucide="archive" class="w-4 h-4"></i> Archive';
+    } else {
+      btn.className = 'h-9 px-4 inline-flex items-center gap-2 bg-rose-600 hover:bg-rose-700 text-white text-sm font-medium rounded-lg shadow-sm';
+      btn.innerHTML = '<i data-lucide="trash-2" class="w-4 h-4"></i> Delete';
+    }
+  }
+
+  $('#confirm-msg').textContent = isArchive
+    ? `${label} will be moved to the archived list.`
+    : `${label} will be permanently removed.${type === 'project' ? ' Tasks under this project will also be deleted.' : ''}`;
+
+  refreshIcons();
   openModal('confirm-modal');
 }
 function closeConfirm() {
@@ -4190,6 +4313,89 @@ function openEditProjectModal(id) {
   }
 
   openModal('project-modal');
+}
+
+// ---------- Lead Modal Helpers ----------
+function openNewLeadModal() {
+  if (!isAdmin()) return;
+  state.editingLeadId = null;
+  const form = $('#lead-form');
+  form.reset();
+  populateLeadOwnerSelect();
+  $('#lead-modal-title').textContent = 'New Lead';
+  const submitBtn = form.querySelector('button[type=submit]');
+  if (submitBtn) submitBtn.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i> Create Lead';
+  refreshIcons();
+  openModal('lead-modal');
+}
+
+function openEditLeadModal(id) {
+  if (!isAdmin()) return;
+  const lead = state.crmLeads.find((l) => Number(l.id) === id);
+  if (!lead) { toast('Lead not found', 'error'); return; }
+  state.editingLeadId = id;
+  const form = $('#lead-form');
+  form.reset();
+  populateLeadOwnerSelect();
+  form.lead_name.value         = lead.lead_name || '';
+  form.company_name.value      = lead.company_name || '';
+  form.contact_person.value    = lead.contact_person || '';
+  form.phone.value             = lead.phone || '';
+  form.whatsapp.value          = lead.whatsapp || '';
+  form.email.value             = lead.email || '';
+  form.source.value            = lead.source || 'unknown';
+  form.service_interest.value  = lead.service_interest || '';
+  form.expected_budget.value   = lead.expected_budget || '';
+  form.priority.value          = lead.priority || 'medium';
+  form.status.value            = lead.status || 'new';
+  form.owner_id.value          = lead.owner_id != null ? String(lead.owner_id) : '';
+  form.next_follow_up.value    = lead.next_follow_up || '';
+  form.notes.value             = lead.notes || '';
+  $('#lead-modal-title').textContent = 'Edit Lead';
+  const submitBtn = form.querySelector('button[type=submit]');
+  if (submitBtn) submitBtn.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i> Update Lead';
+  refreshIcons();
+  openModal('lead-modal');
+}
+
+async function handleLeadSubmit(e) {
+  e.preventDefault();
+  if (!isAdmin()) return;
+
+  const form = e.target;
+  const submitBtn = form.querySelector('button[type=submit]');
+  const isEditing = state.editingLeadId !== null;
+
+  submitBtn.disabled = true;
+  submitBtn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> ${isEditing ? 'Updating…' : 'Saving…'}`;
+  refreshIcons();
+
+  const payload = normalizePayload(new FormData(form));
+
+  if (payload.owner_id) payload.owner_id = Number(payload.owner_id);
+
+  let result = null;
+  if (isEditing) {
+    payload.updated_at = new Date().toISOString();
+    result = await updateCrmLead(state.editingLeadId, payload);
+  } else {
+    result = await createCrmLead(payload);
+  }
+
+  submitBtn.disabled = false;
+  submitBtn.innerHTML = isEditing
+    ? '<i data-lucide="check" class="w-4 h-4"></i> Update Lead'
+    : '<i data-lucide="check" class="w-4 h-4"></i> Create Lead';
+  refreshIcons();
+
+  if (!result) return;
+
+  toast(isEditing ? 'Lead updated' : 'Lead created', 'success');
+  state.editingLeadId = null;
+  form.reset();
+  closeModal();
+  await refreshDataAndRender();
+  setView('crm');
 }
 
 async function handleMemberSubmit(e) {
@@ -4646,14 +4852,23 @@ async function confirmDelete() {
     ok = await deleteTeamMember(id);
   }
 
+  if (type === 'lead_archive') {
+    ok = !!(await archiveCrmLead(id));
+  }
+
   btn.disabled = false;
-  btn.innerHTML = `<i data-lucide="trash-2" class="w-4 h-4"></i> Delete`;
+  btn.innerHTML = type === 'lead_archive'
+    ? '<i data-lucide="archive" class="w-4 h-4"></i> Archive'
+    : '<i data-lucide="trash-2" class="w-4 h-4"></i> Delete';
   refreshIcons();
 
   closeConfirm();
 
   if (ok) {
-    toast(`${labelize(type)} deleted`, 'success');
+    toast(
+      type === 'lead_archive' ? 'Lead archived' : `${labelize(type)} deleted`,
+      'success'
+    );
 
     await refreshDataAndRender();
 
@@ -4663,6 +4878,8 @@ async function confirmDelete() {
       setView('tasks');
     } else if (currentView === 'team') {
       setView('team');
+    } else if (currentView === 'crm') {
+      setView('crm');
     } else {
       setView(currentView || 'dashboard');
     }
@@ -6785,6 +7002,24 @@ if (action === 'delete-member') {
   openConfirm('member', id, member ? `Member “${member.name}”` : 'This member');
   return;
 }
+
+if (action === 'open-lead-modal') {
+  openNewLeadModal();
+  return;
+}
+
+if (action === 'edit-lead') {
+  const id = Number(trigger.dataset.id);
+  openEditLeadModal(id);
+  return;
+}
+
+if (action === 'archive-lead') {
+  const id = Number(trigger.dataset.id);
+  const lead = state.crmLeads.find((l) => Number(l.id) === id);
+  openConfirm('lead_archive', id, lead ? `”${lead.lead_name}”` : 'This lead');
+  return;
+}
 });
 
   // Forms
@@ -6792,7 +7027,18 @@ if (action === 'delete-member') {
   $('#project-form').addEventListener('submit', handleProjectSubmit);
   $('#member-form').addEventListener('submit', handleMemberSubmit);
   $('#task-form').addEventListener('submit', handleTaskSubmit);
+  $('#lead-form')?.addEventListener('submit', handleLeadSubmit);
   $('#confirm-delete-btn').addEventListener('click', confirmDelete);
+
+  // CRM Leads filters
+  $('#crm-leads-search')?.addEventListener('input', (e) => {
+    state.filters.crmLeads.search = e.target.value;
+    renderCrmLeads();
+  });
+  $('#crm-leads-status-filter')?.addEventListener('change', (e) => {
+    state.filters.crmLeads.status = e.target.value;
+    renderCrmLeads();
+  });
 
 document.addEventListener('click', async (e) => {
   const notificationsBtn = e.target.closest('#notifications-btn');

@@ -1267,7 +1267,24 @@
         <p class="text-sm text-gray-500 mt-1">Track and qualify incoming leads.</p>
       </div>
 
-      <div data-button-mount="crm-new-lead"></div>
+      <div class="flex items-center gap-2">
+        <input
+          id="crm-leads-search"
+          type="search"
+          placeholder="Search leads…"
+          class="h-9 px-3 text-sm bg-white border border-gray-200 rounded-lg focus:border-brand-500 focus:ring-2 focus:ring-brand-100 outline-none transition w-44 sm:w-56"
+        />
+
+        <select
+          id="crm-leads-status-filter"
+          class="h-9 px-3 text-sm bg-white border border-gray-200 rounded-lg outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100 transition"
+        >
+          <option value="active" selected>Active</option>
+          <option value="archived">Archived</option>
+        </select>
+
+        <div data-button-mount="crm-new-lead"></div>
+      </div>
     </div>
 
     <div id="crm-leads-empty" class="stat-card flex flex-col items-center justify-center text-center py-16">
@@ -1878,6 +1895,132 @@
   </div>
 </div>
 
+  <!-- ============ LEAD MODAL ============ -->
+  <div id="lead-modal" class="modal hidden">
+    <div class="modal-overlay" data-action="close-modal"></div>
+    <div class="modal-panel max-w-2xl">
+      <div class="px-6 py-5 border-b border-gray-100 flex items-center justify-between">
+        <div>
+          <h3 id="lead-modal-title" class="text-lg font-semibold text-gray-900">New Lead</h3>
+          <p class="text-xs text-gray-500 mt-0.5">Add or update a CRM lead.</p>
+        </div>
+        <button data-action="close-modal" class="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center">
+          <i data-lucide="x" class="w-4 h-4 text-gray-500"></i>
+        </button>
+      </div>
+
+      <form id="lead-form" class="px-6 py-5 space-y-4">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+
+          <div class="sm:col-span-2">
+            <label class="form-label">Lead Name <span class="text-rose-500">*</span></label>
+            <input name="lead_name" type="text" class="form-input" placeholder="e.g. Ahmed Hassan" required />
+          </div>
+
+          <div>
+            <label class="form-label">Company Name</label>
+            <input name="company_name" type="text" class="form-input" placeholder="e.g. Acme Corp" />
+          </div>
+
+          <div>
+            <label class="form-label">Contact Person</label>
+            <input name="contact_person" type="text" class="form-input" placeholder="Primary contact name" />
+          </div>
+
+          <div>
+            <label class="form-label">Phone</label>
+            <input name="phone" type="tel" class="form-input" placeholder="+20 1xx xxx xxxx" />
+          </div>
+
+          <div>
+            <label class="form-label">WhatsApp</label>
+            <input name="whatsapp" type="tel" class="form-input" placeholder="+20 1xx xxx xxxx" />
+          </div>
+
+          <div class="sm:col-span-2">
+            <label class="form-label">Email</label>
+            <input name="email" type="email" class="form-input" placeholder="lead@example.com" />
+          </div>
+
+          <div>
+            <label class="form-label">Source</label>
+            <select name="source" class="form-input">
+              <option value="unknown">Unknown</option>
+              <option value="referral">Referral</option>
+              <option value="social_media">Social Media</option>
+              <option value="website">Website</option>
+              <option value="phone">Phone</option>
+              <option value="email">Email</option>
+              <option value="walk_in">Walk In</option>
+              <option value="existing_client">Existing Client</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="form-label">Service Interest</label>
+            <input name="service_interest" type="text" class="form-input" placeholder="e.g. Social Media Management" />
+          </div>
+
+          <div>
+            <label class="form-label">Expected Budget</label>
+            <input name="expected_budget" type="text" class="form-input" placeholder="e.g. 5,000 EGP/mo" />
+          </div>
+
+          <div>
+            <label class="form-label">Priority</label>
+            <select name="priority" class="form-input">
+              <option value="low">Low</option>
+              <option value="medium" selected>Medium</option>
+              <option value="high">High</option>
+              <option value="urgent">Urgent</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="form-label">Status</label>
+            <select name="status" class="form-input">
+              <option value="new" selected>New</option>
+              <option value="contacted">Contacted</option>
+              <option value="qualified">Qualified</option>
+              <option value="proposal_sent">Proposal Sent</option>
+              <option value="won">Won</option>
+              <option value="lost">Lost</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="form-label">Owner</label>
+            <select name="owner_id" id="lead-owner-id" class="form-input">
+              <option value="">No owner</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="form-label">Next Follow-up</label>
+            <input name="next_follow_up" type="date" class="form-input" />
+          </div>
+
+          <div class="sm:col-span-2">
+            <label class="form-label">Notes</label>
+            <textarea name="notes" rows="3" class="form-input" placeholder="Additional context or notes…"></textarea>
+          </div>
+
+        </div>
+
+        <div class="flex items-center justify-end gap-2 pt-4 border-t border-gray-100">
+          <button type="button" data-action="close-modal" class="h-9 px-4 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50">
+            Cancel
+          </button>
+          <button type="submit" class="h-9 px-4 inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg shadow-sm">
+            <i data-lucide="check" class="w-4 h-4"></i>
+            Create Lead
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- ============ CONFIRM DELETE MODAL ============ -->
   <div id="confirm-modal" class="modal hidden">
     <div class="modal-overlay" data-action="close-confirm"></div>
@@ -1886,7 +2029,7 @@
         <div class="w-12 h-12 mx-auto rounded-full bg-rose-50 text-rose-600 flex items-center justify-center mb-4">
           <i data-lucide="trash-2" class="w-5 h-5"></i>
         </div>
-        <h3 class="text-base font-semibold text-gray-900">Delete this item?</h3>
+        <h3 id="confirm-modal-title" class="text-base font-semibold text-gray-900">Delete this item?</h3>
         <p id="confirm-msg" class="text-xs text-gray-500 mt-1">This action cannot be undone.</p>
 
         <div class="flex items-center justify-center gap-2 mt-6">
