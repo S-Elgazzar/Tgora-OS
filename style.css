@@ -393,6 +393,36 @@ aside::-webkit-scrollbar-thumb:hover {
 }
 
 /* ============================================
+   Table scroll container — Sprint 3.0G
+   Bounds both axes so the horizontal scrollbar
+   is always reachable without scrolling to the
+   page bottom; vertical overflow stays inside
+   the container when the table is tall.
+   Apply to the immediate wrapper div around
+   each <table>, inside the card's overflow-hidden
+   border-radius shell.
+   ============================================ */
+.table-scroll-container {
+  overflow-x: auto;
+  overflow-y: auto;
+  max-height: calc(100vh - 220px);
+}
+/* Sticky header: sticks at the top of the scroll container
+   so column labels remain visible while scrolling vertically.
+   background-color matches the thead's bg-gray-50 class so
+   body rows don't bleed through as they scroll under it.
+   box-shadow replaces the thead border-b that would scroll away. */
+.table-scroll-container thead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+.table-scroll-container thead th {
+  background-color: #f9fafb;
+  box-shadow: 0 1px 0 #f3f4f6;
+}
+
+/* ============================================
    Active filter chips (Tasks + Projects + Project Details)
    ============================================ */
 #tasks-active-filters,
