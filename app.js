@@ -53,15 +53,19 @@ const state = {
     },
     selectedProjectId: null,
     crmLeads: {
-      status: 'active',
+      archived: 'active',
       search: '',
       source: 'all',
       priority: 'all',
+      status: 'all',
+      owner: null,
     },
     crmClients: {
-      status: 'active',
+      archived: 'active',
       search: '',
       type: 'all',
+      status: 'all',
+      owner: null,
     },
   },
   pendingDelete: null, // { type: 'project' | 'task', id }
@@ -1129,6 +1133,29 @@ async function archiveCrmClient(id) {
 }
 
 async function insertNotification(payload) {
+  // Dedup guard: do not insert if an identical notification already exists
+  // (same user_id + type + entity_type + entity_id).
+  const entityType = payload.entity_type ?? null;
+  const entityId   = payload.entity_id   ?? null;
+
+  let dedupQuery = supabaseClient
+    .from('notifications')
+    .select('id')
+    .eq('user_id', payload.user_id)
+    .eq('type', payload.type)
+    .limit(1);
+
+  dedupQuery = entityType != null
+    ? dedupQuery.eq('entity_type', entityType)
+    : dedupQuery.is('entity_type', null);
+
+  dedupQuery = entityId != null
+    ? dedupQuery.eq('entity_id', entityId)
+    : dedupQuery.is('entity_id', null);
+
+  const { data: existing } = await dedupQuery;
+  if (existing?.length > 0) return null;
+
   const { data, error } = await supabaseClient
     .from('notifications')
     .insert([payload])
@@ -1208,15 +1235,42 @@ async function notifyAdmins({
 
   if (admins.length === 0) return;
 
-  const notifications = admins.map((admin) => ({
-    user_id: admin.auth_user_id,
-    title,
-    message,
-    type,
-    entity_type: entityType,
-    entity_id: entityId || null,
-    is_read: false,
-  }));
+  const adminIds        = admins.map((a) => a.auth_user_id);
+  const resolvedEType   = entityType ?? null;
+  const resolvedEId     = entityId   ?? null;
+
+  // Dedup: find which admin user_ids already have this notification so we
+  // can exclude them from the bulk insert (one round-trip, no per-row query).
+  let dedupQuery = supabaseClient
+    .from('notifications')
+    .select('user_id')
+    .in('user_id', adminIds)
+    .eq('type', type);
+
+  dedupQuery = resolvedEType != null
+    ? dedupQuery.eq('entity_type', resolvedEType)
+    : dedupQuery.is('entity_type', null);
+
+  dedupQuery = resolvedEId != null
+    ? dedupQuery.eq('entity_id', resolvedEId)
+    : dedupQuery.is('entity_id', null);
+
+  const { data: existing } = await dedupQuery;
+  const alreadyNotified = new Set((existing || []).map((n) => n.user_id));
+
+  const notifications = admins
+    .filter((admin) => !alreadyNotified.has(admin.auth_user_id))
+    .map((admin) => ({
+      user_id: admin.auth_user_id,
+      title,
+      message,
+      type,
+      entity_type: resolvedEType,
+      entity_id: resolvedEId,
+      is_read: false,
+    }));
+
+  if (notifications.length === 0) return;
 
   const { error } = await supabaseClient
     .from('notifications')
@@ -1255,8 +1309,10 @@ async function fetchNotifications() {
 
   let query = supabaseClient.from('notifications').select('*');
 
-  // Admin/Manager see all notifications; Members only see their own.
-  if (!(isAdmin() || isManager())) {
+  // Fail closed: only skip the user_id filter for EXPLICITLY elevated roles.
+  // Any null, undefined, 'member', or unexpected value keeps the filter on.
+  const elevated = state.currentRole === 'admin' || state.currentRole === 'manager';
+  if (!elevated) {
     query = query.eq('user_id', state.currentUser.id);
   }
 
@@ -1271,6 +1327,8 @@ async function fetchNotifications() {
 }
 
 async function markNotificationAsRead(id) {
+  if (!getVisibleNotifications().some((n) => Number(n.id) === Number(id))) return;
+
   const { error } = await supabaseClient
     .from('notifications')
     .update({ is_read: true })
@@ -1282,13 +1340,15 @@ async function markNotificationAsRead(id) {
 }
 
 async function markAllNotificationsAsRead() {
-  if (!state.currentUser?.id) return;
+  const ids = getVisibleNotifications()
+    .filter((n) => !n.is_read)
+    .map((n) => n.id);
+  if (ids.length === 0) return;
 
   const { error } = await supabaseClient
     .from('notifications')
     .update({ is_read: true })
-    .eq('user_id', state.currentUser.id)
-    .eq('is_read', false);
+    .in('id', ids);
 
   if (error) {
     console.error('markAllNotificationsAsRead', error);
@@ -1296,13 +1356,12 @@ async function markAllNotificationsAsRead() {
 }
 
 async function deleteNotification(id) {
-  if (!state.currentUser?.id) return;
+  if (!getVisibleNotifications().some((n) => Number(n.id) === Number(id))) return;
 
   const { error } = await supabaseClient
     .from('notifications')
     .delete()
-    .eq('id', id)
-    .eq('user_id', state.currentUser.id);
+    .eq('id', id);
 
   if (error) {
     console.error('deleteNotification', error);
@@ -1310,13 +1369,15 @@ async function deleteNotification(id) {
 }
 
 async function clearReadNotifications() {
-  if (!state.currentUser?.id) return;
+  const ids = getVisibleNotifications()
+    .filter((n) => n.is_read)
+    .map((n) => n.id);
+  if (ids.length === 0) return;
 
   const { error } = await supabaseClient
     .from('notifications')
     .delete()
-    .eq('user_id', state.currentUser.id)
-    .eq('is_read', true);
+    .in('id', ids);
 
   if (error) {
     console.error('clearReadNotifications', error);
@@ -1344,30 +1405,57 @@ async function refreshNotifications() {
   renderNotifications();
 }
 
-// fetchNotifications() already scopes rows server-side by user_id for
-// non-admin/manager, which is the real security boundary (notifications are
-// only ever inserted for the specific recipient — see notifyAdmins()/
-// notifyAssignedMember()). This is an additional, defense-in-depth display
-// filter: for task-related notifications (entity_type === 'task'), also
-// cross-check entity_id against getVisibleTasks() so a stale or incorrect
-// entity_id can never surface a task that isn't visible to this user.
-// Notifications without a reliable entity_id (no schema guarantee one
-// always exists) fall back to the existing user_id-based scope as-is —
-// known limitation, see Sprint 3.0A.3 report.
+// Single source of truth for which notifications are visible to the current user.
+// Admin/Manager: all notifications in state.notifications (server already
+//   returns everything for them via fetchNotifications()).
+// Member: only notifications owned by the current user (user_id === currentUser.id).
+//   This mirrors the server-side filter in fetchNotifications() exactly.
+//   The former task-visibility cross-check (condition b) was removed because it
+//   did not guard user_id ownership, creating a leak path when state.notifications
+//   was ever contaminated with rows belonging to other users.
 function getVisibleNotifications() {
   if (isAdmin() || isManager()) {
     return state.notifications;
   }
 
-  const visibleTaskIds = new Set(getVisibleTasks().map((t) => String(t.id)));
+  return state.notifications.filter(
+    (n) => n.user_id === state.currentUser?.id
+  );
+}
 
-  return state.notifications.filter((notification) => {
-    if (notification.entity_type !== 'task' || notification.entity_id == null) {
-      return true;
-    }
+function getNotificationDisplay(notification) {
+  const isMine = notification.user_id === state.currentUser?.id;
 
-    return visibleTaskIds.has(String(notification.entity_id));
-  });
+  // Own notification: show exactly as stored.
+  if (isMine) {
+    return { title: notification.title || '', message: notification.message || '' };
+  }
+
+  // Admin/Manager viewing another user's task_assigned notification.
+  // Only this type uses second-person wording ("assigned you", "You have a new task.").
+  // All other types (task_created, task_completed, project_*, team_member_*) are
+  // already in third-person and need no rewriting.
+  if (notification.type === 'task_assigned') {
+    const recipient = state.teamMembers.find(
+      (m) => m.auth_user_id === notification.user_id
+    );
+    const recipientName = recipient?.name || 'another team member';
+
+    const title = (notification.title || '').replace(
+      /\bassigned you\b/gi,
+      `assigned ${recipientName}`
+    );
+
+    let message = notification.message || '';
+    message = message
+      .replace(/^you have a new task\.?$/i,        `Task assigned to ${recipientName}.`)
+      .replace(/^a task was assigned to you\.?$/i, `Task assigned to ${recipientName}.`);
+
+    return { title, message };
+  }
+
+  // All other types are third-person already — show as stored.
+  return { title: notification.title || '', message: notification.message || '' };
 }
 
 function renderNotifications() {
@@ -1380,11 +1468,8 @@ function renderNotifications() {
 
   const visibleNotifications = getVisibleNotifications();
 
-  const unreadCount = visibleNotifications.filter(
-    (notification) => !notification.is_read
-  ).length;
-
-  const readCount = visibleNotifications.length - unreadCount;
+  const unreadCount = visibleNotifications.filter((n) => !n.is_read).length;
+  const readCount = visibleNotifications.filter((n) => n.is_read).length;
 
   if (unreadCount > 0) {
     badge.classList.remove('hidden');
@@ -1418,6 +1503,7 @@ function renderNotifications() {
     .slice(0, 20)
     .map((notification) => {
       const { icon, bg, color } = getNotificationIcon(notification.type);
+      const { title: displayTitle, message: displayMessage } = getNotificationDisplay(notification);
 
       return `
       <div
@@ -1436,11 +1522,11 @@ function renderNotifications() {
 
         <div class="flex-1 min-w-0">
           <div class="font-medium text-sm text-gray-900">
-            ${escapeHtml(notification.title)}
+            ${escapeHtml(displayTitle)}
           </div>
 
           <div class="text-xs text-gray-600 mt-0.5">
-            ${escapeHtml(notification.message || '')}
+            ${escapeHtml(displayMessage)}
           </div>
 
           <div class="text-[11px] text-gray-400 mt-1.5">
@@ -1821,17 +1907,10 @@ async function insertTask(payload) {
 
   await notifyAdmins({
     title: `${getActorName()} created a task`,
-    message: `${data.task_info || 'A task'} was created and assigned to ${data.assigned_to || 'someone'}.`,
+    message: data.assigned_to
+      ? `${data.task_info || 'A task'} was created and assigned to ${data.assigned_to}.`
+      : `${data.task_info || 'A task'} was created.`,
     type: 'task_created',
-    entityType: 'task',
-    entityId: data.id,
-  });
-
-  await notifyAssignedMember({
-    assignedTo: data.assigned_to,
-    title: `${getActorName()} assigned you a task`,
-    message: data.task_info || 'You have a new task.',
-    type: 'task_assigned',
     entityType: 'task',
     entityId: data.id,
   });
@@ -1906,14 +1985,19 @@ async function updateTask(id, payload) {
   }
 
   if (assignedToChanged) {
-    await notifyAssignedMember({
-      assignedTo: payload.assigned_to,
-      title: `${actor} assigned you a task`,
-      message: data.task_info || 'A task was assigned to you.',
-      type: 'task_assigned',
-      entityType: 'task',
-      entityId: data.id,
-    });
+    // Same guard as insertTask: skip task_assigned when the new assignee is
+    // the current user — they already received task_assigned via notifyAdmins.
+    const newAssigneeMember = getMemberByName(payload.assigned_to);
+    if (newAssigneeMember?.auth_user_id !== state.currentUser?.id) {
+      await notifyAssignedMember({
+        assignedTo: payload.assigned_to,
+        title: `${actor} assigned you a task`,
+        message: data.task_info || 'A task was assigned to you.',
+        type: 'task_assigned',
+        entityType: 'task',
+        entityId: data.id,
+      });
+    }
   }
 
   if (statusChanged) {
@@ -3040,6 +3124,49 @@ const HEADER_FILTER_MODULES = {
     renderHeaderFilters: () => renderProjectDetailsHeaderFilters(),
     render: () => renderProjectDetails(),
   },
+  crmLeads: {
+    stateKey: 'crmLeads',
+    viewName: 'crm',
+    popoverIds: [
+      'crm-leads-source-popover',
+      'crm-leads-status-popover',
+      'crm-leads-owner-popover',
+    ],
+    chipsContainerId: null,
+    allDefaultFilters: ['source', 'status', 'priority'],
+    defaults: {
+      archived: 'active',
+      search: '',
+      source: 'all',
+      priority: 'all',
+      status: 'all',
+      owner: null,
+    },
+    getChips: () => [],
+    renderHeaderFilters: () => renderCrmLeadsHeaderFilters(),
+    render: () => renderCrmLeads(),
+  },
+  crmClients: {
+    stateKey: 'crmClients',
+    viewName: 'crm',
+    popoverIds: [
+      'crm-clients-type-popover',
+      'crm-clients-status-popover',
+      'crm-clients-owner-popover',
+    ],
+    chipsContainerId: null,
+    allDefaultFilters: ['type', 'status'],
+    defaults: {
+      archived: 'active',
+      search: '',
+      type: 'all',
+      status: 'all',
+      owner: null,
+    },
+    getChips: () => [],
+    renderHeaderFilters: () => renderCrmClientsHeaderFilters(),
+    render: () => renderCrmClients(),
+  },
 };
 
 function closeHeaderFilterPopovers(module) {
@@ -3396,6 +3523,42 @@ function getProjectDetailsActiveFilterChips() {
   return chips;
 }
 
+function renderCrmLeadsHeaderFilters() {
+  const f = state.filters.crmLeads;
+
+  $('#crm-leads-source-th-filter')?.classList.toggle('active', f.source !== 'all');
+  $('#crm-leads-status-th-filter')?.classList.toggle('active', f.status !== 'all');
+  $('#crm-leads-owner-th-filter')?.classList.toggle('active', f.owner !== null);
+
+  syncHeaderFilterPopoverActive('crm-leads-source-popover', f.source);
+  syncHeaderFilterPopoverActive('crm-leads-status-popover', f.status);
+
+  buildHeaderFilterOptions(
+    'crm-leads-owner-popover',
+    'All Owners',
+    state.teamMembers.map((m) => ({ value: m.id, label: m.name })),
+    f.owner
+  );
+}
+
+function renderCrmClientsHeaderFilters() {
+  const f = state.filters.crmClients;
+
+  $('#crm-clients-type-th-filter')?.classList.toggle('active', f.type !== 'all');
+  $('#crm-clients-status-th-filter')?.classList.toggle('active', f.status !== 'all');
+  $('#crm-clients-owner-th-filter')?.classList.toggle('active', f.owner !== null);
+
+  syncHeaderFilterPopoverActive('crm-clients-type-popover', f.type);
+  syncHeaderFilterPopoverActive('crm-clients-status-popover', f.status);
+
+  buildHeaderFilterOptions(
+    'crm-clients-owner-popover',
+    'All Owners',
+    state.teamMembers.map((m) => ({ value: m.id, label: m.name })),
+    f.owner
+  );
+}
+
 function renderTasks() {
   const tbody = $('#tasks-table-body');
   const empty = $('#tasks-empty');
@@ -3702,13 +3865,21 @@ function renderTeam() {
 
   if (!tbody) return;
 
-  const data = [...state.teamMembers];
+  const search = (state.filters.team.search || '').toLowerCase();
+  let data = [...state.teamMembers];
+
+  if (search) {
+    data = data.filter((m) =>
+      [m.name, m.email, m.job_title, m.department]
+        .some((v) => v && String(v).toLowerCase().includes(search))
+    );
+  }
 
   if (data.length === 0) {
     tbody.innerHTML = `
       <tr>
         <td colspan="6" class="px-5 py-10 text-center text-sm text-gray-500">
-          No team members yet.
+          ${search ? 'No team members match your search.' : 'No team members yet.'}
         </td>
       </tr>
     `;
@@ -3785,8 +3956,11 @@ function renderCrmLeads() {
   const f = state.filters.crmLeads;
   const search = (f.search || '').toLowerCase();
 
+  renderActiveFilterChips('crmLeads');
+  renderHeaderFilters('crmLeads');
+
   let leads = state.crmLeads.filter((l) =>
-    f.status === 'archived' ? l.is_archived : !l.is_archived
+    f.archived === 'archived' ? l.is_archived : !l.is_archived
   );
 
   if (search) {
@@ -3802,6 +3976,14 @@ function renderCrmLeads() {
 
   if (f.priority && f.priority !== 'all') {
     leads = leads.filter((l) => l.priority === f.priority);
+  }
+
+  if (f.status && f.status !== 'all') {
+    leads = leads.filter((l) => (l.status || '').toLowerCase() === f.status);
+  }
+
+  if (f.owner !== null && f.owner !== undefined) {
+    leads = leads.filter((l) => Number(l.owner_id) === Number(f.owner));
   }
 
   if (leads.length === 0) {
@@ -3880,8 +4062,11 @@ function renderCrmClients() {
   const f = state.filters.crmClients;
   const search = (f.search || '').toLowerCase();
 
+  renderActiveFilterChips('crmClients');
+  renderHeaderFilters('crmClients');
+
   let clients = state.crmClients.filter((c) =>
-    f.status === 'archived' ? c.is_archived : !c.is_archived
+    f.archived === 'archived' ? c.is_archived : !c.is_archived
   );
 
   if (search) {
@@ -3893,6 +4078,14 @@ function renderCrmClients() {
 
   if (f.type && f.type !== 'all') {
     clients = clients.filter((c) => c.client_type === f.type);
+  }
+
+  if (f.status && f.status !== 'all') {
+    clients = clients.filter((c) => (c.status || '').toLowerCase() === f.status);
+  }
+
+  if (f.owner !== null && f.owner !== undefined) {
+    clients = clients.filter((c) => Number(c.owner_id) === Number(f.owner));
   }
 
   if (clients.length === 0) {
@@ -4065,12 +4258,30 @@ async function refreshDataAndRender() {
     fetchCrmClients()
   ]);
 
-  state.projects = projects;
-  state.tasks = tasks;
+  const prevRole = state.currentRole;
+
+  state.projects   = projects;
+  state.tasks      = tasks;
   state.teamMembers = teamMembers;
-  state.notifications = notifications;
-  state.crmLeads = crmLeads;
+  state.crmLeads   = crmLeads;
   state.crmClients = crmClients;
+
+  // Re-derive role from the freshly-fetched team members so that external
+  // role changes are reflected without a full page reload.
+  if (state.currentUser?.id) {
+    const rematched = state.teamMembers.find(
+      (m) => String(m.auth_user_id || '') === String(state.currentUser.id)
+    );
+    state.currentMember = rematched || null;
+    state.currentRole   = (rematched?.role_type || 'member').toLowerCase().trim();
+  }
+
+  // If the role changed, the parallel-fetched notifications used the old
+  // access level; re-fetch with the corrected role so the server-side
+  // user_id filter matches the new permission boundary.
+  state.notifications = (state.currentRole !== prevRole)
+    ? await fetchNotifications()
+    : notifications;
 
   renderAll();
   renderNotifications();
@@ -5264,6 +5475,11 @@ async function confirmDelete() {
       setView('team');
     } else if (currentView === 'crm') {
       setView('crm');
+    } else if (currentView === 'project-details') {
+      setView('project-details');
+      renderProjectDetails();
+    } else if (currentView === 'team-member' && state.selectedMemberId) {
+      openMemberDetails(state.selectedMemberId);
     } else {
       setView(currentView || 'dashboard');
     }
@@ -7452,7 +7668,7 @@ if (action === 'archive-client') {
     renderCrmLeads();
   });
   $('#crm-leads-status-filter')?.addEventListener('change', (e) => {
-    state.filters.crmLeads.status = e.target.value;
+    state.filters.crmLeads.archived = e.target.value;
     renderCrmLeads();
   });
 
@@ -7462,13 +7678,10 @@ if (action === 'archive-client') {
     renderCrmClients();
   });
   $('#crm-clients-status-filter')?.addEventListener('change', (e) => {
-    state.filters.crmClients.status = e.target.value;
+    state.filters.crmClients.archived = e.target.value;
     renderCrmClients();
   });
-  $('#crm-clients-type-filter')?.addEventListener('change', (e) => {
-    state.filters.crmClients.type = e.target.value;
-    renderCrmClients();
-  });
+  // crm-clients-type-filter listener removed — Type is now a table header filter
 
 document.addEventListener('click', async (e) => {
   const notificationsBtn = e.target.closest('#notifications-btn');
@@ -7689,7 +7902,7 @@ $('#project-details-tasks-empty-reset-btn')?.addEventListener('click', () => res
       renderProjectDetails();
     } else if (state.view === 'team') {
       state.filters.team.search = value;
-      // renderTeam() does not consume search yet — reserved for future use.
+      renderTeam();
     }
   });
 
@@ -7876,7 +8089,7 @@ renderStaticButtonMounts();
       );
 
       state.currentMember = matchedMember || null;
-      state.currentRole = matchedMember?.role_type || 'member';
+      state.currentRole = (matchedMember?.role_type || 'member').toLowerCase().trim();
     } else {
       state.currentMember = null;
       state.currentRole = null;
