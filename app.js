@@ -67,12 +67,29 @@ const state = {
       status: 'all',
       owner: null,
     },
+    crmContacts: { archived: 'active', search: '', status: 'all' },
+    crmDeals:    { archived: 'active', search: '', stage: 'all', status: 'all' },
+    crmActivities: { archived: 'active', search: '', type: 'all', status: 'all' },
+    crmProposals:  { archived: 'active', search: '', status: 'all' },
   },
   pendingDelete: null, // { type: 'project' | 'task', id }
   crmLeads: [],
   crmClients: [],
+  crmContacts: [],
+  crmDeals: [],
+  crmActivities: [],
+  crmNotes: [],
+  crmProposals: [],
+  crmTab: 'dashboard',
+  selectedClientId: Number(localStorage.getItem('tgora_selected_client_id')) || null,
+  selectedDealId: Number(localStorage.getItem('tgora_selected_deal_id')) || null,
   editingLeadId: null,
   editingClientId: null,
+  editingContactId: null,
+  editingDealId: null,
+  editingActivityId: null,
+  editingNoteId: null,
+  editingProposalId: null,
   leadEditReturnView: null,
   alertsFilter: 'all', // 'all' | 'overdue' | 'due_today'
   teamPerformanceRanking: [],
@@ -997,6 +1014,38 @@ function renderStaticButtonMounts() {
       dataset: { action: 'open-client-modal' },
     }));
   }
+
+  const crmNewContactMount = document.querySelector('[data-button-mount="crm-new-contact"]');
+  if (crmNewContactMount) {
+    crmNewContactMount.innerHTML = renderButton(createCreateButtonDescriptor({
+      text: 'New Contact',
+      dataset: { action: 'open-contact-modal' },
+    }));
+  }
+
+  const crmNewDealMount = document.querySelector('[data-button-mount="crm-new-deal"]');
+  if (crmNewDealMount) {
+    crmNewDealMount.innerHTML = renderButton(createCreateButtonDescriptor({
+      text: 'New Deal',
+      dataset: { action: 'open-deal-modal' },
+    }));
+  }
+
+  const crmNewActivityMount = document.querySelector('[data-button-mount="crm-new-activity"]');
+  if (crmNewActivityMount) {
+    crmNewActivityMount.innerHTML = renderButton(createCreateButtonDescriptor({
+      text: 'New Activity',
+      dataset: { action: 'open-activity-modal' },
+    }));
+  }
+
+  const crmNewProposalMount = document.querySelector('[data-button-mount="crm-new-proposal"]');
+  if (crmNewProposalMount) {
+    crmNewProposalMount.innerHTML = renderButton(createCreateButtonDescriptor({
+      text: 'New Proposal',
+      dataset: { action: 'open-proposal-modal' },
+    }));
+  }
 }
 
 // ---------- Supabase Data Layer ----------
@@ -1130,6 +1179,113 @@ async function archiveCrmClient(id) {
     status: 'archived',
     updated_at: new Date().toISOString(),
   });
+}
+
+// ---------- CRM Contacts Data Layer ----------
+async function fetchCrmContacts() {
+  const { data, error } = await supabaseClient.from('crm_contacts').select('*').order('created_at', { ascending: false });
+  if (error) { console.error('fetchCrmContacts', error); return []; }
+  return data || [];
+}
+async function createCrmContact(payload) {
+  if (!isAdmin()) return null;
+  const { data, error } = await supabaseClient.from('crm_contacts').insert([payload]).select().single();
+  if (error) { console.error('createCrmContact', error); toast(error.message || 'Failed to create contact', 'error'); return null; }
+  return data;
+}
+async function updateCrmContact(id, payload) {
+  if (!isAdmin()) return null;
+  const { data, error } = await supabaseClient.from('crm_contacts').update(payload).eq('id', id).select().single();
+  if (error) { console.error('updateCrmContact', error); toast(error.message || 'Failed to update contact', 'error'); return null; }
+  return data;
+}
+async function archiveCrmContact(id) {
+  return updateCrmContact(id, { is_archived: true, status: 'archived', updated_at: new Date().toISOString() });
+}
+
+// ---------- CRM Deals Data Layer ----------
+async function fetchCrmDeals() {
+  const { data, error } = await supabaseClient.from('crm_deals').select('*').order('created_at', { ascending: false });
+  if (error) { console.error('fetchCrmDeals', error); return []; }
+  return data || [];
+}
+async function createCrmDeal(payload) {
+  if (!isAdmin()) return null;
+  const { data, error } = await supabaseClient.from('crm_deals').insert([payload]).select().single();
+  if (error) { console.error('createCrmDeal', error); toast(error.message || 'Failed to create deal', 'error'); return null; }
+  return data;
+}
+async function updateCrmDeal(id, payload) {
+  if (!isAdmin()) return null;
+  const { data, error } = await supabaseClient.from('crm_deals').update(payload).eq('id', id).select().single();
+  if (error) { console.error('updateCrmDeal', error); toast(error.message || 'Failed to update deal', 'error'); return null; }
+  return data;
+}
+async function archiveCrmDeal(id) {
+  return updateCrmDeal(id, { is_archived: true, updated_at: new Date().toISOString() });
+}
+
+// ---------- CRM Activities Data Layer ----------
+async function fetchCrmActivities() {
+  const { data, error } = await supabaseClient.from('crm_activities').select('*').order('created_at', { ascending: false });
+  if (error) { console.error('fetchCrmActivities', error); return []; }
+  return data || [];
+}
+async function createCrmActivity(payload) {
+  if (!isAdmin()) return null;
+  const { data, error } = await supabaseClient.from('crm_activities').insert([payload]).select().single();
+  if (error) { console.error('createCrmActivity', error); toast(error.message || 'Failed to create activity', 'error'); return null; }
+  return data;
+}
+async function updateCrmActivity(id, payload) {
+  if (!isAdmin()) return null;
+  const { data, error } = await supabaseClient.from('crm_activities').update(payload).eq('id', id).select().single();
+  if (error) { console.error('updateCrmActivity', error); toast(error.message || 'Failed to update activity', 'error'); return null; }
+  return data;
+}
+async function archiveCrmActivity(id) {
+  return updateCrmActivity(id, { is_archived: true, updated_at: new Date().toISOString() });
+}
+
+// ---------- CRM Notes Data Layer ----------
+async function fetchCrmNotes() {
+  const { data, error } = await supabaseClient.from('crm_notes').select('*').order('created_at', { ascending: false });
+  if (error) { console.error('fetchCrmNotes', error); return []; }
+  return data || [];
+}
+async function createCrmNote(payload) {
+  if (!isAdmin()) return null;
+  const { data, error } = await supabaseClient.from('crm_notes').insert([payload]).select().single();
+  if (error) { console.error('createCrmNote', error); toast(error.message || 'Failed to create note', 'error'); return null; }
+  return data;
+}
+async function archiveCrmNote(id) {
+  if (!isAdmin()) return false;
+  const { error } = await supabaseClient.from('crm_notes').update({ is_archived: true, updated_at: new Date().toISOString() }).eq('id', id);
+  if (error) { console.error('archiveCrmNote', error); return false; }
+  return true;
+}
+
+// ---------- CRM Proposals Data Layer ----------
+async function fetchCrmProposals() {
+  const { data, error } = await supabaseClient.from('crm_proposals').select('*').order('created_at', { ascending: false });
+  if (error) { console.error('fetchCrmProposals', error); return []; }
+  return data || [];
+}
+async function createCrmProposal(payload) {
+  if (!isAdmin()) return null;
+  const { data, error } = await supabaseClient.from('crm_proposals').insert([payload]).select().single();
+  if (error) { console.error('createCrmProposal', error); toast(error.message || 'Failed to create proposal', 'error'); return null; }
+  return data;
+}
+async function updateCrmProposal(id, payload) {
+  if (!isAdmin()) return null;
+  const { data, error } = await supabaseClient.from('crm_proposals').update(payload).eq('id', id).select().single();
+  if (error) { console.error('updateCrmProposal', error); toast(error.message || 'Failed to update proposal', 'error'); return null; }
+  return data;
+}
+async function archiveCrmProposal(id) {
+  return updateCrmProposal(id, { is_archived: true, status: 'archived', updated_at: new Date().toISOString() });
 }
 
 async function insertNotification(payload) {
@@ -4131,7 +4287,7 @@ function renderCrmClients() {
         <tr>
           <td class="px-5 py-3.5">
             <div class="min-w-0">
-              <p class="text-sm font-medium text-gray-900">${escapeHtml(c.client_name)}</p>
+              <button class="text-sm font-medium text-gray-900 hover:text-indigo-600 text-left" data-action="open-client-details" data-id="${c.id}">${escapeHtml(c.client_name)}</button>
               ${c.email ? `<p class="text-xs text-gray-500 truncate">${escapeHtml(c.email)}</p>` : ''}
             </div>
           </td>
@@ -4145,6 +4301,359 @@ function renderCrmClients() {
     })
     .join('');
 
+  refreshIcons();
+}
+
+// ---------- CRM Tab ----------
+function setCrmTab(tab) {
+  state.crmTab = tab;
+  const tabs = ['dashboard', 'leads', 'clients', 'contacts', 'deals', 'activities', 'proposals', 'services'];
+  tabs.forEach(t => {
+    const section = $(`#crm-section-${t}`);
+    const btn = document.querySelector(`[data-crm-tab="${t}"]`);
+    if (section) section.classList.toggle('hidden', t !== tab);
+    if (btn) {
+      const active = t === tab;
+      btn.classList.toggle('bg-white', active);
+      btn.classList.toggle('text-gray-900', active);
+      btn.classList.toggle('shadow-sm', active);
+      btn.classList.toggle('text-gray-500', !active);
+    }
+  });
+}
+
+// ---------- CRM Timeline Helper ----------
+function buildCrmTimeline(items) {
+  if (!items.length) return '<p class="text-sm text-gray-400 py-3">No activity yet.</p>';
+  return items
+    .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
+    .map(item => {
+      const icons = { activity: 'activity', note: 'sticky-note', proposal: 'file-text' };
+      const icon = icons[item.type] || 'circle';
+      const owner = item.owner_id
+        ? state.teamMembers.find(m => Number(m.id) === Number(item.owner_id))
+        : null;
+      return `
+        <div class="flex gap-3 py-2 border-b border-gray-100 last:border-0">
+          <div class="flex-shrink-0 w-6 h-6 rounded-full bg-gray-100 flex items-center justify-center mt-0.5">
+            <i data-lucide="${icon}" class="w-3 h-3 text-gray-500"></i>
+          </div>
+          <div class="min-w-0 flex-1">
+            <p class="text-sm font-medium text-gray-900">${escapeHtml(item.title)}</p>
+            ${item.subtitle ? `<p class="text-xs text-gray-500">${escapeHtml(item.subtitle)}</p>` : ''}
+            <div class="flex items-center gap-2 mt-0.5">
+              ${item.date ? `<span class="text-xs text-gray-400">${fmtDate(item.date)}</span>` : ''}
+              ${owner ? `<span class="text-xs text-gray-400">· ${escapeHtml(owner.name)}</span>` : ''}
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
+}
+
+// ---------- CRM Dashboard Render ----------
+function renderCrmDashboard() {
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+
+  const activeLeads   = state.crmLeads.filter(l => !l.is_archived);
+  const activeClients = state.crmClients.filter(c => !c.is_archived && (c.status || '').toLowerCase() === 'active');
+  const openDeals     = state.crmDeals.filter(d => !d.is_archived && d.stage !== 'won' && d.stage !== 'lost');
+  const wonDeals      = state.crmDeals.filter(d => !d.is_archived && d.stage === 'won');
+  const lostDeals     = state.crmDeals.filter(d => !d.is_archived && d.stage === 'lost');
+  const pipelineValue = openDeals.reduce((sum, d) => sum + (Number(d.value) || 0), 0);
+  const upcomingAct   = state.crmActivities.filter(a => !a.is_archived && a.status === 'planned' && a.activity_date && new Date(a.activity_date) >= now);
+  const overdueAct    = state.crmActivities.filter(a => !a.is_archived && a.status === 'planned' && a.activity_date && new Date(a.activity_date) < now);
+
+  // Stats grid
+  const statsEl = $('#crm-dashboard-stats');
+  if (statsEl) {
+    const stats = [
+      { label: 'Total Leads',          value: activeLeads.length,   icon: 'target',      color: 'text-indigo-600' },
+      { label: 'Active Clients',        value: activeClients.length, icon: 'building-2',  color: 'text-emerald-600' },
+      { label: 'Open Deals',            value: openDeals.length,     icon: 'handshake',   color: 'text-blue-600' },
+      { label: 'Won Deals',             value: wonDeals.length,      icon: 'trophy',      color: 'text-amber-600' },
+      { label: 'Lost Deals',            value: lostDeals.length,     icon: 'x-circle',    color: 'text-rose-600' },
+      { label: 'Pipeline Value (EGP)',  value: pipelineValue.toLocaleString(), icon: 'trending-up', color: 'text-violet-600' },
+      { label: 'Upcoming Activities',   value: upcomingAct.length,   icon: 'calendar',    color: 'text-sky-600' },
+      { label: 'Overdue Activities',    value: overdueAct.length,    icon: 'clock',       color: overdueAct.length > 0 ? 'text-rose-600' : 'text-gray-400' },
+    ];
+    statsEl.innerHTML = stats.map(s => `
+      <div class="stat-card">
+        <div class="flex items-center gap-2 mb-2">
+          <i data-lucide="${s.icon}" class="w-4 h-4 ${s.color}"></i>
+          <p class="text-xs text-gray-500 font-medium">${s.label}</p>
+        </div>
+        <p class="text-2xl font-bold text-gray-900">${s.value}</p>
+      </div>
+    `).join('');
+  }
+
+  // Pipeline breakdown
+  const pipelineEl = $('#crm-dashboard-pipeline');
+  if (pipelineEl) {
+    const stages = ['discovery', 'proposal', 'negotiation', 'meeting', 'won', 'lost'];
+    const stageData = stages.map(stage => {
+      const items = state.crmDeals.filter(d => !d.is_archived && d.stage === stage);
+      const total = items.reduce((s, d) => s + (Number(d.value) || 0), 0);
+      return { stage, count: items.length, total };
+    }).filter(s => s.count > 0 || ['discovery', 'proposal'].includes(s.stage));
+
+    pipelineEl.innerHTML = `
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-b border-gray-100">
+              <th class="pb-3 pr-4">Stage</th>
+              <th class="pb-3 pr-4">Deals</th>
+              <th class="pb-3">Value (EGP)</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${stageData.map(s => `
+              <tr class="border-b border-gray-50">
+                <td class="py-2 pr-4 font-medium text-gray-800">${labelize(s.stage)}</td>
+                <td class="py-2 pr-4 text-gray-600">${s.count}</td>
+                <td class="py-2 text-gray-600">${s.total > 0 ? s.total.toLocaleString() : '—'}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  refreshIcons();
+}
+
+// ---------- CRM Contacts Render ----------
+function renderCrmContacts() {
+  const tbody = $('#crm-contacts-table-body');
+  const empty = $('#crm-contacts-empty');
+  const wrapper = $('#crm-contacts-table-wrapper');
+  if (!tbody || !empty || !wrapper) return;
+
+  const f = state.filters.crmContacts;
+  const search = (f.search || '').toLowerCase();
+
+  let contacts = state.crmContacts.filter(c =>
+    f.archived === 'archived' ? c.is_archived : !c.is_archived
+  );
+  if (search) {
+    contacts = contacts.filter(c =>
+      [c.contact_name, c.title, c.phone, c.email].some(v => v && String(v).toLowerCase().includes(search))
+    );
+  }
+  if (f.status !== 'all') {
+    contacts = contacts.filter(c => (c.status || '').toLowerCase() === f.status);
+  }
+
+  if (contacts.length === 0) {
+    tbody.innerHTML = '';
+    empty.classList.remove('hidden');
+    wrapper.classList.add('hidden');
+    refreshIcons();
+    return;
+  }
+  empty.classList.add('hidden');
+  wrapper.classList.remove('hidden');
+
+  const admin = isAdmin();
+  tbody.innerHTML = contacts.map(c => {
+    const client = state.crmClients.find(cl => Number(cl.id) === Number(c.client_id));
+    return `
+      <tr>
+        <td class="px-5 py-3.5">
+          <p class="text-sm font-medium text-gray-900">${escapeHtml(c.contact_name)}</p>
+          ${c.title ? `<p class="text-xs text-gray-500">${escapeHtml(c.title)}</p>` : ''}
+        </td>
+        <td class="px-5 py-3.5 text-sm text-gray-700">${client ? escapeHtml(client.client_name) : '—'}</td>
+        <td class="px-5 py-3.5 text-sm text-gray-700">${escapeHtml(c.phone || '—')}</td>
+        <td class="px-5 py-3.5 text-sm text-gray-700">${escapeHtml(c.email || '—')}</td>
+        <td class="px-5 py-3.5">${renderStatusBadge(c.status || 'active')}</td>
+        <td class="px-5 py-3.5 text-right">
+          ${admin ? `<div class="inline-flex items-center gap-1">
+            <button class="icon-btn" data-action="edit-contact" data-id="${c.id}" title="Edit contact"><i data-lucide="pencil" class="w-4 h-4"></i></button>
+            ${!c.is_archived ? `<button class="icon-btn" data-action="archive-contact" data-id="${c.id}" title="Archive contact"><i data-lucide="archive" class="w-4 h-4"></i></button>` : ''}
+          </div>` : '<span class="text-xs text-gray-400">View only</span>'}
+        </td>
+      </tr>
+    `;
+  }).join('');
+  refreshIcons();
+}
+
+// ---------- CRM Deals Render ----------
+function renderCrmDeals() {
+  const tbody = $('#crm-deals-table-body');
+  const empty = $('#crm-deals-empty');
+  const wrapper = $('#crm-deals-table-wrapper');
+  if (!tbody || !empty || !wrapper) return;
+
+  const f = state.filters.crmDeals;
+  const search = (f.search || '').toLowerCase();
+
+  let deals = state.crmDeals.filter(d =>
+    f.archived === 'archived' ? d.is_archived : !d.is_archived
+  );
+  if (search) {
+    deals = deals.filter(d =>
+      [d.deal_name, d.notes].some(v => v && String(v).toLowerCase().includes(search))
+    );
+  }
+  if (f.stage !== 'all') deals = deals.filter(d => d.stage === f.stage);
+  if (f.status !== 'all') deals = deals.filter(d => d.status === f.status);
+
+  if (deals.length === 0) {
+    tbody.innerHTML = '';
+    empty.classList.remove('hidden');
+    wrapper.classList.add('hidden');
+    refreshIcons();
+    return;
+  }
+  empty.classList.add('hidden');
+  wrapper.classList.remove('hidden');
+
+  const admin = isAdmin();
+  tbody.innerHTML = deals.map(d => {
+    const client = state.crmClients.find(c => Number(c.id) === Number(d.client_id));
+    const owner = state.teamMembers.find(m => Number(m.id) === Number(d.owner_id));
+    const value = d.value != null ? `${Number(d.value).toLocaleString()} ${d.currency || 'EGP'}` : '—';
+    return `
+      <tr>
+        <td class="px-5 py-3.5">
+          <button class="text-sm font-medium text-gray-900 hover:text-indigo-600 text-left" data-action="open-deal-details" data-id="${d.id}">
+            ${escapeHtml(d.deal_name)}
+          </button>
+        </td>
+        <td class="px-5 py-3.5 text-sm text-gray-700">${client ? escapeHtml(client.client_name) : '—'}</td>
+        <td class="px-5 py-3.5">${renderStatusBadge(d.stage || 'discovery')}</td>
+        <td class="px-5 py-3.5 text-sm font-medium text-gray-900">${value}</td>
+        <td class="px-5 py-3.5 text-sm text-gray-700">${owner ? escapeHtml(owner.name) : '—'}</td>
+        <td class="px-5 py-3.5 text-sm text-gray-500">${d.expected_close_date ? fmtDate(d.expected_close_date) : '—'}</td>
+        <td class="px-5 py-3.5 text-right">
+          ${admin ? `<div class="inline-flex items-center gap-1">
+            <button class="icon-btn" data-action="edit-deal" data-id="${d.id}" title="Edit deal"><i data-lucide="pencil" class="w-4 h-4"></i></button>
+            ${!d.is_archived ? `<button class="icon-btn" data-action="archive-deal" data-id="${d.id}" title="Archive deal"><i data-lucide="archive" class="w-4 h-4"></i></button>` : ''}
+          </div>` : '<span class="text-xs text-gray-400">View only</span>'}
+        </td>
+      </tr>
+    `;
+  }).join('');
+  refreshIcons();
+}
+
+// ---------- CRM Activities Render ----------
+function renderCrmActivities() {
+  const tbody = $('#crm-activities-table-body');
+  const empty = $('#crm-activities-empty');
+  const wrapper = $('#crm-activities-table-wrapper');
+  if (!tbody || !empty || !wrapper) return;
+
+  const f = state.filters.crmActivities;
+  const search = (f.search || '').toLowerCase();
+
+  let activities = state.crmActivities.filter(a =>
+    f.archived === 'archived' ? a.is_archived : !a.is_archived
+  );
+  if (search) {
+    activities = activities.filter(a =>
+      [a.title, a.description, a.outcome].some(v => v && String(v).toLowerCase().includes(search))
+    );
+  }
+  if (f.type !== 'all') activities = activities.filter(a => a.activity_type === f.type);
+  if (f.status !== 'all') activities = activities.filter(a => a.status === f.status);
+
+  if (activities.length === 0) {
+    tbody.innerHTML = '';
+    empty.classList.remove('hidden');
+    wrapper.classList.add('hidden');
+    refreshIcons();
+    return;
+  }
+  empty.classList.add('hidden');
+  wrapper.classList.remove('hidden');
+
+  const admin = isAdmin();
+  tbody.innerHTML = activities.map(a => {
+    const client = state.crmClients.find(c => Number(c.id) === Number(a.client_id));
+    const owner = state.teamMembers.find(m => Number(m.id) === Number(a.owner_id));
+    return `
+      <tr>
+        <td class="px-5 py-3.5">
+          <p class="text-sm font-medium text-gray-900">${escapeHtml(a.title)}</p>
+          <p class="text-xs text-gray-500">${labelize(a.activity_type)}</p>
+        </td>
+        <td class="px-5 py-3.5 text-sm text-gray-700">${client ? escapeHtml(client.client_name) : '—'}</td>
+        <td class="px-5 py-3.5">${renderStatusBadge(a.status || 'planned')}</td>
+        <td class="px-5 py-3.5 text-sm text-gray-500">${a.activity_date ? fmtDate(a.activity_date) : '—'}</td>
+        <td class="px-5 py-3.5 text-sm text-gray-700">${owner ? escapeHtml(owner.name) : '—'}</td>
+        <td class="px-5 py-3.5 text-right">
+          ${admin ? `<div class="inline-flex items-center gap-1">
+            <button class="icon-btn" data-action="edit-activity" data-id="${a.id}" title="Edit activity"><i data-lucide="pencil" class="w-4 h-4"></i></button>
+            ${!a.is_archived ? `<button class="icon-btn" data-action="archive-activity" data-id="${a.id}" title="Archive activity"><i data-lucide="archive" class="w-4 h-4"></i></button>` : ''}
+          </div>` : '<span class="text-xs text-gray-400">View only</span>'}
+        </td>
+      </tr>
+    `;
+  }).join('');
+  refreshIcons();
+}
+
+// ---------- CRM Proposals Render ----------
+function renderCrmProposals() {
+  const tbody = $('#crm-proposals-table-body');
+  const empty = $('#crm-proposals-empty');
+  const wrapper = $('#crm-proposals-table-wrapper');
+  if (!tbody || !empty || !wrapper) return;
+
+  const f = state.filters.crmProposals;
+  const search = (f.search || '').toLowerCase();
+
+  let proposals = state.crmProposals.filter(p =>
+    f.archived === 'archived' ? p.is_archived : !p.is_archived
+  );
+  if (search) {
+    proposals = proposals.filter(p =>
+      [p.proposal_title, p.notes].some(v => v && String(v).toLowerCase().includes(search))
+    );
+  }
+  if (f.status !== 'all') proposals = proposals.filter(p => p.status === f.status);
+
+  if (proposals.length === 0) {
+    tbody.innerHTML = '';
+    empty.classList.remove('hidden');
+    wrapper.classList.add('hidden');
+    refreshIcons();
+    return;
+  }
+  empty.classList.add('hidden');
+  wrapper.classList.remove('hidden');
+
+  const admin = isAdmin();
+  tbody.innerHTML = proposals.map(p => {
+    const client = state.crmClients.find(c => Number(c.id) === Number(p.client_id));
+    const owner = state.teamMembers.find(m => Number(m.id) === Number(p.owner_id));
+    const amount = p.amount != null ? `${Number(p.amount).toLocaleString()} ${p.currency || 'EGP'}` : '—';
+    return `
+      <tr>
+        <td class="px-5 py-3.5">
+          <p class="text-sm font-medium text-gray-900">${escapeHtml(p.proposal_title)}</p>
+        </td>
+        <td class="px-5 py-3.5 text-sm text-gray-700">${client ? escapeHtml(client.client_name) : '—'}</td>
+        <td class="px-5 py-3.5">${renderStatusBadge(p.status || 'draft')}</td>
+        <td class="px-5 py-3.5 text-sm font-medium text-gray-900">${amount}</td>
+        <td class="px-5 py-3.5 text-sm text-gray-500">${p.sent_date ? fmtDate(p.sent_date) : '—'}</td>
+        <td class="px-5 py-3.5 text-sm text-gray-700">${owner ? escapeHtml(owner.name) : '—'}</td>
+        <td class="px-5 py-3.5 text-right">
+          ${admin ? `<div class="inline-flex items-center gap-1">
+            <button class="icon-btn" data-action="edit-proposal" data-id="${p.id}" title="Edit proposal"><i data-lucide="pencil" class="w-4 h-4"></i></button>
+            ${!p.is_archived ? `<button class="icon-btn" data-action="archive-proposal" data-id="${p.id}" title="Archive proposal"><i data-lucide="archive" class="w-4 h-4"></i></button>` : ''}
+          </div>` : '<span class="text-xs text-gray-400">View only</span>'}
+        </td>
+      </tr>
+    `;
+  }).join('');
   refreshIcons();
 }
 
@@ -4210,6 +4719,47 @@ function renderLeadDetails() {
   const notesEl = $('#lead-details-notes');
   if (notesEl) notesEl.textContent = lead.notes || 'No notes yet.';
 
+  // Related client chip
+  const clientChipEl = $('#lead-details-client-chip');
+  if (clientChipEl) {
+    if (lead.client_id) {
+      const linkedClient = state.crmClients.find(c => Number(c.id) === Number(lead.client_id));
+      clientChipEl.innerHTML = linkedClient
+        ? `<span class="text-xs text-gray-500">Linked Client:</span>
+           <button class="text-xs font-medium text-indigo-600 hover:underline" data-action="open-client-details" data-id="${linkedClient.id}">${escapeHtml(linkedClient.client_name)}</button>`
+        : '<span class="text-xs text-gray-400">Linked client not found</span>';
+    } else {
+      clientChipEl.innerHTML = '<span class="text-xs text-gray-400">No linked client</span>';
+    }
+  }
+
+  // Convert button state
+  const convertBtn = $('#lead-details-convert-btn');
+  if (convertBtn) {
+    if (lead.client_id) {
+      convertBtn.disabled = true;
+      convertBtn.textContent = 'Already Converted';
+      convertBtn.classList.add('opacity-50', 'cursor-not-allowed');
+    } else {
+      convertBtn.disabled = false;
+      convertBtn.textContent = 'Convert to Client';
+      convertBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+      convertBtn.dataset.id = lead.id;
+    }
+  }
+
+  // Timeline
+  const timelineEl = $('#lead-details-timeline');
+  if (timelineEl) {
+    const leadNotes = state.crmNotes.filter(n => Number(n.lead_id) === Number(lead.id));
+    const leadActivities = state.crmActivities.filter(a => Number(a.lead_id) === Number(lead.id));
+    const items = [
+      ...leadNotes.map(n => ({ type: 'note', title: n.body ? n.body.substring(0, 60) + (n.body.length > 60 ? '…' : '') : 'Note', date: n.created_at, owner_id: n.created_by })),
+      ...leadActivities.map(a => ({ type: 'activity', title: a.title || labelize(a.activity_type), subtitle: labelize(a.status), date: a.activity_date || a.created_at, owner_id: a.owner_id })),
+    ];
+    timelineEl.innerHTML = buildCrmTimeline(items);
+  }
+
   const editBtn = $('#lead-details-edit-btn');
   if (editBtn) editBtn.dataset.id = lead.id;
 
@@ -4220,6 +4770,69 @@ function renderLeadDetails() {
   }
 
   refreshIcons();
+}
+
+async function convertLeadToClient(leadId) {
+  if (!isAdmin()) return;
+  const lead = state.crmLeads.find(l => Number(l.id) === leadId);
+  if (!lead) { toast('Lead not found', 'error'); return; }
+  if (lead.client_id) { toast('Lead is already linked to a client', 'info'); return; }
+
+  const convertBtn = $('#lead-details-convert-btn');
+  if (convertBtn) { convertBtn.disabled = true; convertBtn.textContent = 'Converting…'; }
+
+  const now = new Date().toISOString();
+
+  // 1. Create client
+  const clientPayload = {
+    client_name: lead.company_name || lead.lead_name,
+    phone:        lead.phone || null,
+    whatsapp:     lead.whatsapp || null,
+    email:        lead.email || null,
+    source:       lead.source || 'unknown',
+    owner_id:     lead.owner_id || null,
+    status:       'active',
+    type:         'company',
+    is_archived:  false,
+    created_at:   now,
+    updated_at:   now,
+  };
+  const { data: clientData, error: clientError } = await supabaseClient.from('crm_clients').insert([clientPayload]).select().single();
+  if (clientError) {
+    console.error('convertLeadToClient: create client', clientError);
+    toast('Failed to create client', 'error');
+    if (convertBtn) { convertBtn.disabled = false; convertBtn.textContent = 'Convert to Client'; }
+    return;
+  }
+
+  // 2. Create primary contact
+  if (lead.contact_person || lead.email || lead.phone) {
+    const contactPayload = {
+      client_id:    clientData.id,
+      contact_name: lead.contact_person || lead.lead_name,
+      phone:        lead.phone || null,
+      whatsapp:     lead.whatsapp || null,
+      email:        lead.email || null,
+      is_archived:  false,
+      created_at:   now,
+      updated_at:   now,
+    };
+    const { error: contactError } = await supabaseClient.from('crm_contacts').insert([contactPayload]);
+    if (contactError) console.error('convertLeadToClient: create contact', contactError);
+  }
+
+  // 3. Link lead to client
+  const { error: linkError } = await supabaseClient.from('crm_leads').update({ client_id: clientData.id, updated_at: now }).eq('id', leadId);
+  if (linkError) {
+    console.error('convertLeadToClient: link lead', linkError);
+    toast('Client created but lead link failed', 'error');
+  } else {
+    toast('Lead converted to client', 'success');
+  }
+
+  await refreshDataAndRender();
+  setView('lead-details');
+  renderLeadDetails();
 }
 
 function openLeadDetails(id) {
@@ -4239,6 +4852,253 @@ function openLeadDetails(id) {
   renderLeadDetails();
 }
 
+function openClientDetails(id) {
+  const client = state.crmClients.find(c => Number(c.id) === id);
+  if (!client) { toast('Client not found', 'error'); return; }
+  state.selectedClientId = id;
+  localStorage.setItem('tgora_selected_client_id', id);
+  window.history.pushState({ view: 'client-details', clientId: id }, '', `#client-details-${id}`);
+  setView('client-details');
+  renderClientDetails();
+}
+
+function renderClientDetails() {
+  const client = state.crmClients.find(c => Number(c.id) === Number(state.selectedClientId));
+  if (!client) {
+    state.selectedClientId = null;
+    localStorage.removeItem('tgora_selected_client_id');
+    setView('crm');
+    return;
+  }
+
+  const owner = state.teamMembers.find(m => Number(m.id) === Number(client.owner_id));
+  const status = (client.status || 'active').toLowerCase();
+
+  const nameEl = $('#client-details-name');
+  if (nameEl) nameEl.textContent = client.client_name || 'Untitled';
+
+  const typeEl = $('#client-details-type');
+  if (typeEl) typeEl.textContent = `${labelize(client.client_type)} · ${client.industry || 'No industry'}`;
+
+  const statusEl = $('#client-details-status');
+  if (statusEl) {
+    statusEl.className = `badge badge-${status}`;
+    statusEl.innerHTML = `<span class="dot"></span>${labelize(status)}`;
+  }
+
+  const ownerChip = $('#client-details-owner-chip');
+  if (ownerChip) {
+    ownerChip.innerHTML = owner
+      ? `<div class="w-6 h-6 rounded-full ${avatarColor(owner.name)} flex items-center justify-center text-white text-[10px] font-semibold">${initials(owner.name)}</div>
+         <span class="text-sm text-gray-700">${escapeHtml(owner.name)}</span>`
+      : '<span class="text-sm text-gray-400">No owner assigned</span>';
+  }
+
+  const editBtn = $('#client-details-edit-btn');
+  if (editBtn) editBtn.dataset.id = client.id;
+  const archiveBtn = $('#client-details-archive-btn');
+  if (archiveBtn) {
+    archiveBtn.dataset.id = client.id;
+    archiveBtn.classList.toggle('hidden', !!client.is_archived);
+  }
+
+  ['client-details-add-note-btn', 'client-details-note-panel-btn'].forEach(id => {
+    const btn = $(`#${id}`); if (btn) btn.dataset.clientId = client.id;
+  });
+  const addContactBtn = $('#client-details-add-contact-btn');
+  if (addContactBtn) addContactBtn.dataset.clientId = client.id;
+  const addDealBtn = $('#client-details-add-deal-btn');
+  if (addDealBtn) addDealBtn.dataset.clientId = client.id;
+
+  const setText = (id, val) => { const el = $(`#${id}`); if (el) el.textContent = val || '—'; };
+  setText('client-details-phone',    client.phone);
+  setText('client-details-whatsapp', client.whatsapp);
+  setText('client-details-email',    client.email);
+  setText('client-details-website',  client.website);
+  setText('client-details-address',  client.address);
+  setText('client-details-source',   labelize(client.source));
+  setText('client-details-notes',    client.notes || 'No notes yet.');
+
+  // Contacts
+  const contacts = state.crmContacts.filter(c => Number(c.client_id) === Number(client.id) && !c.is_archived);
+  const contactsEl = $('#client-details-contacts-list');
+  if (contactsEl) {
+    contactsEl.innerHTML = contacts.length === 0
+      ? '<p class="text-sm text-gray-400 py-2">No contacts yet.</p>'
+      : contacts.map(c => `
+          <div class="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
+            <div>
+              <p class="text-sm font-medium text-gray-900">${escapeHtml(c.contact_name)}</p>
+              ${c.title ? `<p class="text-xs text-gray-500">${escapeHtml(c.title)}</p>` : ''}
+            </div>
+            <div class="text-right text-xs text-gray-500 space-y-0.5">
+              ${c.phone ? `<p>${escapeHtml(c.phone)}</p>` : ''}
+              ${c.email ? `<p>${escapeHtml(c.email)}</p>` : ''}
+            </div>
+          </div>
+        `).join('');
+  }
+
+  // Deals
+  const deals = state.crmDeals.filter(d => Number(d.client_id) === Number(client.id) && !d.is_archived);
+  const dealsEl = $('#client-details-deals-list');
+  if (dealsEl) {
+    dealsEl.innerHTML = deals.length === 0
+      ? '<p class="text-sm text-gray-400 py-2">No deals yet.</p>'
+      : deals.map(d => `
+          <div class="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
+            <div>
+              <button class="text-sm font-medium text-gray-900 hover:text-indigo-600 text-left" data-action="open-deal-details" data-id="${d.id}">${escapeHtml(d.deal_name)}</button>
+              <p class="text-xs text-gray-500">${labelize(d.stage)}</p>
+            </div>
+            <span class="text-sm font-medium text-gray-700">${d.value != null ? `${Number(d.value).toLocaleString()} ${d.currency || 'EGP'}` : '—'}</span>
+          </div>
+        `).join('');
+  }
+
+  // Notes
+  const notes = state.crmNotes.filter(n => Number(n.client_id) === Number(client.id) && !n.is_archived);
+  const notesListEl = $('#client-details-notes-list');
+  if (notesListEl) {
+    notesListEl.innerHTML = notes.length === 0
+      ? '<p class="text-sm text-gray-400 py-2">No notes yet.</p>'
+      : notes.map(n => `
+          <div class="py-2 border-b border-gray-100 last:border-0">
+            <p class="text-sm text-gray-800 whitespace-pre-wrap">${escapeHtml(n.body)}</p>
+            <p class="text-xs text-gray-400 mt-1">${timeAgo(n.created_at)}</p>
+          </div>
+        `).join('');
+  }
+
+  // Leads panel
+  const leads = state.crmLeads.filter(l => Number(l.client_id) === Number(client.id) && !l.is_archived);
+  const leadsListEl = $('#client-details-leads-list');
+  if (leadsListEl) {
+    leadsListEl.innerHTML = leads.length === 0
+      ? '<p class="text-sm text-gray-400 py-2">No leads linked.</p>'
+      : leads.map(l => `
+          <div class="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
+            <button class="text-sm font-medium text-gray-900 hover:text-indigo-600 text-left" data-action="open-lead-details" data-id="${l.id}">${escapeHtml(l.lead_name)}</button>
+            ${renderStatusBadge(l.status)}
+          </div>
+        `).join('');
+  }
+
+  // Activities panel
+  const activities = state.crmActivities.filter(a => Number(a.client_id) === Number(client.id) && !a.is_archived);
+  const activitiesListEl = $('#client-details-activities-list');
+  if (activitiesListEl) {
+    activitiesListEl.innerHTML = activities.length === 0
+      ? '<p class="text-sm text-gray-400 py-2">No activities yet.</p>'
+      : activities.slice(0, 5).map(a => `
+          <div class="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
+            <div>
+              <p class="text-sm font-medium text-gray-900">${escapeHtml(a.title)}</p>
+              <p class="text-xs text-gray-500">${labelize(a.activity_type)} · ${a.activity_date ? fmtDate(a.activity_date) : '—'}</p>
+            </div>
+            ${renderStatusBadge(a.status)}
+          </div>
+        `).join('');
+  }
+
+  // Proposals panel
+  const proposals = state.crmProposals.filter(p => Number(p.client_id) === Number(client.id) && !p.is_archived);
+  const proposalsListEl = $('#client-details-proposals-list');
+  if (proposalsListEl) {
+    proposalsListEl.innerHTML = proposals.length === 0
+      ? '<p class="text-sm text-gray-400 py-2">No proposals yet.</p>'
+      : proposals.map(p => `
+          <div class="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
+            <p class="text-sm font-medium text-gray-900">${escapeHtml(p.proposal_title)}</p>
+            <span class="text-sm text-gray-600">${p.amount != null ? `${Number(p.amount).toLocaleString()} ${p.currency || 'EGP'}` : '—'}</span>
+          </div>
+        `).join('');
+  }
+
+  // Timeline panel
+  const timelineEl = $('#client-details-timeline');
+  if (timelineEl) {
+    const timelineItems = [
+      ...notes.map(n => ({ type: 'note', title: n.body ? n.body.substring(0, 60) + (n.body.length > 60 ? '…' : '') : 'Note', date: n.created_at, owner_id: n.created_by })),
+      ...activities.map(a => ({ type: 'activity', title: a.title || labelize(a.activity_type), subtitle: labelize(a.status), date: a.activity_date || a.created_at, owner_id: a.owner_id })),
+      ...proposals.map(p => ({ type: 'proposal', title: p.proposal_title, subtitle: labelize(p.status), date: p.sent_date || p.created_at, owner_id: p.owner_id })),
+    ];
+    timelineEl.innerHTML = buildCrmTimeline(timelineItems);
+  }
+
+  // Wire add-activity button for client details
+  const addActivityBtn = $('#client-details-add-activity-btn');
+  if (addActivityBtn) addActivityBtn.dataset.clientId = client.id;
+  const addProposalBtn = $('#client-details-add-proposal-btn');
+  if (addProposalBtn) addProposalBtn.dataset.clientId = client.id;
+
+  refreshIcons();
+}
+
+function openDealDetailsModal(id) {
+  const deal = state.crmDeals.find(d => Number(d.id) === id);
+  if (!deal) { toast('Deal not found', 'error'); return; }
+  state.selectedDealId = id;
+
+  const client = state.crmClients.find(c => Number(c.id) === Number(deal.client_id));
+  const owner = state.teamMembers.find(m => Number(m.id) === Number(deal.owner_id));
+
+  const setTxt = (elId, val) => { const el = $(`#${elId}`); if (el) el.textContent = val || '—'; };
+  setTxt('deal-details-modal-name', deal.deal_name);
+  setTxt('deal-details-modal-client', client ? client.client_name : '—');
+  setTxt('deal-details-modal-stage', labelize(deal.stage));
+  setTxt('deal-details-modal-value', deal.value != null ? `${Number(deal.value).toLocaleString()} ${deal.currency || 'EGP'}` : '—');
+  setTxt('deal-details-modal-owner', owner ? owner.name : '—');
+  setTxt('deal-details-modal-close', deal.expected_close_date ? fmtDate(deal.expected_close_date) : '—');
+  setTxt('deal-details-modal-notes', deal.notes || 'No notes.');
+
+  const editBtn = $('#deal-details-modal-edit-btn');
+  if (editBtn) editBtn.dataset.id = deal.id;
+
+  const activities = state.crmActivities.filter(a => Number(a.deal_id) === id && !a.is_archived);
+  const actEl = $('#deal-details-modal-activities');
+  if (actEl) {
+    actEl.innerHTML = activities.length === 0
+      ? '<p class="text-sm text-gray-400">No activities yet.</p>'
+      : activities.map(a => `
+          <div class="py-2 border-b border-gray-100 last:border-0">
+            <p class="text-sm font-medium text-gray-900">${escapeHtml(a.title)}</p>
+            <p class="text-xs text-gray-500">${labelize(a.activity_type)} · ${a.activity_date ? fmtDate(a.activity_date) : '—'}</p>
+          </div>
+        `).join('');
+  }
+
+  // Notes linked to deal's client
+  const dealNotes = state.crmNotes.filter(n => Number(n.client_id) === Number(deal.client_id) && !n.is_archived);
+  const notesEl = $('#deal-details-modal-notes-list');
+  if (notesEl) {
+    notesEl.innerHTML = dealNotes.length === 0
+      ? '<p class="text-sm text-gray-400">No notes.</p>'
+      : dealNotes.slice(0, 3).map(n => `
+          <div class="py-2 border-b border-gray-100 last:border-0">
+            <p class="text-sm text-gray-800">${escapeHtml(n.body ? n.body.substring(0, 80) + (n.body.length > 80 ? '…' : '') : '')}</p>
+            <p class="text-xs text-gray-400 mt-0.5">${timeAgo(n.created_at)}</p>
+          </div>
+        `).join('');
+  }
+
+  // Proposals linked to deal's client
+  const dealProposals = state.crmProposals.filter(p => Number(p.client_id) === Number(deal.client_id) && !p.is_archived);
+  const propsEl = $('#deal-details-modal-proposals-list');
+  if (propsEl) {
+    propsEl.innerHTML = dealProposals.length === 0
+      ? '<p class="text-sm text-gray-400">No proposals.</p>'
+      : dealProposals.map(p => `
+          <div class="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
+            <p class="text-sm font-medium text-gray-900">${escapeHtml(p.proposal_title)}</p>
+            <span class="text-xs text-gray-500">${p.amount != null ? `${Number(p.amount).toLocaleString()} ${p.currency || 'EGP'}` : '—'}</span>
+          </div>
+        `).join('');
+  }
+
+  openModal('deal-details-modal');
+}
+
 async function refreshDataAndRender() {
   console.log('refreshDataAndRender started');
 
@@ -4248,14 +5108,24 @@ async function refreshDataAndRender() {
     teamMembers,
     notifications,
     crmLeads,
-    crmClients
+    crmClients,
+    crmContacts,
+    crmDeals,
+    crmActivities,
+    crmNotes,
+    crmProposals
   ] = await Promise.all([
     fetchProjects(),
     fetchTasks(),
     fetchTeamMembers(),
     fetchNotifications(),
     fetchCrmLeads(),
-    fetchCrmClients()
+    fetchCrmClients(),
+    fetchCrmContacts(),
+    fetchCrmDeals(),
+    fetchCrmActivities(),
+    fetchCrmNotes(),
+    fetchCrmProposals()
   ]);
 
   const prevRole = state.currentRole;
@@ -4265,6 +5135,11 @@ async function refreshDataAndRender() {
   state.teamMembers = teamMembers;
   state.crmLeads   = crmLeads;
   state.crmClients = crmClients;
+  state.crmContacts = crmContacts;
+  state.crmDeals    = crmDeals;
+  state.crmActivities = crmActivities;
+  state.crmNotes    = crmNotes;
+  state.crmProposals = crmProposals;
 
   // Re-derive role from the freshly-fetched team members so that external
   // role changes are reflected without a full page reload.
@@ -4316,8 +5191,13 @@ function renderAll() {
   renderTeamLeaderboard();
   renderMyPerformanceTrend();
   renderMyAchievements();
+  renderCrmDashboard();
   renderCrmLeads();
   renderCrmClients();
+  renderCrmContacts();
+  renderCrmDeals();
+  renderCrmActivities();
+  renderCrmProposals();
 
   const savedView = localStorage.getItem('tgora_current_view');
 
@@ -4341,6 +5221,13 @@ function renderAll() {
     state.selectedLeadId = Number(state.selectedLeadId);
     setView('lead-details');
     renderLeadDetails();
+  } else if (
+    savedView === 'client-details' &&
+    state.selectedClientId
+  ) {
+    state.selectedClientId = Number(state.selectedClientId);
+    setView('client-details');
+    renderClientDetails();
   } else if (savedView && $(`#view-${savedView}`)) {
     setView(savedView);
   } else {
@@ -4549,7 +5436,7 @@ function syncSearchInputWithView() {
 }
 
 function setView(view) {
-  if ((view === 'crm' || view === 'lead-details') && !isAdmin()) {
+  if ((view === 'crm' || view === 'lead-details' || view === 'client-details') && !isAdmin()) {
     view = 'dashboard';
   }
 
@@ -4677,13 +5564,13 @@ function closeModal() {
 function openConfirm(type, id, label) {
   state.pendingDelete = { type, id };
 
-  const isArchive = type === 'lead_archive' || type === 'client_archive';
+  const isArchive = type.endsWith('_archive');
 
   const titleEl = $('#confirm-modal-title');
   if (titleEl) {
-    if (type === 'lead_archive') titleEl.textContent = 'Archive this lead?';
-    else if (type === 'client_archive') titleEl.textContent = 'Archive this client?';
-    else titleEl.textContent = 'Delete this item?';
+    titleEl.textContent = isArchive
+      ? `Archive this ${labelize(type.replace('_archive', ''))}?`
+      : 'Delete this item?';
   }
 
   const btn = $('#confirm-delete-btn');
@@ -4815,12 +5702,21 @@ function openEditProjectModal(id) {
 }
 
 // ---------- Lead Modal Helpers ----------
+function populateLeadClientSelect() {
+  const sel = $('#lead-client-id');
+  if (!sel) return;
+  const activeClients = state.crmClients.filter(c => !c.is_archived);
+  sel.innerHTML = '<option value="">-- No linked client --</option>' +
+    activeClients.map(c => `<option value="${c.id}">${escapeHtml(c.client_name)}</option>`).join('');
+}
+
 function openNewLeadModal() {
   if (!isAdmin()) return;
   state.editingLeadId = null;
   const form = $('#lead-form');
   form.reset();
   populateLeadOwnerSelect();
+  populateLeadClientSelect();
   $('#lead-modal-title').textContent = 'New Lead';
   const submitBtn = form.querySelector('button[type=submit]');
   if (submitBtn) submitBtn.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i> Create Lead';
@@ -4837,6 +5733,7 @@ function openEditLeadModal(id) {
   const form = $('#lead-form');
   form.reset();
   populateLeadOwnerSelect();
+  populateLeadClientSelect();
   form.lead_name.value         = lead.lead_name || '';
   form.company_name.value      = lead.company_name || '';
   form.contact_person.value    = lead.contact_person || '';
@@ -4852,6 +5749,8 @@ function openEditLeadModal(id) {
   form.owner_id.value          = lead.owner_id != null ? String(lead.owner_id) : '';
   form.next_follow_up.value    = lead.next_follow_up || '';
   form.notes.value             = lead.notes || '';
+  const clientSel = $('#lead-client-id');
+  if (clientSel && lead.client_id != null) clientSel.value = String(lead.client_id);
   $('#lead-modal-title').textContent = 'Edit Lead';
   const submitBtn = form.querySelector('button[type=submit]');
   if (submitBtn) submitBtn.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i> Update Lead';
@@ -4874,6 +5773,8 @@ async function handleLeadSubmit(e) {
   const payload = normalizePayload(new FormData(form));
 
   if (payload.owner_id) payload.owner_id = Number(payload.owner_id);
+  if (payload.client_id) payload.client_id = Number(payload.client_id);
+  else payload.client_id = null;
 
   let result = null;
   if (isEditing) {
@@ -4985,6 +5886,377 @@ async function handleClientSubmit(e) {
   closeModal();
   await refreshDataAndRender();
   setView('crm');
+}
+
+// ---------- Contact Modal Helpers ----------
+function populateContactClientSelect() {
+  const select = $('#contact-client-id');
+  if (!select) return;
+  select.innerHTML = '<option value="">No client</option>' +
+    state.crmClients.filter(c => !c.is_archived)
+      .map(c => `<option value="${c.id}">${escapeHtml(c.client_name)}</option>`).join('');
+}
+
+function openNewContactModal(prefillClientId) {
+  if (!isAdmin()) return;
+  state.editingContactId = null;
+  const form = $('#contact-form');
+  form.reset();
+  populateContactClientSelect();
+  if (prefillClientId) { const sel = $('#contact-client-id'); if (sel) sel.value = prefillClientId; }
+  $('#contact-modal-title').textContent = 'New Contact';
+  const submitBtn = form.querySelector('button[type=submit]');
+  if (submitBtn) submitBtn.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i> Create Contact';
+  refreshIcons();
+  openModal('contact-modal');
+}
+
+function openEditContactModal(id) {
+  if (!isAdmin()) return;
+  const contact = state.crmContacts.find(c => Number(c.id) === id);
+  if (!contact) { toast('Contact not found', 'error'); return; }
+  state.editingContactId = id;
+  const form = $('#contact-form');
+  form.reset();
+  populateContactClientSelect();
+  form.contact_name.value = contact.contact_name || '';
+  form.title.value = contact.title || '';
+  form.phone.value = contact.phone || '';
+  form.whatsapp.value = contact.whatsapp || '';
+  form.email.value = contact.email || '';
+  form.notes.value = contact.notes || '';
+  const sel = $('#contact-client-id');
+  if (sel) sel.value = contact.client_id != null ? String(contact.client_id) : '';
+  $('#contact-modal-title').textContent = 'Edit Contact';
+  const submitBtn = form.querySelector('button[type=submit]');
+  if (submitBtn) submitBtn.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i> Update Contact';
+  refreshIcons();
+  openModal('contact-modal');
+}
+
+async function handleContactSubmit(e) {
+  e.preventDefault();
+  if (!isAdmin()) return;
+  const form = e.target;
+  const submitBtn = form.querySelector('button[type=submit]');
+  const isEditing = state.editingContactId !== null;
+  submitBtn.disabled = true;
+  submitBtn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> ${isEditing ? 'Updating…' : 'Saving…'}`;
+  refreshIcons();
+  const payload = normalizePayload(new FormData(form));
+  if (payload.client_id) payload.client_id = Number(payload.client_id);
+  let result = null;
+  if (isEditing) { payload.updated_at = new Date().toISOString(); result = await updateCrmContact(state.editingContactId, payload); }
+  else { result = await createCrmContact(payload); }
+  submitBtn.disabled = false;
+  submitBtn.innerHTML = isEditing ? '<i data-lucide="check" class="w-4 h-4"></i> Update Contact' : '<i data-lucide="check" class="w-4 h-4"></i> Create Contact';
+  refreshIcons();
+  if (!result) return;
+  toast(isEditing ? 'Contact updated' : 'Contact created', 'success');
+  state.editingContactId = null;
+  form.reset();
+  closeModal();
+  await refreshDataAndRender();
+}
+
+// ---------- Deal Modal Helpers ----------
+function populateDealClientSelect() {
+  const select = $('#deal-client-id');
+  if (!select) return;
+  select.innerHTML = '<option value="">No client</option>' +
+    state.crmClients.filter(c => !c.is_archived)
+      .map(c => `<option value="${c.id}">${escapeHtml(c.client_name)}</option>`).join('');
+}
+
+function populateDealOwnerSelect() {
+  const select = $('#deal-owner-id');
+  if (!select) return;
+  select.innerHTML = '<option value="">No owner</option>' +
+    state.teamMembers.filter(m => (m.status || '').toLowerCase() !== 'inactive')
+      .map(m => `<option value="${m.id}">${escapeHtml(m.name)}</option>`).join('');
+}
+
+function openNewDealModal(prefillClientId) {
+  if (!isAdmin()) return;
+  state.editingDealId = null;
+  const form = $('#deal-form');
+  form.reset();
+  populateDealClientSelect();
+  populateDealOwnerSelect();
+  if (prefillClientId) { const sel = $('#deal-client-id'); if (sel) sel.value = prefillClientId; }
+  $('#deal-modal-title').textContent = 'New Deal';
+  const submitBtn = form.querySelector('button[type=submit]');
+  if (submitBtn) submitBtn.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i> Create Deal';
+  refreshIcons();
+  openModal('deal-modal');
+}
+
+function openEditDealModal(id) {
+  if (!isAdmin()) return;
+  const deal = state.crmDeals.find(d => Number(d.id) === id);
+  if (!deal) { toast('Deal not found', 'error'); return; }
+  state.editingDealId = id;
+  const form = $('#deal-form');
+  form.reset();
+  populateDealClientSelect();
+  populateDealOwnerSelect();
+  form.deal_name.value = deal.deal_name || '';
+  form.stage.value = deal.stage || 'discovery';
+  form.value.value = deal.value != null ? String(deal.value) : '';
+  form.currency.value = deal.currency || 'EGP';
+  form.expected_close_date.value = deal.expected_close_date || '';
+  form.notes.value = deal.notes || '';
+  const cSel = $('#deal-client-id'); if (cSel) cSel.value = deal.client_id != null ? String(deal.client_id) : '';
+  const oSel = $('#deal-owner-id'); if (oSel) oSel.value = deal.owner_id != null ? String(deal.owner_id) : '';
+  $('#deal-modal-title').textContent = 'Edit Deal';
+  const submitBtn = form.querySelector('button[type=submit]');
+  if (submitBtn) submitBtn.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i> Update Deal';
+  refreshIcons();
+  openModal('deal-modal');
+}
+
+async function handleDealSubmit(e) {
+  e.preventDefault();
+  if (!isAdmin()) return;
+  const form = e.target;
+  const submitBtn = form.querySelector('button[type=submit]');
+  const isEditing = state.editingDealId !== null;
+  submitBtn.disabled = true;
+  submitBtn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> ${isEditing ? 'Updating…' : 'Saving…'}`;
+  refreshIcons();
+  const payload = normalizePayload(new FormData(form));
+  if (payload.client_id) payload.client_id = Number(payload.client_id);
+  if (payload.owner_id) payload.owner_id = Number(payload.owner_id);
+  if (payload.value) payload.value = Number(payload.value);
+  let result = null;
+  if (isEditing) { payload.updated_at = new Date().toISOString(); result = await updateCrmDeal(state.editingDealId, payload); }
+  else { result = await createCrmDeal(payload); }
+  submitBtn.disabled = false;
+  submitBtn.innerHTML = isEditing ? '<i data-lucide="check" class="w-4 h-4"></i> Update Deal' : '<i data-lucide="check" class="w-4 h-4"></i> Create Deal';
+  refreshIcons();
+  if (!result) return;
+  toast(isEditing ? 'Deal updated' : 'Deal created', 'success');
+  state.editingDealId = null;
+  form.reset();
+  closeModal();
+  await refreshDataAndRender();
+  setCrmTab('deals');
+}
+
+// ---------- Activity Modal Helpers ----------
+function populateActivityClientSelect() {
+  const select = $('#activity-client-id');
+  if (!select) return;
+  select.innerHTML = '<option value="">No client</option>' +
+    state.crmClients.filter(c => !c.is_archived)
+      .map(c => `<option value="${c.id}">${escapeHtml(c.client_name)}</option>`).join('');
+}
+
+function populateActivityOwnerSelect() {
+  const select = $('#activity-owner-id');
+  if (!select) return;
+  select.innerHTML = '<option value="">No owner</option>' +
+    state.teamMembers.filter(m => (m.status || '').toLowerCase() !== 'inactive')
+      .map(m => `<option value="${m.id}">${escapeHtml(m.name)}</option>`).join('');
+}
+
+function openNewActivityModal(prefillClientId) {
+  if (!isAdmin()) return;
+  state.editingActivityId = null;
+  const form = $('#activity-form');
+  form.reset();
+  populateActivityClientSelect();
+  populateActivityOwnerSelect();
+  if (prefillClientId) { const sel = $('#activity-client-id'); if (sel) sel.value = prefillClientId; }
+  $('#activity-modal-title').textContent = 'New Activity';
+  const submitBtn = form.querySelector('button[type=submit]');
+  if (submitBtn) submitBtn.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i> Create Activity';
+  refreshIcons();
+  openModal('activity-modal');
+}
+
+function openEditActivityModal(id) {
+  if (!isAdmin()) return;
+  const activity = state.crmActivities.find(a => Number(a.id) === id);
+  if (!activity) { toast('Activity not found', 'error'); return; }
+  state.editingActivityId = id;
+  const form = $('#activity-form');
+  form.reset();
+  populateActivityClientSelect();
+  populateActivityOwnerSelect();
+  form.title.value = activity.title || '';
+  form.activity_type.value = activity.activity_type || 'call';
+  form.description.value = activity.description || '';
+  form.activity_date.value = activity.activity_date || '';
+  form.status.value = activity.status || 'planned';
+  form.outcome.value = activity.outcome || '';
+  const cSel = $('#activity-client-id'); if (cSel) cSel.value = activity.client_id != null ? String(activity.client_id) : '';
+  const oSel = $('#activity-owner-id'); if (oSel) oSel.value = activity.owner_id != null ? String(activity.owner_id) : '';
+  $('#activity-modal-title').textContent = 'Edit Activity';
+  const submitBtn = form.querySelector('button[type=submit]');
+  if (submitBtn) submitBtn.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i> Update Activity';
+  refreshIcons();
+  openModal('activity-modal');
+}
+
+async function handleActivitySubmit(e) {
+  e.preventDefault();
+  if (!isAdmin()) return;
+  const form = e.target;
+  const submitBtn = form.querySelector('button[type=submit]');
+  const isEditing = state.editingActivityId !== null;
+  submitBtn.disabled = true;
+  submitBtn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> ${isEditing ? 'Updating…' : 'Saving…'}`;
+  refreshIcons();
+  const payload = normalizePayload(new FormData(form));
+  if (payload.client_id) payload.client_id = Number(payload.client_id);
+  if (payload.owner_id) payload.owner_id = Number(payload.owner_id);
+  let result = null;
+  if (isEditing) { payload.updated_at = new Date().toISOString(); result = await updateCrmActivity(state.editingActivityId, payload); }
+  else { result = await createCrmActivity(payload); }
+  submitBtn.disabled = false;
+  submitBtn.innerHTML = isEditing ? '<i data-lucide="check" class="w-4 h-4"></i> Update Activity' : '<i data-lucide="check" class="w-4 h-4"></i> Create Activity';
+  refreshIcons();
+  if (!result) return;
+  toast(isEditing ? 'Activity updated' : 'Activity created', 'success');
+  state.editingActivityId = null;
+  form.reset();
+  closeModal();
+  await refreshDataAndRender();
+}
+
+// ---------- Note Modal Helpers ----------
+function populateNoteClientSelect() {
+  const select = $('#note-client-id');
+  if (!select) return;
+  select.innerHTML = '<option value="">No client</option>' +
+    state.crmClients.filter(c => !c.is_archived)
+      .map(c => `<option value="${c.id}">${escapeHtml(c.client_name)}</option>`).join('');
+}
+
+function openNewNoteModal(prefillClientId, prefillLeadId) {
+  if (!isAdmin()) return;
+  state.editingNoteId = null;
+  const form = $('#note-form');
+  form.reset();
+  populateNoteClientSelect();
+  if (prefillClientId) { const sel = $('#note-client-id'); if (sel) sel.value = prefillClientId; }
+  const hid = $('#note-lead-id-hidden');
+  if (hid) hid.value = prefillLeadId || '';
+  $('#note-modal-title').textContent = 'New Note';
+  const submitBtn = form.querySelector('button[type=submit]');
+  if (submitBtn) submitBtn.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i> Save Note';
+  refreshIcons();
+  openModal('note-modal');
+}
+
+async function handleNoteSubmit(e) {
+  e.preventDefault();
+  if (!isAdmin()) return;
+  const form = e.target;
+  const submitBtn = form.querySelector('button[type=submit]');
+  submitBtn.disabled = true;
+  submitBtn.innerHTML = '<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Saving…';
+  refreshIcons();
+  const payload = normalizePayload(new FormData(form));
+  if (payload.client_id) payload.client_id = Number(payload.client_id);
+  if (payload.lead_id) payload.lead_id = Number(payload.lead_id);
+  const result = await createCrmNote(payload);
+  submitBtn.disabled = false;
+  submitBtn.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i> Save Note';
+  refreshIcons();
+  if (!result) return;
+  toast('Note saved', 'success');
+  form.reset();
+  closeModal();
+  const prevView = state.view;
+  await refreshDataAndRender();
+  if (prevView === 'client-details' && state.selectedClientId) { setView('client-details'); renderClientDetails(); }
+  else if (prevView === 'lead-details' && state.selectedLeadId) { setView('lead-details'); renderLeadDetails(); }
+}
+
+// ---------- Proposal Modal Helpers ----------
+function populateProposalClientSelect() {
+  const select = $('#proposal-client-id');
+  if (!select) return;
+  select.innerHTML = '<option value="">No client</option>' +
+    state.crmClients.filter(c => !c.is_archived)
+      .map(c => `<option value="${c.id}">${escapeHtml(c.client_name)}</option>`).join('');
+}
+
+function populateProposalOwnerSelect() {
+  const select = $('#proposal-owner-id');
+  if (!select) return;
+  select.innerHTML = '<option value="">No owner</option>' +
+    state.teamMembers.filter(m => (m.status || '').toLowerCase() !== 'inactive')
+      .map(m => `<option value="${m.id}">${escapeHtml(m.name)}</option>`).join('');
+}
+
+function openNewProposalModal(prefillClientId) {
+  if (!isAdmin()) return;
+  state.editingProposalId = null;
+  const form = $('#proposal-form');
+  form.reset();
+  populateProposalClientSelect();
+  populateProposalOwnerSelect();
+  if (prefillClientId) { const sel = $('#proposal-client-id'); if (sel) sel.value = prefillClientId; }
+  $('#proposal-modal-title').textContent = 'New Proposal';
+  const submitBtn = form.querySelector('button[type=submit]');
+  if (submitBtn) submitBtn.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i> Create Proposal';
+  refreshIcons();
+  openModal('proposal-modal');
+}
+
+function openEditProposalModal(id) {
+  if (!isAdmin()) return;
+  const proposal = state.crmProposals.find(p => Number(p.id) === id);
+  if (!proposal) { toast('Proposal not found', 'error'); return; }
+  state.editingProposalId = id;
+  const form = $('#proposal-form');
+  form.reset();
+  populateProposalClientSelect();
+  populateProposalOwnerSelect();
+  form.proposal_title.value = proposal.proposal_title || '';
+  form.amount.value = proposal.amount != null ? String(proposal.amount) : '';
+  form.currency.value = proposal.currency || 'EGP';
+  form.status.value = proposal.status || 'draft';
+  form.sent_date.value = proposal.sent_date || '';
+  form.valid_until.value = proposal.valid_until || '';
+  form.notes.value = proposal.notes || '';
+  const cSel = $('#proposal-client-id'); if (cSel) cSel.value = proposal.client_id != null ? String(proposal.client_id) : '';
+  const oSel = $('#proposal-owner-id'); if (oSel) oSel.value = proposal.owner_id != null ? String(proposal.owner_id) : '';
+  $('#proposal-modal-title').textContent = 'Edit Proposal';
+  const submitBtn = form.querySelector('button[type=submit]');
+  if (submitBtn) submitBtn.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i> Update Proposal';
+  refreshIcons();
+  openModal('proposal-modal');
+}
+
+async function handleProposalSubmit(e) {
+  e.preventDefault();
+  if (!isAdmin()) return;
+  const form = e.target;
+  const submitBtn = form.querySelector('button[type=submit]');
+  const isEditing = state.editingProposalId !== null;
+  submitBtn.disabled = true;
+  submitBtn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> ${isEditing ? 'Updating…' : 'Saving…'}`;
+  refreshIcons();
+  const payload = normalizePayload(new FormData(form));
+  if (payload.client_id) payload.client_id = Number(payload.client_id);
+  if (payload.owner_id) payload.owner_id = Number(payload.owner_id);
+  if (payload.amount) payload.amount = Number(payload.amount);
+  let result = null;
+  if (isEditing) { payload.updated_at = new Date().toISOString(); result = await updateCrmProposal(state.editingProposalId, payload); }
+  else { result = await createCrmProposal(payload); }
+  submitBtn.disabled = false;
+  submitBtn.innerHTML = isEditing ? '<i data-lucide="check" class="w-4 h-4"></i> Update Proposal' : '<i data-lucide="check" class="w-4 h-4"></i> Create Proposal';
+  refreshIcons();
+  if (!result) return;
+  toast(isEditing ? 'Proposal updated' : 'Proposal created', 'success');
+  state.editingProposalId = null;
+  form.reset();
+  closeModal();
+  await refreshDataAndRender();
 }
 
 async function handleMemberSubmit(e) {
@@ -5449,8 +6721,24 @@ async function confirmDelete() {
     ok = !!(await archiveCrmClient(id));
   }
 
+  if (type === 'contact_archive') {
+    ok = !!(await archiveCrmContact(id));
+  }
+
+  if (type === 'deal_archive') {
+    ok = !!(await archiveCrmDeal(id));
+  }
+
+  if (type === 'activity_archive') {
+    ok = !!(await archiveCrmActivity(id));
+  }
+
+  if (type === 'proposal_archive') {
+    ok = !!(await archiveCrmProposal(id));
+  }
+
   btn.disabled = false;
-  btn.innerHTML = (type === 'lead_archive' || type === 'client_archive')
+  btn.innerHTML = type.endsWith('_archive')
     ? '<i data-lucide="archive" class="w-4 h-4"></i> Archive'
     : '<i data-lucide="trash-2" class="w-4 h-4"></i> Delete';
   refreshIcons();
@@ -5459,9 +6747,9 @@ async function confirmDelete() {
 
   if (ok) {
     toast(
-      type === 'lead_archive' ? 'Lead archived'
-      : type === 'client_archive' ? 'Client archived'
-      : `${labelize(type)} deleted`,
+      type.endsWith('_archive')
+        ? `${labelize(type.replace('_archive', ''))} archived`
+        : `${labelize(type)} deleted`,
       'success'
     );
 
@@ -7651,6 +8939,122 @@ if (action === 'archive-client') {
   openConfirm('client_archive', id, client ? `”${client.client_name}”` : 'This client');
   return;
 }
+
+if (action === 'open-client-details') {
+  const id = Number(trigger.dataset.id);
+  openClientDetails(id);
+  return;
+}
+
+if (action === 'open-lead-details') {
+  const id = Number(trigger.dataset.id);
+  openLeadDetails(id);
+  return;
+}
+
+if (action === 'convert-lead-to-client') {
+  const id = Number(trigger.dataset.id);
+  convertLeadToClient(id);
+  return;
+}
+
+if (action === 'back-to-client-list') {
+  state.selectedClientId = null;
+  localStorage.removeItem('tgora_selected_client_id');
+  setView('crm');
+  setCrmTab('clients');
+  return;
+}
+
+if (action === 'open-contact-modal') {
+  const prefillClientId = trigger.dataset.clientId ? Number(trigger.dataset.clientId) : undefined;
+  openNewContactModal(prefillClientId);
+  return;
+}
+
+if (action === 'edit-contact') {
+  openEditContactModal(Number(trigger.dataset.id));
+  return;
+}
+
+if (action === 'archive-contact') {
+  const id = Number(trigger.dataset.id);
+  const contact = state.crmContacts.find(c => Number(c.id) === id);
+  openConfirm('contact_archive', id, contact ? `”${contact.contact_name}”` : 'This contact');
+  return;
+}
+
+if (action === 'open-deal-modal') {
+  const prefillClientId = trigger.dataset.clientId ? Number(trigger.dataset.clientId) : undefined;
+  openNewDealModal(prefillClientId);
+  return;
+}
+
+if (action === 'open-deal-details') {
+  openDealDetailsModal(Number(trigger.dataset.id));
+  return;
+}
+
+if (action === 'edit-deal') {
+  openEditDealModal(Number(trigger.dataset.id));
+  return;
+}
+
+if (action === 'archive-deal') {
+  const id = Number(trigger.dataset.id);
+  const deal = state.crmDeals.find(d => Number(d.id) === id);
+  openConfirm('deal_archive', id, deal ? `”${deal.deal_name}”` : 'This deal');
+  return;
+}
+
+if (action === 'open-activity-modal') {
+  const prefillClientId = trigger.dataset.clientId ? Number(trigger.dataset.clientId) : undefined;
+  openNewActivityModal(prefillClientId);
+  return;
+}
+
+if (action === 'open-proposal-from-client') {
+  const prefillClientId = trigger.dataset.clientId ? Number(trigger.dataset.clientId) : undefined;
+  openNewProposalModal(prefillClientId);
+  return;
+}
+
+if (action === 'edit-activity') {
+  openEditActivityModal(Number(trigger.dataset.id));
+  return;
+}
+
+if (action === 'archive-activity') {
+  const id = Number(trigger.dataset.id);
+  const activity = state.crmActivities.find(a => Number(a.id) === id);
+  openConfirm('activity_archive', id, activity ? `”${activity.title}”` : 'This activity');
+  return;
+}
+
+if (action === 'open-note-modal') {
+  const prefillClientId = trigger.dataset.clientId ? Number(trigger.dataset.clientId) : undefined;
+  const prefillLeadId = trigger.dataset.leadId ? Number(trigger.dataset.leadId) : undefined;
+  openNewNoteModal(prefillClientId, prefillLeadId);
+  return;
+}
+
+if (action === 'open-proposal-modal') {
+  const prefillClientId = trigger.dataset.clientId ? Number(trigger.dataset.clientId) : undefined;
+  openNewProposalModal(prefillClientId);
+  return;
+}
+
+if (action === 'edit-proposal') {
+  openEditProposalModal(Number(trigger.dataset.id));
+  return;
+}
+
+if (action === 'archive-proposal') {
+  const id = Number(trigger.dataset.id);
+  const proposal = state.crmProposals.find(p => Number(p.id) === id);
+  openConfirm('proposal_archive', id, proposal ? `”${proposal.proposal_title}”` : 'This proposal');
+  return;
+}
 });
 
   // Forms
@@ -7660,6 +9064,11 @@ if (action === 'archive-client') {
   $('#task-form').addEventListener('submit', handleTaskSubmit);
   $('#lead-form')?.addEventListener('submit', handleLeadSubmit);
   $('#client-form')?.addEventListener('submit', handleClientSubmit);
+  $('#contact-form')?.addEventListener('submit', handleContactSubmit);
+  $('#deal-form')?.addEventListener('submit', handleDealSubmit);
+  $('#activity-form')?.addEventListener('submit', handleActivitySubmit);
+  $('#note-form')?.addEventListener('submit', handleNoteSubmit);
+  $('#proposal-form')?.addEventListener('submit', handleProposalSubmit);
   $('#confirm-delete-btn').addEventListener('click', confirmDelete);
 
   // CRM Leads filters
@@ -7682,6 +9091,69 @@ if (action === 'archive-client') {
     renderCrmClients();
   });
   // crm-clients-type-filter listener removed — Type is now a table header filter
+
+  // CRM Contacts filters
+  $('#crm-contacts-search')?.addEventListener('input', (e) => {
+    state.filters.crmContacts.search = e.target.value;
+    renderCrmContacts();
+  });
+  $('#crm-contacts-status-filter')?.addEventListener('change', (e) => {
+    state.filters.crmContacts.archived = e.target.value;
+    renderCrmContacts();
+  });
+
+  // CRM Deals filters
+  $('#crm-deals-search')?.addEventListener('input', (e) => {
+    state.filters.crmDeals.search = e.target.value;
+    renderCrmDeals();
+  });
+  $('#crm-deals-status-filter')?.addEventListener('change', (e) => {
+    state.filters.crmDeals.archived = e.target.value;
+    renderCrmDeals();
+  });
+
+  // CRM Activities filters
+  $('#crm-activities-search')?.addEventListener('input', (e) => {
+    state.filters.crmActivities.search = e.target.value;
+    renderCrmActivities();
+  });
+  $('#crm-activities-status-filter')?.addEventListener('change', (e) => {
+    state.filters.crmActivities.archived = e.target.value;
+    renderCrmActivities();
+  });
+
+  // CRM Proposals filters
+  $('#crm-proposals-search')?.addEventListener('input', (e) => {
+    state.filters.crmProposals.search = e.target.value;
+    renderCrmProposals();
+  });
+  $('#crm-proposals-status-filter')?.addEventListener('change', (e) => {
+    state.filters.crmProposals.archived = e.target.value;
+    renderCrmProposals();
+  });
+
+  // CRM Tab navigation
+  document.querySelectorAll('[data-crm-tab]').forEach(btn => {
+    btn.addEventListener('click', () => setCrmTab(btn.dataset.crmTab));
+  });
+
+  // Lead form: autofill from linked client
+  $('#lead-client-id')?.addEventListener('change', (e) => {
+    const clientId = Number(e.target.value);
+    if (!clientId) return;
+    const client = state.crmClients.find(c => Number(c.id) === clientId);
+    if (!client) return;
+    const form = $('#lead-form');
+    if (!form) return;
+    if (!form.company_name.value && client.client_name) form.company_name.value = client.client_name;
+    if (!form.phone.value && client.phone) form.phone.value = client.phone;
+    if (!form.whatsapp.value && client.whatsapp) form.whatsapp.value = client.whatsapp;
+    if (!form.email.value && client.email) form.email.value = client.email;
+    if (!form.owner_id.value && client.owner_id) form.owner_id.value = String(client.owner_id);
+    if (form.source && (form.source.value === '' || form.source.value === 'unknown') && client.source) {
+      form.source.value = 'existing_client';
+    }
+  });
 
 document.addEventListener('click', async (e) => {
   const notificationsBtn = e.target.closest('#notifications-btn');
@@ -8063,12 +9535,17 @@ renderStaticButtonMounts();
   });
 
   try {
-    const [projects, tasks, teamMembers, crmLeads, crmClients] = await Promise.all([
+    const [projects, tasks, teamMembers, crmLeads, crmClients, crmContacts, crmDeals, crmActivities, crmNotes, crmProposals] = await Promise.all([
       fetchProjects(),
       fetchTasks(),
       fetchTeamMembers(),
       fetchCrmLeads(),
-      fetchCrmClients()
+      fetchCrmClients(),
+      fetchCrmContacts(),
+      fetchCrmDeals(),
+      fetchCrmActivities(),
+      fetchCrmNotes(),
+      fetchCrmProposals()
     ]);
 
     state.projects = projects;
@@ -8076,6 +9553,11 @@ renderStaticButtonMounts();
     state.teamMembers = teamMembers;
     state.crmLeads = crmLeads;
     state.crmClients = crmClients;
+    state.crmContacts = crmContacts;
+    state.crmDeals = crmDeals;
+    state.crmActivities = crmActivities;
+    state.crmNotes = crmNotes;
+    state.crmProposals = crmProposals;
 
     const {
       data: { user },
