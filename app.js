@@ -40,6 +40,7 @@ const state = {
       project: null,
       assignee: null,
       deadline: null,
+      archiveView: 'active', // 'active' | 'archived' | 'all'
     },
     team: {
       search: '',
@@ -49,6 +50,12 @@ const state = {
       search: '',
       priority: 'all',
       assignee: null,
+      deadline: null,
+    },
+    memberTasks: {
+      status: 'all',
+      priority: 'all',
+      project: null,
       deadline: null,
     },
     selectedProjectId: null,
@@ -90,6 +97,8 @@ const state = {
   editingActivityId: null,
   editingNoteId: null,
   editingProposalId: null,
+  memberTasksBase: [],       // all tasks for the currently viewed member (set in openMemberDetails)
+  memberTasksCardBase: null, // card-filtered subset; null = show all member tasks
   leadEditReturnView: null,
   alertsFilter: 'all', // 'all' | 'overdue' | 'due_today'
   teamPerformanceRanking: [],
@@ -1711,7 +1720,7 @@ function renderNotifications() {
 }
 
 function getAlertVisibleTasks() {
-  if (isAdmin() || isManager()) return state.tasks;
+  if (isAdmin() || isManager()) return state.tasks.filter((t) => !t.is_archived);
 
   const currentMember = getCurrentMember();
 
@@ -1719,6 +1728,7 @@ function getAlertVisibleTasks() {
 
   return state.tasks.filter(
     (t) =>
+      !t.is_archived &&
       (t.assigned_to || '').toLowerCase().trim() ===
       (currentMember.name || '').toLowerCase().trim()
   );
@@ -2704,6 +2714,7 @@ function renderTodayFocus() {
   const memberName = (currentMember?.name || '').toLowerCase().trim();
 
   const myTasks = state.tasks.filter((t) => {
+    if (t.is_archived) return false;
     const status = (t.status || '').toLowerCase();
     if (status === 'completed' || status === 'on_hold') return false;
     return (t.assigned_to || '').toLowerCase().trim() === memberName;
@@ -2983,11 +2994,9 @@ function getFilteredProjects() {
 }
 
 function getFilteredTasks() {
-  // getVisibleTasks() is the single source of truth for role-based task
-  // visibility (Admin/Manager see everything, everyone else sees only their
-  // own) — filtering builds on top of it rather than re-implementing the
-  // same scoping here.
-  let data = [...getVisibleTasks()];
+  // getTaskViewBase() applies role scoping and the archiveView filter
+  // (active/archived/all). Other filter predicates are applied on top.
+  let data = [...getTaskViewBase()];
 
   if (state.filters.tasks.status !== 'all') {
     data = data.filter(
@@ -3231,10 +3240,32 @@ const HEADER_FILTER_MODULES = {
       assignee: null,
       deadline: null,
       search: '',
+      archiveView: 'active',
     },
     getChips: () => getTaskActiveFilterChips(),
     renderHeaderFilters: () => renderTasksHeaderFilters(),
     render: () => renderTasks(),
+  },
+  memberTasks: {
+    stateKey: 'memberTasks',
+    viewName: 'team-member',
+    popoverIds: [
+      'member-tasks-project-popover',
+      'member-tasks-status-popover',
+      'member-tasks-priority-popover',
+      'member-tasks-deadline-popover',
+    ],
+    chipsContainerId: null,
+    allDefaultFilters: ['status', 'priority'],
+    defaults: {
+      status: 'all',
+      priority: 'all',
+      project: null,
+      deadline: null,
+    },
+    getChips: () => [],
+    renderHeaderFilters: () => renderMemberTasksHeaderFilters(),
+    render: () => renderMemberTasksTable(),
   },
   projects: {
     stateKey: 'projects',
@@ -3470,6 +3501,34 @@ function renderTasksHeaderFilters() {
   syncHeaderFilterPopoverActive('tasks-status-popover', f.status);
   syncHeaderFilterPopoverActive('tasks-priority-popover', f.priority);
   syncHeaderFilterPopoverActive('tasks-deadline-popover', f.deadline);
+}
+
+function renderMemberTasksHeaderFilters() {
+  const f = state.filters.memberTasks;
+
+  $('#member-tasks-project-th-filter')?.classList.toggle('active', !!f.project);
+  $('#member-tasks-status-th-filter')?.classList.toggle('active', f.status !== 'all');
+  $('#member-tasks-priority-th-filter')?.classList.toggle('active', f.priority !== 'all');
+  $('#member-tasks-deadline-th-filter')?.classList.toggle('active', !!f.deadline);
+
+  buildHeaderFilterOptions(
+    'member-tasks-project-popover',
+    'All Projects',
+    state.projects.map((p) => ({ value: p.id, label: p.project_name || 'Untitled project' })),
+    f.project
+  );
+
+  syncHeaderFilterPopoverActive('member-tasks-status-popover', f.status);
+  syncHeaderFilterPopoverActive('member-tasks-priority-popover', f.priority);
+  syncHeaderFilterPopoverActive('member-tasks-deadline-popover', f.deadline);
+
+  const hasActiveFilter =
+    f.status !== 'all' ||
+    f.priority !== 'all' ||
+    !!f.project ||
+    !!f.deadline ||
+    state.memberTasksCardBase !== null;
+  $('#member-tasks-clear-filters')?.classList.toggle('hidden', !hasActiveFilter);
 }
 
 function getTaskActiveFilterChips() {
@@ -3730,9 +3789,16 @@ function renderTasks() {
     btn.classList.toggle('hidden', !canCreateTask());
   });
 
+  // Sync archive toggle buttons
+  $$('#tasks-archive-toggle .archive-toggle-btn').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.archiveView === (state.filters.tasks.archiveView || 'active'));
+  });
+
+  const baseTasks = getTaskViewBase();
+
   const summaryEl = $('#tasks-results-summary');
   if (summaryEl) {
-    const total = getVisibleTasks().length;
+    const total = baseTasks.length;
     const filtered = data.length;
 
     summaryEl.textContent =
@@ -3761,7 +3827,7 @@ function renderTasks() {
     tbody.innerHTML = '';
     empty.classList.remove('hidden');
 
-    const isFilteredEmpty = getVisibleTasks().length > 0;
+    const isFilteredEmpty = baseTasks.length > 0;
 
     const titleEl = $('#tasks-empty-title');
     const messageEl = $('#tasks-empty-message');
@@ -5280,9 +5346,12 @@ function getCurrentMember() {
   return state.currentMember || null;
 }
 
+// Returns non-archived, role-scoped tasks.
+// Used by dashboard stats, alerts, recent tasks, and nav counters.
+// Active task views (Tasks table 'active' mode) also start from this set.
 function getVisibleTasks() {
   if (isAdmin() || isManager()) {
-    return state.tasks;
+    return state.tasks.filter((t) => !t.is_archived);
   }
 
   const member = getCurrentMember();
@@ -5291,8 +5360,30 @@ function getVisibleTasks() {
   const memberName = (member.name || '').toLowerCase().trim();
 
   return state.tasks.filter(
+    (t) => !t.is_archived && (t.assigned_to || '').toLowerCase().trim() === memberName
+  );
+}
+
+// Role-scoped tasks regardless of archive status.
+// Used only by the Tasks view when archiveView !== 'active'.
+function getVisibleTasksAllArchive() {
+  if (isAdmin() || isManager()) return state.tasks;
+
+  const member = getCurrentMember();
+  if (!member) return [];
+
+  const memberName = (member.name || '').toLowerCase().trim();
+  return state.tasks.filter(
     (t) => (t.assigned_to || '').toLowerCase().trim() === memberName
   );
+}
+
+// Base for Tasks view: honours the archiveView filter.
+function getTaskViewBase() {
+  const av = state.filters.tasks.archiveView || 'active';
+  if (av === 'archived') return getVisibleTasksAllArchive().filter((t) => t.is_archived);
+  if (av === 'all') return getVisibleTasksAllArchive();
+  return getVisibleTasks(); // 'active' — excludes archived
 }
 
 function getVisibleProjects() {
@@ -5440,6 +5531,16 @@ function setView(view) {
     view = 'dashboard';
   }
 
+  // Business items are Admin-only
+  if (['finance', 'hr', 'assets'].includes(view) && !isAdmin()) {
+    view = 'dashboard';
+  }
+
+  // Analytics/Reports are Admin or Manager only
+  if (view === 'reports' && !isAdmin() && !isManager()) {
+    view = 'dashboard';
+  }
+
   closeAllHeaderFilterPopovers();
 
   state.view = view;
@@ -5514,10 +5615,22 @@ if (view === 'team') {
   renderTeamPerformance();
 }
 
+  // CRM nav item (Admin-only)
   const crmNavItem = $('#nav-crm-item');
   if (crmNavItem) {
     crmNavItem.classList.toggle('hidden', !isAdmin());
   }
+
+  // Business section label + Finance/HR/Assets nav items (Admin-only)
+  $('#sidebar-business-label')?.classList.toggle('hidden', !isAdmin());
+  ['#nav-finance-item', '#nav-hr-item', '#nav-assets-item'].forEach((sel) => {
+    $(sel)?.classList.toggle('hidden', !isAdmin());
+  });
+
+  // Analytics section label + Reports nav item (Admin or Manager only)
+  const canSeeAnalytics = isAdmin() || isManager();
+  $('#sidebar-analytics-label')?.classList.toggle('hidden', !canSeeAnalytics);
+  $('#nav-reports-item')?.classList.toggle('hidden', !canSeeAnalytics);
 
   const crmNewLeadBtn = $('#crm-new-lead-btn');
   if (crmNewLeadBtn) {
@@ -8199,6 +8312,87 @@ function openPerformanceRankingModal() {
   openModal('performance-ranking-modal');
 }
 
+// Top-level member tasks table renderer.
+// Reads state.memberTasksBase and state.memberTasksCardBase set by openMemberDetails(),
+// then applies state.filters.memberTasks header filters on top.
+function renderMemberTasksTable() {
+  const tbody = $('#member-tasks-table-body');
+  if (!tbody) return;
+
+  let tasks = state.memberTasksCardBase ?? state.memberTasksBase;
+
+  const f = state.filters.memberTasks;
+
+  if (f.status !== 'all') {
+    tasks = tasks.filter((t) => (t.status || '').toLowerCase() === f.status);
+  }
+  if (f.priority !== 'all') {
+    tasks = tasks.filter((t) => (t.priority || 'medium').toLowerCase() === f.priority);
+  }
+  if (f.project) {
+    tasks = tasks.filter((t) => String(t.project_id) === String(f.project));
+  }
+  if (f.deadline) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    tasks = tasks.filter((t) => matchesDeadlineFilter(t.deadline, t.status, f.deadline, today));
+  }
+
+  renderHeaderFilters('memberTasks');
+
+  if (tasks.length === 0) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="6" class="px-5 py-10 text-center text-sm text-gray-400">
+          No tasks found for this filter.
+        </td>
+      </tr>
+    `;
+    return;
+  }
+
+  tbody.innerHTML = tasks
+    .map((task) => {
+      const project = state.projects.find(
+        (p) => Number(p.id) === Number(task.project_id)
+      );
+      const taskStatus = (task.status || 'todo').toLowerCase();
+      const taskPriority = (task.priority || 'medium').toLowerCase();
+
+      return `
+        <tr class="hover:bg-gray-50 transition">
+          <td class="px-5 py-3.5 max-w-sm">
+            <button
+              type="button"
+              class="text-sm font-medium text-gray-900 truncate hover:text-indigo-600 text-left"
+              data-action="open-task-details"
+              data-id="${task.id}"
+            >
+              ${escapeHtml(task.task_info || 'Untitled Task')}
+            </button>
+            <p class="text-[11px] text-gray-500">Start ${fmtDate(task.start_date)}</p>
+          </td>
+          <td class="px-5 py-3.5">
+            ${project
+              ? `<button type="button" class="text-brand-600 hover:text-brand-700 hover:underline font-medium text-left" data-action="open-project-details" data-id="${project.id}">${escapeHtml(project.project_name)}</button>`
+              : '—'
+            }
+          </td>
+          <td class="px-5 py-3.5">${renderStatusBadge(taskStatus)}</td>
+          <td class="px-5 py-3.5">${renderPriorityBadge(taskPriority)}</td>
+          ${renderDeadlineCell(task.deadline)}
+          ${renderTaskActionsCell(task, {
+            canDelete: isAdmin() || isManager(),
+            canEdit: canFullyEditTask() || canLimitedEditTask(task),
+          })}
+        </tr>
+      `;
+    })
+    .join('');
+
+  refreshIcons();
+}
+
 function openMemberDetails(memberId) {
   const member = state.teamMembers.find(
     (m) => Number(m.id) === Number(memberId)
@@ -8213,11 +8407,22 @@ localStorage.setItem(
   memberId
 );
 
-  const memberTasks = state.tasks.filter(
-    (t) =>
-      (t.assigned_to || '').toLowerCase().trim() ===
-      (member.name || '').toLowerCase().trim()
+  const memberNameLower = (member.name || '').toLowerCase().trim();
+
+  // All tasks for this member including archived — used exclusively for
+  // performance calculations so historical completed_at data is never lost.
+  const memberTasksForPerf = state.tasks.filter(
+    (t) => (t.assigned_to || '').toLowerCase().trim() === memberNameLower
   );
+
+  // Exclude archived tasks from stat cards and the assigned-tasks table view.
+  const memberTasks = memberTasksForPerf.filter((t) => !t.is_archived);
+
+  // Store for the top-level renderMemberTasksTable() + header filters.
+  state.memberTasksBase = memberTasks;
+  state.memberTasksCardBase = null;
+  // Reset header filters when switching to a new member.
+  Object.assign(state.filters.memberTasks, { status: 'all', priority: 'all', project: null, deadline: null });
 
   const todoTasks = memberTasks.filter(
     (t) => (t.status || '').toLowerCase() === 'todo'
@@ -8252,7 +8457,7 @@ localStorage.setItem(
   const completedCount = completedTasks.length;
   const overdueCount = overdueTasks.length;
 
-  const { performanceScore, performanceLabel } = calculateMemberPerformance(memberTasks);
+  const { performanceScore, performanceLabel } = calculateMemberPerformance(memberTasksForPerf);
 
   $('#member-details-name').textContent = member.name || 'Unknown Member';
   $('#member-details-role').textContent = member.job_title || 'No Job Title';
@@ -8292,88 +8497,6 @@ localStorage.setItem(
     performanceLabelEl.textContent = `${emoji} ${performanceLabel}`;
   }
 
-  const tbody = $('#member-tasks-table-body');
-
-  function renderMemberTasksTable(tasks) {
-    if (!tbody) return;
-
-    if (tasks.length === 0) {
-      tbody.innerHTML = `
-        <tr>
-          <td colspan="6" class="px-5 py-10 text-center text-sm text-gray-400">
-            No tasks found for this filter.
-          </td>
-        </tr>
-      `;
-      return;
-    }
-
-    tbody.innerHTML = tasks
-      .map((task) => {
-        const project = state.projects.find(
-          (p) => Number(p.id) === Number(task.project_id)
-        );
-
-        const taskStatus = (task.status || 'todo').toLowerCase();
-        const taskPriority = (task.priority || 'medium').toLowerCase();
-
-        return `
-          <tr class="hover:bg-gray-50 transition">
-            <td class="px-5 py-3.5 max-w-sm">
-              <button
-                type="button"
-                class="text-sm font-medium text-gray-900 truncate hover:text-indigo-600 text-left"
-                data-action="open-task-details"
-                data-id="${task.id}"
-              >
-                ${escapeHtml(task.task_info || 'Untitled Task')}
-              </button>
-
-              <p class="text-[11px] text-gray-500">
-                Start ${fmtDate(task.start_date)}
-              </p>
-            </td>
-
-            <td class="px-5 py-3.5">
-              ${
-                project
-                  ? `
-                    <button
-                      type="button"
-                      class="text-brand-600 hover:text-brand-700 hover:underline font-medium text-left"
-                      data-action="open-project-details"
-                      data-id="${project.id}"
-                    >
-                      ${escapeHtml(project.project_name)}
-                    </button>
-                  `
-                  : '—'
-              }
-            </td>
-
-            <td class="px-5 py-3.5">
-              ${renderStatusBadge(taskStatus)}
-            </td>
-
-            <td class="px-5 py-3.5">
-              ${renderPriorityBadge(taskPriority)}
-            </td>
-
-            ${renderDeadlineCell(task.deadline)}
-
-            ${renderTaskActionsCell(task, {
-              canDelete: isAdmin() || isManager(),
-              canEdit: canFullyEditTask() || canLimitedEditTask(task),
-            })}
-          </tr>
-        `;
-      })
-      .join('');
-
-    refreshIcons();
-  }
-
-
   function activateCard(cardEl) {
     const cards = [
       $('#member-total-tasks'),
@@ -8406,7 +8529,8 @@ localStorage.setItem(
     totalCard.classList.add('cursor-pointer');
     totalCard.onclick = () => {
       activateCard(totalCard);
-      renderMemberTasksTable(memberTasks);
+      state.memberTasksCardBase = null; // null = all member tasks
+      renderMemberTasksTable();
     };
   }
 
@@ -8414,7 +8538,8 @@ localStorage.setItem(
     todoCard.classList.add('cursor-pointer');
     todoCard.onclick = () => {
       activateCard(todoCard);
-      renderMemberTasksTable(todoTasks);
+      state.memberTasksCardBase = todoTasks;
+      renderMemberTasksTable();
     };
   }
 
@@ -8422,7 +8547,8 @@ localStorage.setItem(
     progressCard.classList.add('cursor-pointer');
     progressCard.onclick = () => {
       activateCard(progressCard);
-      renderMemberTasksTable(inProgressTasks);
+      state.memberTasksCardBase = inProgressTasks;
+      renderMemberTasksTable();
     };
   }
 
@@ -8430,7 +8556,8 @@ localStorage.setItem(
     reviewCard.classList.add('cursor-pointer');
     reviewCard.onclick = () => {
       activateCard(reviewCard);
-      renderMemberTasksTable(reviewTasks);
+      state.memberTasksCardBase = reviewTasks;
+      renderMemberTasksTable();
     };
   }
 
@@ -8438,7 +8565,8 @@ localStorage.setItem(
     completedCard.classList.add('cursor-pointer');
     completedCard.onclick = () => {
       activateCard(completedCard);
-      renderMemberTasksTable(completedTasks);
+      state.memberTasksCardBase = completedTasks;
+      renderMemberTasksTable();
     };
   }
 
@@ -8446,7 +8574,8 @@ localStorage.setItem(
     overdueCard.classList.add('cursor-pointer');
     overdueCard.onclick = () => {
       activateCard(overdueCard);
-      renderMemberTasksTable(overdueTasks);
+      state.memberTasksCardBase = overdueTasks;
+      renderMemberTasksTable();
     };
   }
 
@@ -8459,7 +8588,7 @@ localStorage.setItem(
     };
   }
 
-  renderMemberTasksTable(memberTasks);
+  renderMemberTasksTable();
   activateCard(totalCard);
 
   setView('team-member');
@@ -9353,6 +9482,22 @@ document.addEventListener('click', (e) => {
 $('#tasks-reset-filters')?.addEventListener('click', () => resetModuleFilters('tasks'));
 $('#tasks-empty-reset-btn')?.addEventListener('click', () => resetModuleFilters('tasks'));
 
+// Archive visibility toggle (Active / Archived / All)
+$('#tasks-archive-toggle')?.addEventListener('click', (e) => {
+  const btn = e.target.closest('.archive-toggle-btn');
+  if (!btn) return;
+  const view = btn.dataset.archiveView;
+  if (!view) return;
+  state.filters.tasks.archiveView = view;
+  renderTasks();
+});
+
+$('#member-tasks-clear-filters')?.addEventListener('click', () => {
+  Object.assign(state.filters.memberTasks, { status: 'all', priority: 'all', project: null, deadline: null });
+  state.memberTasksCardBase = null;
+  renderMemberTasksTable();
+});
+
 $('#projects-reset-filters')?.addEventListener('click', () => resetModuleFilters('projects'));
 $('#projects-empty-reset-btn')?.addEventListener('click', () => resetModuleFilters('projects'));
 
@@ -9521,6 +9666,65 @@ function subscribeToRealtimeChanges() {
   });
 }
 
+// ---------- Monthly Task Archive (client-side scheduler substitute) ----------
+// Runs on app init for Admin only. Archives completed tasks at end of month ONLY.
+// Replace with a backend cron job once infrastructure is available.
+//
+// Rules:
+//   - Fires ONLY when today is the last calendar day of the current month.
+//   - Does NOT run catch-up at the start of a new month.
+//   - Does NOT archive tasks without a completed_at timestamp.
+//   - Archives tasks completed within the current calendar month (completed_at
+//     between the 1st and today of the current month, inclusive).
+//   - localStorage key is written only when the archive actually runs.
+async function runMonthlyTaskArchiveIfNeeded() {
+  if (!isAdmin()) return;
+
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth(); // 0-indexed
+  const currentMonthKey = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}`;
+
+  // Only fire on the actual last day of the month — no catch-up logic.
+  const lastDayOfMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+  const isLastDay = now.getDate() === lastDayOfMonth;
+
+  if (!isLastDay) return;
+
+  // Idempotent: skip if archive already ran for this month.
+  const lastArchiveMonth = localStorage.getItem('tgora_last_task_archive_month') || '';
+  if (lastArchiveMonth === currentMonthKey) return;
+
+  try {
+    // Archive completed tasks whose completed_at falls within the current month.
+    const startOfMonth = new Date(currentYear, currentMonth, 1).toISOString();
+    const endOfDay = new Date(currentYear, currentMonth, lastDayOfMonth, 23, 59, 59, 999).toISOString();
+
+    const { error } = await supabaseClient
+      .from('tasks')
+      .update({ is_archived: true, archived_at: now.toISOString() })
+      .eq('status', 'completed')
+      .eq('is_archived', false)
+      .not('completed_at', 'is', null)
+      .gte('completed_at', startOfMonth)
+      .lte('completed_at', endOfDay);
+
+    if (error) {
+      console.error('runMonthlyTaskArchiveIfNeeded:', error);
+      return;
+    }
+
+    // Write marker only on success.
+    localStorage.setItem('tgora_last_task_archive_month', currentMonthKey);
+
+    // Refresh state so the UI reflects newly archived tasks.
+    await refreshDataAndRender();
+    toast('Completed tasks archived for the month.', 'success');
+  } catch (err) {
+    console.error('runMonthlyTaskArchiveIfNeeded unexpected error:', err);
+  }
+}
+
 async function init() {
   $('#year').textContent = new Date().getFullYear();
 
@@ -9594,6 +9798,9 @@ renderAlerts();
 renderNotifications();
 updateSidebarUserCard();
 subscribeToRealtimeChanges();
+
+  // Run monthly archive check after role is set and initial render is done.
+  await runMonthlyTaskArchiveIfNeeded();
 }
 
 document.addEventListener('DOMContentLoaded', async () => {

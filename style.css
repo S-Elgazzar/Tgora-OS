@@ -280,6 +280,32 @@ aside::-webkit-scrollbar-thumb:hover {
   border-radius: var(--tg-radius-sm);
 }
 
+/* Archive visibility toggle (Active / Archived / All) */
+.archive-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem 0.625rem;
+  border-radius: 0.375rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #6b7280;
+  cursor: pointer;
+  transition: all 0.15s;
+  border: none;
+  background: transparent;
+  white-space: nowrap;
+  line-height: 1.5;
+}
+.archive-toggle-btn:hover {
+  color: #111827;
+  background-color: white;
+}
+.archive-toggle-btn.active {
+  background-color: white;
+  color: #111827;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
 /* ============================================
    Stat cards
    ============================================ */
@@ -351,7 +377,7 @@ aside::-webkit-scrollbar-thumb:hover {
   top: calc(100% + 0.5rem);
   left: 0;
   z-index: 30;
-  min-width: 9.5rem;
+  min-width: 11.25rem;
   max-width: calc(100vw - 1rem);
   max-height: 16rem;
   overflow-y: auto;
@@ -406,6 +432,10 @@ aside::-webkit-scrollbar-thumb:hover {
   overflow-x: auto;
   overflow-y: auto;
   max-height: calc(100vh - 220px);
+  /* min-height ensures the container is always tall enough for the tallest
+     header-filter popover (max-height: 16rem) even when the table has few
+     rows — without this, overflow-y: auto clips the absolute popover */
+  min-height: 20rem;
 }
 /* Sticky header: sticks at the top of the scroll container
    so column labels remain visible while scrolling vertically.
