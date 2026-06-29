@@ -1976,7 +1976,7 @@
     </div>
     <div class="flex items-center gap-2">
       <button data-action="open-split-receipt-modal" class="h-9 px-4 inline-flex items-center gap-2 border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 text-sm font-medium rounded-lg shadow-sm">
-        <i data-lucide="git-fork" class="w-4 h-4"></i> Split Receipt
+        <i data-lucide="git-fork" class="w-4 h-4"></i> Split Client Receipt
       </button>
       <button data-action="open-finance-transaction-modal" class="h-9 px-4 inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg shadow-sm">
         <i data-lucide="plus" class="w-4 h-4"></i> New Transaction
@@ -1985,16 +1985,25 @@
   </div>
 
   <!-- Tab bar -->
-  <div class="inline-flex items-center gap-1 bg-gray-100 p-1 rounded-xl mb-6">
-    <button data-finance-tab="dashboard"     class="view-mode-btn h-8 px-4 rounded-lg text-sm font-medium transition-colors bg-white text-gray-900 shadow-sm">Dashboard</button>
-    <button data-finance-tab="transactions"  class="view-mode-btn h-8 px-4 rounded-lg text-sm font-medium transition-colors text-gray-500">Transactions</button>
-    <button data-finance-tab="accounts"      class="view-mode-btn h-8 px-4 rounded-lg text-sm font-medium transition-colors text-gray-500">Accounts</button>
+  <div class="inline-flex items-center gap-1 bg-gray-100 p-1 rounded-xl mb-6 flex-wrap">
+    <button data-finance-tab="dashboard"    class="view-mode-btn h-8 px-4 rounded-lg text-sm font-medium transition-colors bg-white text-gray-900 shadow-sm">Dashboard</button>
+    <button data-finance-tab="transactions" class="view-mode-btn h-8 px-4 rounded-lg text-sm font-medium transition-colors text-gray-500">Transactions</button>
+    <button data-finance-tab="forecast"     class="view-mode-btn h-8 px-4 rounded-lg text-sm font-medium transition-colors text-gray-500">Forecast</button>
+    <button data-finance-tab="accounts"     class="view-mode-btn h-8 px-4 rounded-lg text-sm font-medium transition-colors text-gray-500">Accounts</button>
+    <button data-finance-tab="reports"      class="view-mode-btn h-8 px-4 rounded-lg text-sm font-medium transition-colors text-gray-500">Reports</button>
   </div>
 
   <!-- Dashboard Tab -->
   <div id="finance-section-dashboard">
-    <!-- Stat cards -->
-    <div id="finance-dashboard-stats" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-4 mb-6"></div>
+    <!-- Actual stat cards -->
+    <div id="finance-dashboard-stats" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-4 mb-4"></div>
+
+    <!-- Forecast stat cards -->
+    <p class="text-xs font-medium text-gray-400 uppercase tracking-wider mb-2 mt-2">Forecast (not included in balances)</p>
+    <div id="finance-forecast-cards" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 mb-3"></div>
+
+    <!-- Trash summary (hidden when empty) -->
+    <div id="finance-trash-summary" class="mb-5"></div>
 
     <!-- Charts + Account Balances row -->
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
@@ -2061,6 +2070,7 @@
       <select id="finance-tx-archived-filter" class="form-input h-9 text-sm w-36">
         <option value="active">Active</option>
         <option value="archived">Archived</option>
+        <option value="deleted">Trash</option>
         <option value="all">All</option>
       </select>
     </div>
@@ -2070,9 +2080,12 @@
         <table class="w-full text-left">
           <thead>
             <tr class="border-b border-gray-100">
+              <th class="px-4 py-3 text-xs font-medium text-gray-400 uppercase whitespace-nowrap">Tx #</th>
               <th class="px-4 py-3 text-xs font-medium text-gray-400 uppercase whitespace-nowrap">Date</th>
               <th class="px-4 py-3 text-xs font-medium text-gray-400 uppercase">Type</th>
+              <th class="px-4 py-3 text-xs font-medium text-gray-400 uppercase">Status</th>
               <th class="px-4 py-3 text-xs font-medium text-gray-400 uppercase">Account</th>
+              <th class="px-4 py-3 text-xs font-medium text-gray-400 uppercase">Project/Client</th>
               <th class="px-4 py-3 text-xs font-medium text-gray-400 uppercase">Category</th>
               <th class="px-4 py-3 text-xs font-medium text-gray-400 uppercase">Description</th>
               <th class="px-4 py-3 text-xs font-medium text-gray-400 uppercase text-right whitespace-nowrap">Amount</th>
@@ -2116,6 +2129,94 @@
       <div id="finance-accounts-empty" class="hidden flex flex-col items-center justify-center py-16 text-center">
         <i data-lucide="landmark" class="w-8 h-8 text-gray-300 mb-2"></i>
         <p class="text-sm text-gray-400">No accounts yet.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Forecast Tab -->
+  <div id="finance-section-forecast" class="hidden">
+    <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+      <div class="flex flex-wrap items-center gap-2">
+        <input id="finance-forecast-search" type="text" placeholder="Search forecasts…" class="form-input h-9 w-44 text-sm" />
+        <select id="finance-forecast-type-filter" class="form-input h-9 text-sm w-44">
+          <option value="all">All Types</option>
+          <option value="expected_income">Expected Income</option>
+          <option value="expected_expense">Expected Expense</option>
+          <option value="expected_transfer">Expected Transfer</option>
+          <option value="client_funds">Client Funds</option>
+        </select>
+        <select id="finance-forecast-status-filter" class="form-input h-9 text-sm w-36">
+          <option value="all">All Statuses</option>
+          <option value="expected">Expected</option>
+          <option value="committed">Committed</option>
+          <option value="received">Received</option>
+          <option value="cancelled">Cancelled</option>
+          <option value="overdue">Overdue</option>
+        </select>
+        <select id="finance-forecast-archived-filter" class="form-input h-9 text-sm w-28">
+          <option value="active">Active</option>
+          <option value="archived">Archived</option>
+          <option value="deleted">Trash</option>
+          <option value="all">All</option>
+        </select>
+      </div>
+      <button data-action="open-finance-forecast-modal" class="h-9 px-4 inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg shadow-sm">
+        <i data-lucide="plus" class="w-4 h-4"></i> New Forecast
+      </button>
+    </div>
+
+    <div class="shadow-card rounded-2xl bg-white">
+      <div class="table-scroll-container">
+        <table class="w-full text-left">
+          <thead>
+            <tr class="border-b border-gray-100">
+              <th class="px-4 py-3 text-xs font-medium text-gray-400 uppercase whitespace-nowrap">Expected Date</th>
+              <th class="px-4 py-3 text-xs font-medium text-gray-400 uppercase">Type</th>
+              <th class="px-4 py-3 text-xs font-medium text-gray-400 uppercase">Client / Project</th>
+              <th class="px-4 py-3 text-xs font-medium text-gray-400 uppercase">Category</th>
+              <th class="px-4 py-3 text-xs font-medium text-gray-400 uppercase text-right">Amount</th>
+              <th class="px-4 py-3 text-xs font-medium text-gray-400 uppercase text-center">Probability</th>
+              <th class="px-4 py-3 text-xs font-medium text-gray-400 uppercase">Status</th>
+              <th class="px-4 py-3 text-xs font-medium text-gray-400 uppercase text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="finance-forecast-table-body"></tbody>
+        </table>
+      </div>
+      <div id="finance-forecast-empty" class="hidden flex flex-col items-center justify-center py-16 text-center">
+        <i data-lucide="telescope" class="w-8 h-8 text-gray-300 mb-2"></i>
+        <p class="text-sm text-gray-400">No forecasts yet. Add one to start planning cash flow.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Reports Tab (placeholders) -->
+  <div id="finance-section-reports" class="hidden">
+    <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+      <div class="shadow-card rounded-2xl bg-white p-6 flex flex-col items-center justify-center text-center min-h-[180px]">
+        <i data-lucide="folder-kanban" class="w-8 h-8 text-gray-300 mb-3"></i>
+        <h4 class="text-sm font-semibold text-gray-800">Profit by Project</h4>
+        <span class="sidebar-badge-soon mt-2">Soon</span>
+      </div>
+      <div class="shadow-card rounded-2xl bg-white p-6 flex flex-col items-center justify-center text-center min-h-[180px]">
+        <i data-lucide="users" class="w-8 h-8 text-gray-300 mb-3"></i>
+        <h4 class="text-sm font-semibold text-gray-800">Client Funds</h4>
+        <span class="sidebar-badge-soon mt-2">Soon</span>
+      </div>
+      <div class="shadow-card rounded-2xl bg-white p-6 flex flex-col items-center justify-center text-center min-h-[180px]">
+        <i data-lucide="git-compare-arrows" class="w-8 h-8 text-gray-300 mb-3"></i>
+        <h4 class="text-sm font-semibold text-gray-800">Forecast vs Actual</h4>
+        <span class="sidebar-badge-soon mt-2">Soon</span>
+      </div>
+      <div class="shadow-card rounded-2xl bg-white p-6 flex flex-col items-center justify-center text-center min-h-[180px]">
+        <i data-lucide="waves" class="w-8 h-8 text-gray-300 mb-3"></i>
+        <h4 class="text-sm font-semibold text-gray-800">Cash Flow</h4>
+        <span class="sidebar-badge-soon mt-2">Soon</span>
+      </div>
+      <div class="shadow-card rounded-2xl bg-white p-6 flex flex-col items-center justify-center text-center min-h-[180px]">
+        <i data-lucide="pie-chart" class="w-8 h-8 text-gray-300 mb-3"></i>
+        <h4 class="text-sm font-semibold text-gray-800">Category Breakdown</h4>
+        <span class="sidebar-badge-soon mt-2">Soon</span>
       </div>
     </div>
   </div>
@@ -3161,7 +3262,7 @@
     <div class="modal-overlay" data-action="close-confirm"></div>
     <div class="modal-panel max-w-sm">
       <div class="px-6 py-6 text-center">
-        <div class="w-12 h-12 mx-auto rounded-full bg-rose-50 text-rose-600 flex items-center justify-center mb-4">
+        <div id="confirm-icon-wrap" class="w-12 h-12 mx-auto rounded-full bg-rose-50 text-rose-600 flex items-center justify-center mb-4">
           <i data-lucide="trash-2" class="w-5 h-5"></i>
         </div>
         <h3 id="confirm-modal-title" class="text-base font-semibold text-gray-900">Delete this item?</h3>
@@ -3320,6 +3421,46 @@
           <input name="description" type="text" class="form-input" placeholder="Brief description" />
         </div>
 
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div>
+            <label class="form-label">Status</label>
+            <select name="status" class="form-input">
+              <option value="completed">Completed</option>
+              <option value="pending">Pending</option>
+              <option value="cancelled">Cancelled</option>
+            </select>
+          </div>
+          <div>
+            <label class="form-label">Due Date</label>
+            <input name="due_date" type="date" class="form-input" />
+          </div>
+          <div>
+            <label class="form-label">Transaction #</label>
+            <input name="transaction_number" type="text" class="form-input font-mono text-sm" placeholder="Auto-generated" />
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="form-label">Project Name</label>
+            <input name="project_name" type="text" class="form-input" placeholder="e.g. Acme Q3 Campaign" />
+          </div>
+          <div>
+            <label class="form-label">Tags</label>
+            <input name="tags" type="text" class="form-input" placeholder="tag1, tag2, tag3" />
+          </div>
+        </div>
+
+        <div>
+          <label class="form-label">Internal Notes</label>
+          <textarea name="internal_notes" rows="2" class="form-input resize-none" placeholder="Private notes (not visible to client)"></textarea>
+        </div>
+
+        <div>
+          <label class="form-label text-gray-400">Attachment <span class="text-xs font-normal">(coming soon)</span></label>
+          <input name="attachment_url" type="url" class="form-input bg-gray-50 text-gray-400 cursor-not-allowed" placeholder="https://…" disabled />
+        </div>
+
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label class="form-label">Payment Method</label>
@@ -3375,11 +3516,17 @@
           </div>
         </div>
 
-        <div>
-          <label class="form-label">Client</label>
-          <select id="split-client-id" name="client_id" class="form-input">
-            <option value="">— No client —</option>
-          </select>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="form-label">Client</label>
+            <select id="split-client-id" name="client_id" class="form-input">
+              <option value="">— No client —</option>
+            </select>
+          </div>
+          <div>
+            <label class="form-label">Project</label>
+            <input name="project_name" type="text" class="form-input" placeholder="Project or job name" />
+          </div>
         </div>
 
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -3423,6 +3570,163 @@
           <button type="button" data-action="close-modal" class="h-9 px-4 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50">Cancel</button>
           <button type="submit" class="h-9 px-4 inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg shadow-sm">
             <i data-lucide="git-fork" class="w-4 h-4"></i> Record Split Receipt
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ===== Account Ledger Modal ===== -->
+  <div id="account-ledger-modal" class="modal hidden">
+    <div class="modal-overlay" data-action="close-modal"></div>
+    <div class="modal-panel" style="max-width: 62rem">
+      <div class="px-6 py-5 border-b border-gray-100 flex items-center justify-between">
+        <div>
+          <h3 id="acct-ledger-name" class="text-lg font-semibold text-gray-900"></h3>
+          <p id="acct-ledger-meta" class="text-xs text-gray-500 mt-0.5"></p>
+        </div>
+        <button data-action="close-modal" class="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center">
+          <i data-lucide="x" class="w-4 h-4 text-gray-500"></i>
+        </button>
+      </div>
+      <div class="px-6 py-4 border-b border-gray-100">
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div class="bg-gray-50 rounded-xl p-3">
+            <p class="text-xs text-gray-400 mb-1">Current Balance</p>
+            <p id="acct-ledger-balance" class="text-base font-semibold text-gray-800"></p>
+          </div>
+          <div class="bg-gray-50 rounded-xl p-3">
+            <p class="text-xs text-gray-400 mb-1">Opening Balance</p>
+            <p id="acct-ledger-opening" class="text-base font-semibold text-gray-600"></p>
+          </div>
+          <div class="bg-emerald-50 rounded-xl p-3">
+            <p class="text-xs text-gray-400 mb-1">Total Inflow</p>
+            <p id="acct-ledger-inflow" class="text-base font-semibold text-emerald-600"></p>
+          </div>
+          <div class="bg-rose-50 rounded-xl p-3">
+            <p class="text-xs text-gray-400 mb-1">Total Outflow</p>
+            <p id="acct-ledger-outflow" class="text-base font-semibold text-rose-600"></p>
+          </div>
+        </div>
+      </div>
+      <div class="overflow-y-auto" style="max-height: 55vh">
+        <table class="w-full text-left">
+          <thead class="sticky top-0 bg-white z-10">
+            <tr class="border-b border-gray-100">
+              <th class="px-4 py-2.5 text-xs font-medium text-gray-400 uppercase whitespace-nowrap">Date</th>
+              <th class="px-4 py-2.5 text-xs font-medium text-gray-400 uppercase whitespace-nowrap">Tx #</th>
+              <th class="px-4 py-2.5 text-xs font-medium text-gray-400 uppercase">Type</th>
+              <th class="px-4 py-2.5 text-xs font-medium text-gray-400 uppercase">Description</th>
+              <th class="px-4 py-2.5 text-xs font-medium text-gray-400 uppercase text-right whitespace-nowrap">In</th>
+              <th class="px-4 py-2.5 text-xs font-medium text-gray-400 uppercase text-right whitespace-nowrap">Out</th>
+              <th class="px-4 py-2.5 text-xs font-medium text-gray-400 uppercase text-right whitespace-nowrap">Balance</th>
+            </tr>
+          </thead>
+          <tbody id="acct-ledger-table-body"></tbody>
+        </table>
+      </div>
+      <div class="px-6 py-4 border-t border-gray-100 flex justify-end">
+        <button data-action="close-modal" class="h-9 px-4 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Finance Forecast Modal ===== -->
+  <div id="finance-forecast-modal" class="modal hidden">
+    <div class="modal-overlay" data-action="close-modal"></div>
+    <div class="modal-panel">
+      <div class="px-6 py-5 border-b border-gray-100 flex items-center justify-between">
+        <h3 id="finance-forecast-modal-title" class="text-lg font-semibold text-gray-900">New Forecast</h3>
+        <button data-action="close-modal" class="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center">
+          <i data-lucide="x" class="w-4 h-4 text-gray-500"></i>
+        </button>
+      </div>
+      <form id="finance-forecast-form" class="px-6 py-5 space-y-4">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="form-label">Expected Date <span class="text-rose-500">*</span></label>
+            <input name="expected_date" type="date" required class="form-input" />
+          </div>
+          <div>
+            <label class="form-label">Forecast Type <span class="text-rose-500">*</span></label>
+            <select name="forecast_type" class="form-input">
+              <option value="expected_income">Expected Income</option>
+              <option value="expected_expense">Expected Expense</option>
+              <option value="expected_transfer">Expected Transfer</option>
+              <option value="client_funds">Client Funds</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div class="sm:col-span-2">
+            <label class="form-label">Amount (EGP) <span class="text-rose-500">*</span></label>
+            <input name="amount" type="number" min="0.01" step="0.01" required class="form-input" placeholder="0.00" />
+          </div>
+          <div>
+            <label class="form-label">Probability (%)</label>
+            <input name="probability" type="number" min="0" max="100" step="1" class="form-input" value="100" />
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="form-label">Status</label>
+            <select name="status" class="form-input">
+              <option value="expected">Expected</option>
+              <option value="committed">Committed</option>
+              <option value="received">Received</option>
+              <option value="cancelled">Cancelled</option>
+            </select>
+          </div>
+          <div>
+            <label class="form-label">Account</label>
+            <select id="finance-forecast-account" name="account_id" class="form-input">
+              <option value="">— Select account —</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="form-label">Client</label>
+            <select id="finance-forecast-client" name="client_id" class="form-input">
+              <option value="">— No client —</option>
+            </select>
+          </div>
+          <div>
+            <label class="form-label">Project Name</label>
+            <input name="project_name" type="text" class="form-input" placeholder="e.g. Acme Q3 Campaign" />
+          </div>
+        </div>
+
+        <div>
+          <label class="form-label">Category</label>
+          <select id="finance-forecast-category" name="category_id" class="form-input">
+            <option value="">— No category —</option>
+          </select>
+        </div>
+
+        <div>
+          <label class="form-label">Description</label>
+          <input name="description" type="text" class="form-input" placeholder="Brief description" />
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="form-label">Internal Notes</label>
+            <textarea name="internal_notes" rows="2" class="form-input resize-none" placeholder="Private notes"></textarea>
+          </div>
+          <div>
+            <label class="form-label">Tags</label>
+            <input name="tags" type="text" class="form-input" placeholder="tag1, tag2, tag3" />
+          </div>
+        </div>
+
+        <div class="flex items-center justify-end gap-2 pt-4 border-t border-gray-100">
+          <button type="button" data-action="close-modal" class="h-9 px-4 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50">Cancel</button>
+          <button type="submit" class="h-9 px-4 inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg shadow-sm">
+            <i data-lucide="check" class="w-4 h-4"></i> Save Forecast
           </button>
         </div>
       </form>

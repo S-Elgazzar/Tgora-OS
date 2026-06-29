@@ -80,6 +80,7 @@ const state = {
     crmProposals:  { archived: 'active', search: '', status: 'all' },
     financeTransactions: { search: '', type: 'all', account: '', archived: 'active' },
     financeAccounts:     { search: '' },
+    financeForecasts:    { search: '', type: 'all', status: 'all', archived: 'active' },
   },
   pendingDelete: null, // { type: 'project' | 'task', id }
   crmLeads: [],
@@ -102,9 +103,11 @@ const state = {
   financeAccounts: [],
   financeCategories: [],
   financeTransactions: [],
+  financeForecasts: [],
   financeTab: 'dashboard',
   editingFinanceAccountId: null,
   editingFinanceTransactionId: null,
+  editingFinanceForecastId: null,
   memberTasksBase: [],       // all tasks for the currently viewed member (set in openMemberDetails)
   memberTasksCardBase: null, // card-filtered subset; null = show all member tasks
   leadEditReturnView: null,
@@ -1343,10 +1346,24 @@ async function updateFinanceAccount(id, payload) {
   if (error) { console.error('updateFinanceAccount', error); toast(error.message || 'Failed to update account', 'error'); return null; }
   return data;
 }
+async function insertFinanceAuditLog({ entityType, entityId, action, oldData = null, newData = null }) {
+  const { error } = await supabaseClient.from('finance_audit_log').insert([{
+    entity_type: entityType,
+    entity_id:   Number(entityId),
+    action,
+    actor_id:    state.currentUser?.id || null,
+    old_data:    oldData,
+    new_data:    newData,
+    created_at:  new Date().toISOString(),
+  }]);
+  if (error) console.error('insertFinanceAuditLog', error);
+}
+
 async function createFinanceTransaction(payload) {
   if (!isAdmin()) return null;
   const { data, error } = await supabaseClient.from('finance_transactions').insert([payload]).select().single();
   if (error) { console.error('createFinanceTransaction', error); toast(error.message || 'Failed to create transaction', 'error'); return null; }
+  await insertFinanceAuditLog({ entityType: 'transaction', entityId: data.id, action: 'created', newData: data });
   return data;
 }
 async function updateFinanceTransaction(id, payload) {
@@ -1356,7 +1373,127 @@ async function updateFinanceTransaction(id, payload) {
   return data;
 }
 async function archiveFinanceTransaction(id) {
-  return updateFinanceTransaction(id, { is_archived: true, updated_at: new Date().toISOString() });
+  const old = state.financeTransactions.find(t => Number(t.id) === id);
+  const result = await updateFinanceTransaction(id, { is_archived: true, archived_by: state.currentUser?.id || null, updated_at: new Date().toISOString() });
+  if (result) await insertFinanceAuditLog({ entityType: 'transaction', entityId: id, action: 'archived', oldData: old, newData: result });
+  return result;
+}
+async function restoreFinanceTransaction(id) {
+  const old = state.financeTransactions.find(t => Number(t.id) === id);
+  const result = await updateFinanceTransaction(id, { is_archived: false, is_deleted: false, archived_by: null, deleted_at: null, deleted_by: null, updated_at: new Date().toISOString() });
+  if (result) await insertFinanceAuditLog({ entityType: 'transaction', entityId: id, action: 'restored', oldData: old, newData: result });
+  return result;
+}
+async function softDeleteFinanceTransaction(id) {
+  const old = state.financeTransactions.find(t => Number(t.id) === id);
+  const now = new Date().toISOString();
+  const result = await updateFinanceTransaction(id, { is_deleted: true, deleted_at: now, deleted_by: state.currentUser?.id || null, updated_at: now });
+  if (result) await insertFinanceAuditLog({ entityType: 'transaction', entityId: id, action: 'soft_deleted', oldData: old, newData: result });
+  return result;
+}
+async function permanentDeleteFinanceTransaction(id) {
+  if (!isAdmin()) return false;
+  const old = state.financeTransactions.find(t => Number(t.id) === id);
+  await insertFinanceAuditLog({ entityType: 'transaction', entityId: id, action: 'permanently_deleted', oldData: old, newData: null });
+  const { error } = await supabaseClient.from('finance_transactions').delete().eq('id', id);
+  if (error) { console.error('permanentDeleteFinanceTransaction', error); toast(error.message || 'Failed to permanently delete transaction', 'error'); return false; }
+  return true;
+}
+
+async function fetchFinanceForecasts() {
+  if (!isAdmin()) return [];
+  const { data, error } = await supabaseClient
+    .from('finance_forecasts')
+    .select('*')
+    .order('expected_date', { ascending: true })
+    .order('created_at', { ascending: false });
+  if (error) { console.error('fetchFinanceForecasts', error); return []; }
+  return data || [];
+}
+async function createFinanceForecast(payload) {
+  if (!isAdmin()) return null;
+  const { data, error } = await supabaseClient.from('finance_forecasts').insert([payload]).select().single();
+  if (error) { console.error('createFinanceForecast', error); toast(error.message || 'Failed to create forecast', 'error'); return null; }
+  await insertFinanceAuditLog({ entityType: 'forecast', entityId: data.id, action: 'created', newData: data });
+  return data;
+}
+async function updateFinanceForecast(id, payload) {
+  if (!isAdmin()) return null;
+  const { data, error } = await supabaseClient.from('finance_forecasts').update(payload).eq('id', id).select().single();
+  if (error) { console.error('updateFinanceForecast', error); toast(error.message || 'Failed to update forecast', 'error'); return null; }
+  return data;
+}
+async function archiveFinanceForecast(id) {
+  const old = state.financeForecasts.find(f => Number(f.id) === id);
+  const result = await updateFinanceForecast(id, { is_archived: true, archived_by: state.currentUser?.id || null, updated_at: new Date().toISOString() });
+  if (result) await insertFinanceAuditLog({ entityType: 'forecast', entityId: id, action: 'archived', oldData: old, newData: result });
+  return result;
+}
+async function restoreFinanceForecast(id) {
+  const old = state.financeForecasts.find(f => Number(f.id) === id);
+  const result = await updateFinanceForecast(id, { is_archived: false, is_deleted: false, archived_by: null, deleted_at: null, deleted_by: null, updated_at: new Date().toISOString() });
+  if (result) await insertFinanceAuditLog({ entityType: 'forecast', entityId: id, action: 'restored', oldData: old, newData: result });
+  return result;
+}
+async function softDeleteFinanceForecast(id) {
+  const old = state.financeForecasts.find(f => Number(f.id) === id);
+  const now = new Date().toISOString();
+  const result = await updateFinanceForecast(id, { is_deleted: true, deleted_at: now, deleted_by: state.currentUser?.id || null, updated_at: now });
+  if (result) await insertFinanceAuditLog({ entityType: 'forecast', entityId: id, action: 'soft_deleted', oldData: old, newData: result });
+  return result;
+}
+async function permanentDeleteFinanceForecast(id) {
+  if (!isAdmin()) return false;
+  const old = state.financeForecasts.find(f => Number(f.id) === id);
+  await insertFinanceAuditLog({ entityType: 'forecast', entityId: id, action: 'permanently_deleted', oldData: old, newData: null });
+  const { error } = await supabaseClient.from('finance_forecasts').delete().eq('id', id);
+  if (error) { console.error('permanentDeleteFinanceForecast', error); toast(error.message || 'Failed to permanently delete forecast', 'error'); return false; }
+  return true;
+}
+async function convertForecastToTransaction(forecastId) {
+  const fc = state.financeForecasts.find(f => Number(f.id) === forecastId);
+  if (!fc) return;
+  if (fc.linked_transaction_id) {
+    toast('This forecast has already been converted to a transaction.', 'error');
+    return;
+  }
+  const TX_TYPE_MAP = {
+    expected_income:   'income',
+    expected_expense:  'expense',
+    expected_transfer: 'transfer',
+    client_funds:      'pass_through_received',
+  };
+  const txType = TX_TYPE_MAP[fc.forecast_type] || 'income';
+  const now = new Date().toISOString();
+  const tx = await createFinanceTransaction({
+    transaction_date: new Date().toISOString().slice(0, 10),
+    transaction_type: txType,
+    account_id:   fc.account_id   || null,
+    client_id:    fc.client_id    || null,
+    client_name:  fc.client_name  || null,
+    category_id:  fc.category_id  || null,
+    amount:       fc.amount,
+    currency:     fc.currency || 'EGP',
+    description:  fc.description  || null,
+    project_name: fc.project_name || null,
+    status:       'completed',
+    created_by:   state.currentUser?.id || null,
+    created_at: now, updated_at: now,
+  });
+  if (!tx) return;
+  const fOk = await updateFinanceForecast(forecastId, {
+    status: 'received',
+    linked_transaction_id: tx.id,
+    updated_at: now,
+  });
+  if (fOk) {
+    await insertFinanceAuditLog({ entityType: 'forecast', entityId: forecastId, action: 'converted', oldData: fc, newData: { ...fc, status: 'received', linked_transaction_id: tx.id } });
+    toast('Forecast converted to transaction.', 'success');
+    const [txs, forecasts] = await Promise.all([fetchFinanceTransactions(), fetchFinanceForecasts()]);
+    state.financeTransactions = txs;
+    state.financeForecasts    = forecasts;
+    renderFinanceView();
+  }
 }
 
 async function insertNotification(payload) {
@@ -5389,6 +5526,7 @@ async function refreshDataAndRender() {
     financeAccounts,
     financeCategories,
     financeTransactions,
+    financeForecasts,
   ] = await Promise.all([
     fetchProjects(),
     fetchTasks(),
@@ -5404,6 +5542,7 @@ async function refreshDataAndRender() {
     fetchFinanceAccounts(),
     fetchFinanceCategories(),
     fetchFinanceTransactions(),
+    fetchFinanceForecasts(),
   ]);
 
   const prevRole = state.currentRole;
@@ -5421,6 +5560,7 @@ async function refreshDataAndRender() {
   state.financeAccounts     = financeAccounts;
   state.financeCategories   = financeCategories;
   state.financeTransactions = financeTransactions;
+  state.financeForecasts    = financeForecasts;
 
   // Re-derive role from the freshly-fetched team members so that external
   // role changes are reflected without a full page reload.
@@ -5489,11 +5629,72 @@ const FINANCE_ACCT_TYPE_LABELS = {
   other:            'Other',
 };
 
+const FINANCE_TX_STATUS_LABELS  = { pending: 'Pending', completed: 'Completed', cancelled: 'Cancelled' };
+const FINANCE_TX_STATUS_BG      = { pending: 'bg-amber-50',  completed: 'bg-emerald-50', cancelled: 'bg-gray-100' };
+const FINANCE_TX_STATUS_COLORS  = { pending: 'text-amber-700', completed: 'text-emerald-700', cancelled: 'text-gray-500' };
+
+const FINANCE_FORECAST_TYPE_LABELS = {
+  expected_income:   'Expected Income',
+  expected_expense:  'Expected Expense',
+  expected_transfer: 'Expected Transfer',
+  client_funds:      'Client Funds',
+};
+const FINANCE_FORECAST_TYPE_BG = {
+  expected_income:   'bg-emerald-50',
+  expected_expense:  'bg-rose-50',
+  expected_transfer: 'bg-blue-50',
+  client_funds:      'bg-amber-50',
+};
+const FINANCE_FORECAST_TYPE_COLORS = {
+  expected_income:   'text-emerald-700',
+  expected_expense:  'text-rose-700',
+  expected_transfer: 'text-blue-700',
+  client_funds:      'text-amber-700',
+};
+
+const FINANCE_FORECAST_STATUS_LABELS = {
+  expected: 'Expected', committed: 'Committed', received: 'Received', cancelled: 'Cancelled', overdue: 'Overdue',
+};
+const FINANCE_FORECAST_STATUS_BG = {
+  expected: 'bg-blue-50', committed: 'bg-indigo-50', received: 'bg-emerald-50', cancelled: 'bg-gray-100', overdue: 'bg-rose-50',
+};
+const FINANCE_FORECAST_STATUS_COLORS = {
+  expected: 'text-blue-700', committed: 'text-indigo-700', received: 'text-emerald-700', cancelled: 'text-gray-500', overdue: 'text-rose-700',
+};
+
 function financeTypeBadge(txType) {
   const bg    = FINANCE_TX_TYPE_BG[txType]    || 'bg-gray-50';
   const color = FINANCE_TX_TYPE_COLORS[txType] || 'text-gray-600';
   const label = FINANCE_TX_TYPE_LABELS[txType] || txType;
   return `<span class="inline-flex px-2 py-0.5 text-xs font-medium rounded-full ${bg} ${color}">${escapeHtml(label)}</span>`;
+}
+
+function txStatusBadge(status) {
+  const s = status || 'completed';
+  const bg    = FINANCE_TX_STATUS_BG[s]     || 'bg-gray-100';
+  const color = FINANCE_TX_STATUS_COLORS[s]  || 'text-gray-500';
+  const label = FINANCE_TX_STATUS_LABELS[s]  || s;
+  return `<span class="inline-flex px-2 py-0.5 text-xs font-medium rounded-full ${bg} ${color}">${escapeHtml(label)}</span>`;
+}
+
+function forecastTypeBadge(fcType) {
+  const bg    = FINANCE_FORECAST_TYPE_BG[fcType]     || 'bg-gray-50';
+  const color = FINANCE_FORECAST_TYPE_COLORS[fcType]  || 'text-gray-600';
+  const label = FINANCE_FORECAST_TYPE_LABELS[fcType]  || fcType;
+  return `<span class="inline-flex px-2 py-0.5 text-xs font-medium rounded-full ${bg} ${color}">${escapeHtml(label)}</span>`;
+}
+
+function forecastStatusBadge(status) {
+  const s = status || 'expected';
+  const bg    = FINANCE_FORECAST_STATUS_BG[s]     || 'bg-gray-50';
+  const color = FINANCE_FORECAST_STATUS_COLORS[s]  || 'text-gray-600';
+  const label = FINANCE_FORECAST_STATUS_LABELS[s]  || s;
+  return `<span class="inline-flex px-2 py-0.5 text-xs font-medium rounded-full ${bg} ${color}">${escapeHtml(label)}</span>`;
+}
+
+function getCrmClientName(id) {
+  if (!id) return '';
+  return state.crmClients.find(c => Number(c.id) === Number(id))?.client_name || '';
 }
 
 function getAccountName(id) {
@@ -5510,7 +5711,7 @@ function getAccountBalance(accountId) {
   const acct = state.financeAccounts.find(a => Number(a.id) === Number(accountId));
   if (!acct) return 0;
   let balance = Number(acct.opening_balance) || 0;
-  state.financeTransactions.filter(t => !t.is_archived).forEach(t => {
+  state.financeTransactions.filter(t => !t.is_archived && !t.is_deleted && t.status !== 'cancelled').forEach(t => {
     const type = t.transaction_type;
     const amt  = Number(t.amount) || 0;
     if (type === 'transfer') {
@@ -5525,7 +5726,7 @@ function getAccountBalance(accountId) {
 }
 
 function getFinanceSummary() {
-  const activeTx = state.financeTransactions.filter(t => !t.is_archived);
+  const activeTx = state.financeTransactions.filter(t => !t.is_archived && !t.is_deleted && t.status !== 'cancelled');
   const now = new Date();
   const thisMonth = (t) => {
     const d = new Date(t.transaction_date);
@@ -5549,23 +5750,41 @@ function getFinanceSummary() {
   return { totalCapital, realIncome, realExpenses, netProfit, passThroughHeld, cashFlowThisMonth, totalAccountBalances };
 }
 
+function getFinanceForecastSummary() {
+  const now = new Date(); now.setHours(0, 0, 0, 0);
+  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  endOfMonth.setHours(23, 59, 59, 999);
+  const active = state.financeForecasts.filter(f => !f.is_archived && !f.is_deleted && !['cancelled', 'received'].includes(f.status));
+  const thisMonth = active.filter(f => { const d = new Date(f.expected_date); return d >= now && d <= endOfMonth; });
+  const expectedIncomeThisMonth   = thisMonth.filter(f => f.forecast_type === 'expected_income').reduce((s, f) => s + Number(f.amount), 0);
+  const expectedExpensesThisMonth = thisMonth.filter(f => f.forecast_type === 'expected_expense').reduce((s, f) => s + Number(f.amount), 0);
+  const expectedNetCashflow       = expectedIncomeThisMonth - expectedExpensesThisMonth;
+  const weightedIncome            = active.filter(f => f.forecast_type === 'expected_income').reduce((s, f) => s + Number(f.amount) * Number(f.probability) / 100, 0);
+  const overdueCount              = state.financeForecasts.filter(f => !f.is_archived && !f.is_deleted && f.status === 'expected' && new Date(f.expected_date) < now).length;
+  return { expectedIncomeThisMonth, expectedExpensesThisMonth, expectedNetCashflow, weightedIncome, overdueCount };
+}
+
 function renderFinanceCharts(summary) {
-  // Income vs Expenses bar chart — last 6 months
+  const fmtChartVal = (v) => {
+    if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
+    if (v >= 1_000)     return `${(v / 1_000).toFixed(0)}K`;
+    return String(Math.round(v));
+  };
+
+  // Income vs Expenses — grouped bar chart, last 6 months
   const barCanvas = $('#finance-income-expense-chart');
   if (barCanvas) {
     const months = [], incomeData = [], expenseData = [];
     for (let i = 5; i >= 0; i--) {
-      const d = new Date();
-      d.setDate(1);
-      d.setMonth(d.getMonth() - i);
+      const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - i);
       months.push(d.toLocaleString('default', { month: 'short', year: '2-digit' }));
       const y = d.getFullYear(), m = d.getMonth();
       const monthTx = state.financeTransactions.filter(t => {
-        if (t.is_archived) return false;
+        if (t.is_archived || t.status === 'cancelled') return false;
         const td = new Date(t.transaction_date);
         return td.getFullYear() === y && td.getMonth() === m;
       });
-      incomeData.push(monthTx.filter(t => t.transaction_type === 'income').reduce((s, t) => s + Number(t.amount), 0));
+      incomeData.push( monthTx.filter(t => t.transaction_type === 'income').reduce((s, t) => s + Number(t.amount), 0));
       expenseData.push(monthTx.filter(t => t.transaction_type === 'expense').reduce((s, t) => s + Number(t.amount), 0));
     }
     if (financeIncomeExpenseChartInstance) { financeIncomeExpenseChartInstance.destroy(); financeIncomeExpenseChartInstance = null; }
@@ -5574,14 +5793,28 @@ function renderFinanceCharts(summary) {
       data: {
         labels: months,
         datasets: [
-          { label: 'Income',   data: incomeData,   backgroundColor: '#10b981' },
-          { label: 'Expenses', data: expenseData, backgroundColor: '#f43f5e' },
+          { label: 'Income',   data: incomeData,   backgroundColor: 'rgba(16,185,129,0.85)', borderRadius: 4, borderSkipped: false },
+          { label: 'Expenses', data: expenseData, backgroundColor: 'rgba(244,63,94,0.85)',  borderRadius: 4, borderSkipped: false },
         ],
       },
       options: {
-        responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { position: 'bottom' } },
-        scales: { y: { beginAtZero: true, ticks: { callback: v => fmtMoney(v) } } },
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { position: 'bottom', labels: { usePointStyle: true, pointStyleWidth: 8, padding: 16, font: { size: 12 } } },
+          tooltip: { callbacks: { label: ctx => ` ${ctx.dataset.label}: ${fmtMoney(ctx.raw)}` } },
+        },
+        scales: {
+          x: {
+            grid: { display: false },
+            ticks: { maxRotation: 0, minRotation: 0, font: { size: 11 } },
+          },
+          y: {
+            beginAtZero: true,
+            grid: { color: 'rgba(0,0,0,0.05)' },
+            ticks: { callback: v => fmtChartVal(v), font: { size: 11 } },
+          },
+        },
       },
     });
   }
@@ -5590,28 +5823,41 @@ function renderFinanceCharts(summary) {
   const doughnutCanvas = $('#finance-expense-category-chart');
   if (doughnutCanvas) {
     const catTotals = {};
-    state.financeTransactions.filter(t => !t.is_archived && t.transaction_type === 'expense').forEach(t => {
-      const name = getCategoryName(t.category_id);
-      catTotals[name] = (catTotals[name] || 0) + Number(t.amount);
-    });
+    state.financeTransactions
+      .filter(t => !t.is_archived && t.status !== 'cancelled' && t.transaction_type === 'expense')
+      .forEach(t => { const n = getCategoryName(t.category_id); catTotals[n] = (catTotals[n] || 0) + Number(t.amount); });
     const labels = Object.keys(catTotals);
     const values = Object.values(catTotals);
     if (financeExpenseCategoryChartInstance) { financeExpenseCategoryChartInstance.destroy(); financeExpenseCategoryChartInstance = null; }
+    const palette = ['#6366f1','#10b981','#f59e0b','#f43f5e','#3b82f6','#8b5cf6','#ec4899','#14b8a6','#f97316','#06b6d4'];
     if (labels.length) {
-      const palette = ['#6366f1','#10b981','#f59e0b','#f43f5e','#3b82f6','#8b5cf6','#ec4899','#14b8a6','#f97316','#06b6d4'];
       financeExpenseCategoryChartInstance = new Chart(doughnutCanvas, {
         type: 'doughnut',
-        data: { labels, datasets: [{ data: values, backgroundColor: palette.slice(0, labels.length) }] },
-        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } },
+        data: { labels, datasets: [{ data: values, backgroundColor: palette.slice(0, labels.length), borderWidth: 0 }] },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: {
+            legend: { position: 'bottom', labels: { usePointStyle: true, pointStyleWidth: 8, padding: 12, font: { size: 11 } } },
+            tooltip: { callbacks: { label: ctx => ` ${ctx.label}: ${fmtMoney(ctx.raw)}` } },
+          },
+        },
       });
+    } else {
+      const ctx = doughnutCanvas.getContext('2d');
+      ctx.clearRect(0, 0, doughnutCanvas.width, doughnutCanvas.height);
+      ctx.font = '13px system-ui, sans-serif';
+      ctx.fillStyle = '#9ca3af';
+      ctx.textAlign = 'center';
+      ctx.fillText('No expense data yet', doughnutCanvas.width / 2, doughnutCanvas.height / 2);
     }
   }
 }
 
 function renderFinanceDashboard() {
-  const summary = getFinanceSummary();
+  const summary  = getFinanceSummary();
+  const forecast = getFinanceForecastSummary();
 
-  // Stat cards
+  // Stat cards — actual
   const statsEl = $('#finance-dashboard-stats');
   if (statsEl) {
     const netColor = summary.netProfit >= 0 ? 'emerald' : 'rose';
@@ -5637,6 +5883,44 @@ function renderFinanceDashboard() {
       </div>`).join('');
   }
 
+  // Forecast cards
+  const forecastEl = $('#finance-forecast-cards');
+  if (forecastEl) {
+    const netFcColor = forecast.expectedNetCashflow >= 0 ? 'emerald' : 'rose';
+    const fcCards = [
+      { label: 'Expected Income (Month)',   value: fmtMoney(forecast.expectedIncomeThisMonth),   icon: 'calendar-check', color: 'emerald' },
+      { label: 'Expected Expenses (Month)', value: fmtMoney(forecast.expectedExpensesThisMonth), icon: 'calendar-x',     color: 'rose' },
+      { label: 'Expected Net Cashflow',     value: fmtMoney(forecast.expectedNetCashflow),        icon: 'activity',       color: netFcColor },
+      { label: 'Weighted Expected Income',  value: fmtMoney(forecast.weightedIncome),             icon: 'percent',        color: 'indigo' },
+      { label: 'Overdue Forecasts',         value: String(forecast.overdueCount),                 icon: 'alert-circle',   color: forecast.overdueCount > 0 ? 'rose' : 'gray' },
+    ];
+    forecastEl.innerHTML = fcCards.map(c => `
+      <div class="stat-card">
+        <div class="stat-card-content">
+          <p class="stat-label">${c.label}</p>
+          <p class="stat-value text-${c.color}-600">${c.value}</p>
+        </div>
+        <div class="stat-card-icon bg-${c.color}-50">
+          <i data-lucide="${c.icon}" class="w-5 h-5 text-${c.color}-500"></i>
+        </div>
+      </div>`).join('');
+  }
+
+  // Trash counters
+  const txInTrash = state.financeTransactions.filter(t => t.is_deleted).length;
+  const fcInTrash = state.financeForecasts.filter(f => f.is_deleted).length;
+  const trashEl = $('#finance-trash-summary');
+  if (trashEl) {
+    if (txInTrash === 0 && fcInTrash === 0) {
+      trashEl.innerHTML = '';
+    } else {
+      const parts = [];
+      if (txInTrash > 0) parts.push(`<strong>${txInTrash}</strong> transaction${txInTrash !== 1 ? 's' : ''}`);
+      if (fcInTrash > 0) parts.push(`<strong>${fcInTrash}</strong> forecast${fcInTrash !== 1 ? 's' : ''}`);
+      trashEl.innerHTML = `<div class="inline-flex items-center gap-2 text-xs text-gray-500 bg-rose-50 border border-rose-100 rounded-lg px-3 py-1.5"><i data-lucide="trash" class="w-3.5 h-3.5 text-rose-400 shrink-0"></i> Trash: ${parts.join(' · ')} — switch to <em>Trash</em> view in Transactions or Forecast tabs to manage.</div>`;
+    }
+  }
+
   // Account balances list
   const balancesEl = $('#finance-account-balances');
   if (balancesEl) {
@@ -5644,12 +5928,15 @@ function renderFinanceDashboard() {
     balancesEl.innerHTML = accounts.length
       ? accounts.map(a => {
           const bal = getAccountBalance(a.id);
-          return `<div class="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
+          return `<div class="flex items-center justify-between py-2 border-b border-gray-100 last:border-0 cursor-pointer hover:bg-gray-50 rounded-lg px-1 -mx-1 transition-colors" data-action="open-account-ledger" data-id="${a.id}">
             <div>
               <p class="text-sm font-medium text-gray-800">${escapeHtml(a.account_name)}</p>
               <p class="text-xs text-gray-400">${escapeHtml(FINANCE_ACCT_TYPE_LABELS[a.account_type] || a.account_type)}</p>
             </div>
-            <span class="text-sm font-semibold ${bal < 0 ? 'text-rose-600' : 'text-gray-800'}">${fmtMoney(bal)}</span>
+            <div class="flex items-center gap-2">
+              <span class="text-sm font-semibold ${bal < 0 ? 'text-rose-600' : 'text-gray-800'}">${fmtMoney(bal)}</span>
+              <i data-lucide="chevron-right" class="w-3.5 h-3.5 text-gray-300"></i>
+            </div>
           </div>`;
         }).join('')
       : '<p class="text-sm text-gray-400 py-3">No accounts.</p>';
@@ -5658,7 +5945,7 @@ function renderFinanceDashboard() {
   // Recent transactions table
   const recentEl = $('#finance-recent-transactions');
   if (recentEl) {
-    const recent = state.financeTransactions.filter(t => !t.is_archived).slice(0, 8);
+    const recent = state.financeTransactions.filter(t => !t.is_archived && !t.is_deleted).slice(0, 8);
     recentEl.innerHTML = recent.length
       ? recent.map(t => {
           const isTransfer = t.transaction_type === 'transfer';
@@ -5695,8 +5982,9 @@ function renderFinanceTransactions() {
 
   let txs = state.financeTransactions;
 
-  if (f.archived === 'active')   txs = txs.filter(t => !t.is_archived);
-  if (f.archived === 'archived') txs = txs.filter(t =>  t.is_archived);
+  if (f.archived === 'active')   txs = txs.filter(t => !t.is_archived && !t.is_deleted);
+  if (f.archived === 'archived') txs = txs.filter(t =>  t.is_archived && !t.is_deleted);
+  if (f.archived === 'deleted')  txs = txs.filter(t =>  t.is_deleted);
   if (f.type && f.type !== 'all') txs = txs.filter(t => t.transaction_type === f.type);
   if (f.account) {
     const aid = Number(f.account);
@@ -5727,18 +6015,29 @@ function renderFinanceTransactions() {
       const acct = isTransfer
         ? `${getAccountName(t.from_account_id)} → ${getAccountName(t.to_account_id)}`
         : getAccountName(t.account_id);
-      return `<tr class="hover:bg-gray-50 ${t.is_archived ? 'opacity-60' : ''}">
+      const projectOrClient = t.project_name || getCrmClientName(t.client_id) || '—';
+      return `<tr class="hover:bg-gray-50 ${t.is_deleted ? 'opacity-50 bg-rose-50' : (t.is_archived || t.status === 'cancelled') ? 'opacity-60' : ''}">
+        <td class="px-4 py-2 text-sm text-gray-500 whitespace-nowrap">${t.transaction_number ? `<span class="font-mono text-xs text-gray-400">${escapeHtml(t.transaction_number)}</span>` : ''}</td>
         <td class="px-4 py-2 text-sm text-gray-600 whitespace-nowrap">${fmtDate(t.transaction_date)}</td>
         <td class="px-4 py-2 text-sm">${financeTypeBadge(t.transaction_type)}</td>
+        <td class="px-4 py-2 text-sm">${txStatusBadge(t.status)}</td>
         <td class="px-4 py-2 text-sm text-gray-500 whitespace-nowrap">${escapeHtml(acct)}</td>
+        <td class="px-4 py-2 text-sm text-gray-500 max-w-[120px] truncate">${escapeHtml(projectOrClient)}</td>
         <td class="px-4 py-2 text-sm text-gray-400">${escapeHtml(getCategoryName(t.category_id))}</td>
         <td class="px-4 py-2 text-sm text-gray-600 max-w-xs truncate">${escapeHtml(t.description || '—')}</td>
         <td class="px-4 py-2 text-sm font-medium text-right whitespace-nowrap ${FINANCE_TX_TYPE_COLORS[t.transaction_type] || ''}">${fmtMoney(t.amount)}</td>
         <td class="px-4 py-2 text-right whitespace-nowrap">
-          ${!t.is_archived ? `
+          ${t.is_deleted ? `
+            <button class="icon-btn text-emerald-600" data-action="restore-finance-transaction" data-id="${t.id}" title="Restore"><i data-lucide="rotate-ccw" class="w-4 h-4"></i></button>
+            <button class="icon-btn text-rose-700" data-action="permanent-delete-finance-transaction" data-id="${t.id}" title="Delete Permanently"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+          ` : !t.is_archived ? `
             <button class="icon-btn" data-action="edit-finance-transaction" data-id="${t.id}" title="Edit"><i data-lucide="pencil" class="w-4 h-4"></i></button>
-            <button class="icon-btn text-rose-500" data-action="archive-finance-transaction" data-id="${t.id}" title="Archive"><i data-lucide="archive" class="w-4 h-4"></i></button>
-          ` : '<span class="text-xs text-gray-400">Archived</span>'}
+            <button class="icon-btn text-amber-500" data-action="archive-finance-transaction" data-id="${t.id}" title="Archive"><i data-lucide="archive" class="w-4 h-4"></i></button>
+            <button class="icon-btn text-rose-500" data-action="soft-delete-finance-transaction" data-id="${t.id}" title="Move to Trash"><i data-lucide="trash" class="w-4 h-4"></i></button>
+          ` : `
+            <button class="icon-btn text-emerald-600" data-action="restore-finance-transaction" data-id="${t.id}" title="Restore"><i data-lucide="rotate-ccw" class="w-4 h-4"></i></button>
+            <button class="icon-btn text-rose-500" data-action="soft-delete-finance-transaction" data-id="${t.id}" title="Move to Trash"><i data-lucide="trash" class="w-4 h-4"></i></button>
+          `}
         </td>
       </tr>`;
     }).join('');
@@ -5769,7 +6068,150 @@ function renderFinanceAccounts() {
           <span class="inline-flex px-2 py-0.5 text-xs font-medium rounded-full ${a.is_active ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-100 text-gray-500'}">${a.is_active ? 'Active' : 'Inactive'}</span>
         </td>
         <td class="px-4 py-3 text-right">
+          <button class="icon-btn text-indigo-500" data-action="open-account-ledger" data-id="${a.id}" title="View Ledger"><i data-lucide="book-open" class="w-4 h-4"></i></button>
           <button class="icon-btn" data-action="edit-finance-account" data-id="${a.id}" title="Edit"><i data-lucide="pencil" class="w-4 h-4"></i></button>
+        </td>
+      </tr>`;
+    }).join('');
+  }
+  refreshIcons();
+}
+
+function openAccountLedgerModal(accountId) {
+  const acct = state.financeAccounts.find(a => Number(a.id) === accountId);
+  if (!acct) return;
+
+  // All non-deleted, non-cancelled transactions touching this account (archived included for full history)
+  const txs = state.financeTransactions
+    .filter(t => {
+      if (t.is_deleted || t.status === 'cancelled') return false;
+      if (t.transaction_type === 'transfer') {
+        return Number(t.from_account_id) === accountId || Number(t.to_account_id) === accountId;
+      }
+      return Number(t.account_id) === accountId;
+    })
+    .slice()
+    .sort((a, b) => {
+      const d = (a.transaction_date || '').localeCompare(b.transaction_date || '');
+      return d !== 0 ? d : (a.created_at || '').localeCompare(b.created_at || '');
+    });
+
+  let runBal = Number(acct.opening_balance) || 0;
+  let totalInflow = 0, totalOutflow = 0;
+
+  const rows = txs.map(t => {
+    const amt  = Number(t.amount) || 0;
+    const type = t.transaction_type;
+    let inAmt = 0, outAmt = 0;
+
+    if (type === 'transfer') {
+      if (Number(t.from_account_id) === accountId) outAmt = amt;
+      else inAmt = amt;
+    } else if (['income', 'capital_injection', 'pass_through_received'].includes(type)) {
+      inAmt = amt;
+    } else if (['expense', 'pass_through_spent'].includes(type)) {
+      outAmt = amt;
+    }
+
+    runBal        += inAmt - outAmt;
+    totalInflow   += inAmt;
+    totalOutflow  += outAmt;
+    const runSnap  = runBal;
+
+    return `<tr class="hover:bg-gray-50 border-b border-gray-50 ${t.is_archived ? 'opacity-60' : ''}">
+      <td class="px-4 py-2 text-sm text-gray-600 whitespace-nowrap">${fmtDate(t.transaction_date)}</td>
+      <td class="px-4 py-2 text-xs text-gray-400 font-mono whitespace-nowrap">${t.transaction_number ? escapeHtml(t.transaction_number) : '—'}</td>
+      <td class="px-4 py-2 text-sm">${financeTypeBadge(type)}</td>
+      <td class="px-4 py-2 text-sm text-gray-600 max-w-[200px] truncate">${escapeHtml(t.description || '—')}</td>
+      <td class="px-4 py-2 text-sm text-right text-emerald-600 font-medium whitespace-nowrap">${inAmt > 0 ? fmtMoney(inAmt) : ''}</td>
+      <td class="px-4 py-2 text-sm text-right text-rose-600 font-medium whitespace-nowrap">${outAmt > 0 ? fmtMoney(outAmt) : ''}</td>
+      <td class="px-4 py-2 text-sm text-right font-semibold whitespace-nowrap ${runSnap < 0 ? 'text-rose-600' : 'text-gray-800'}">${fmtMoney(runSnap)}</td>
+    </tr>`;
+  });
+
+  const nameEl = $('#acct-ledger-name');
+  const metaEl = $('#acct-ledger-meta');
+  const balEl  = $('#acct-ledger-balance');
+  const openEl = $('#acct-ledger-opening');
+  const inEl   = $('#acct-ledger-inflow');
+  const outEl  = $('#acct-ledger-outflow');
+  const body   = $('#acct-ledger-table-body');
+
+  if (nameEl)  nameEl.textContent = acct.account_name;
+  if (metaEl)  metaEl.textContent = `${FINANCE_ACCT_TYPE_LABELS[acct.account_type] || acct.account_type}${acct.owner_name ? ' · ' + acct.owner_name : ''}`;
+  if (balEl)   balEl.textContent  = fmtMoney(getAccountBalance(accountId));
+  if (openEl)  openEl.textContent = fmtMoney(acct.opening_balance || 0);
+  if (inEl)    inEl.textContent   = fmtMoney(totalInflow);
+  if (outEl)   outEl.textContent  = fmtMoney(totalOutflow);
+  if (body) {
+    body.innerHTML = rows.length
+      ? rows.join('')
+      : '<tr><td colspan="7" class="px-4 py-10 text-center text-gray-400 text-sm">No transactions for this account yet.</td></tr>';
+  }
+
+  refreshIcons();
+  openModal('account-ledger-modal');
+}
+
+function renderFinanceForecast() {
+  const f = state.filters.financeForecasts;
+  let forecasts = state.financeForecasts;
+
+  if (f.archived === 'active')   forecasts = forecasts.filter(fc => !fc.is_archived && !fc.is_deleted);
+  if (f.archived === 'archived') forecasts = forecasts.filter(fc =>  fc.is_archived && !fc.is_deleted);
+  if (f.archived === 'deleted')  forecasts = forecasts.filter(fc =>  fc.is_deleted);
+  if (f.type   && f.type   !== 'all') forecasts = forecasts.filter(fc => fc.forecast_type === f.type);
+  if (f.status && f.status !== 'all') forecasts = forecasts.filter(fc => fc.status === f.status);
+  if (f.search) {
+    const q = f.search.toLowerCase();
+    forecasts = forecasts.filter(fc =>
+      (fc.description  || '').toLowerCase().includes(q) ||
+      (fc.client_name  || '').toLowerCase().includes(q) ||
+      (fc.project_name || '').toLowerCase().includes(q) ||
+      getCategoryName(fc.category_id).toLowerCase().includes(q)
+    );
+  }
+
+  const tbody = $('#finance-forecast-table-body');
+  const empty  = $('#finance-forecast-empty');
+  if (!forecasts.length) {
+    if (tbody) tbody.innerHTML = '';
+    if (empty) empty.classList.remove('hidden');
+    refreshIcons();
+    return;
+  }
+  if (empty) empty.classList.add('hidden');
+  if (tbody) {
+    const now = new Date(); now.setHours(0, 0, 0, 0);
+    tbody.innerHTML = forecasts.map(fc => {
+      const isConverted  = !!fc.linked_transaction_id;
+      const isOverdue    = !isConverted && !fc.is_deleted && fc.status === 'expected' && new Date(fc.expected_date) < now;
+      const displayStatus = isOverdue ? 'overdue' : fc.status;
+      const clientOrProj = fc.client_name || getCrmClientName(fc.client_id) || fc.project_name || '—';
+      return `<tr class="hover:bg-gray-50 ${fc.is_deleted ? 'opacity-50 bg-rose-50' : fc.is_archived ? 'opacity-60' : ''}">
+        <td class="px-4 py-2 text-sm whitespace-nowrap ${isOverdue ? 'text-rose-600 font-medium' : 'text-gray-600'}">${fmtDate(fc.expected_date)}</td>
+        <td class="px-4 py-2 text-sm">${forecastTypeBadge(fc.forecast_type)}</td>
+        <td class="px-4 py-2 text-sm text-gray-600 max-w-[140px] truncate">${escapeHtml(clientOrProj)}</td>
+        <td class="px-4 py-2 text-sm text-gray-400">${escapeHtml(getCategoryName(fc.category_id))}</td>
+        <td class="px-4 py-2 text-sm font-medium text-right whitespace-nowrap">${fmtMoney(fc.amount)}</td>
+        <td class="px-4 py-2 text-sm text-center text-gray-500">${Number(fc.probability).toFixed(0)}%</td>
+        <td class="px-4 py-2 text-sm">${forecastStatusBadge(displayStatus)}</td>
+        <td class="px-4 py-2 text-right whitespace-nowrap">
+          ${fc.is_deleted ? `
+            <button class="icon-btn text-emerald-600" data-action="restore-finance-forecast" data-id="${fc.id}" title="Restore"><i data-lucide="rotate-ccw" class="w-4 h-4"></i></button>
+            <button class="icon-btn text-rose-700" data-action="permanent-delete-finance-forecast" data-id="${fc.id}" title="Delete Permanently"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+          ` : !fc.is_archived ? `
+            <button class="icon-btn" data-action="edit-finance-forecast" data-id="${fc.id}" title="Edit"><i data-lucide="pencil" class="w-4 h-4"></i></button>
+            ${!isConverted
+              ? `<button class="icon-btn text-indigo-500" data-action="convert-forecast-to-tx" data-id="${fc.id}" title="Convert to Transaction"><i data-lucide="arrow-right-circle" class="w-4 h-4"></i></button>`
+              : `<span title="Already converted" class="inline-flex"><i data-lucide="check-circle" class="w-4 h-4 text-emerald-400"></i></span>`
+            }
+            <button class="icon-btn text-amber-500" data-action="archive-finance-forecast" data-id="${fc.id}" title="Archive"><i data-lucide="archive" class="w-4 h-4"></i></button>
+            <button class="icon-btn text-rose-500" data-action="soft-delete-finance-forecast" data-id="${fc.id}" title="Move to Trash"><i data-lucide="trash" class="w-4 h-4"></i></button>
+          ` : `
+            <button class="icon-btn text-emerald-600" data-action="restore-finance-forecast" data-id="${fc.id}" title="Restore"><i data-lucide="rotate-ccw" class="w-4 h-4"></i></button>
+            <button class="icon-btn text-rose-500" data-action="soft-delete-finance-forecast" data-id="${fc.id}" title="Move to Trash"><i data-lucide="trash" class="w-4 h-4"></i></button>
+          `}
         </td>
       </tr>`;
     }).join('');
@@ -5779,7 +6221,7 @@ function renderFinanceAccounts() {
 
 function setFinanceTab(tab) {
   state.financeTab = tab;
-  ['dashboard', 'transactions', 'accounts'].forEach(t => {
+  ['dashboard', 'transactions', 'forecast', 'accounts', 'reports'].forEach(t => {
     const section = $(`#finance-section-${t}`);
     const btn = document.querySelector(`[data-finance-tab="${t}"]`);
     if (section) section.classList.toggle('hidden', t !== tab);
@@ -5798,6 +6240,7 @@ function renderFinanceView() {
   setFinanceTab(state.financeTab || 'dashboard');
   renderFinanceDashboard();
   renderFinanceTransactions();
+  renderFinanceForecast();
   renderFinanceAccounts();
 }
 
@@ -5866,22 +6309,28 @@ function openFinanceTransactionModal(id = null, prefill = {}) {
   if (id) {
     const tx = state.financeTransactions.find(t => Number(t.id) === id);
     if (tx) {
-      form.elements['transaction_date'].value = tx.transaction_date?.slice(0, 10) || '';
-      form.elements['transaction_type'].value = tx.transaction_type || 'income';
-      form.elements['amount'].value           = tx.amount || '';
-      form.elements['account_id'].value       = tx.account_id || '';
-      form.elements['from_account_id'].value  = tx.from_account_id || '';
-      form.elements['to_account_id'].value    = tx.to_account_id || '';
-      form.elements['client_id'].value        = tx.client_id || '';
-      form.elements['description'].value      = tx.description || '';
-      form.elements['payment_method'].value   = tx.payment_method || '';
-      form.elements['reference'].value        = tx.reference || '';
+      form.elements['transaction_date'].value    = tx.transaction_date?.slice(0, 10) || '';
+      form.elements['transaction_type'].value    = tx.transaction_type || 'income';
+      form.elements['amount'].value              = tx.amount || '';
+      form.elements['account_id'].value          = tx.account_id || '';
+      form.elements['from_account_id'].value     = tx.from_account_id || '';
+      form.elements['to_account_id'].value       = tx.to_account_id || '';
+      form.elements['client_id'].value           = tx.client_id || '';
+      form.elements['description'].value         = tx.description || '';
+      form.elements['payment_method'].value      = tx.payment_method || '';
+      form.elements['reference'].value           = tx.reference || '';
+      form.elements['transaction_number'].value  = tx.transaction_number || '';
+      form.elements['status'].value              = tx.status || 'completed';
+      form.elements['due_date'].value            = tx.due_date?.slice(0, 10) || '';
+      form.elements['project_name'].value        = tx.project_name || '';
+      form.elements['internal_notes'].value      = tx.internal_notes || '';
+      form.elements['tags'].value                = (tx.tags || []).join(', ');
       syncFinanceTxFields();
-      // Restore category after sync resets the dropdown
       if (tx.category_id) setTimeout(() => { if (form.elements['category_id']) form.elements['category_id'].value = tx.category_id; }, 0);
     }
   } else {
     form.elements['transaction_date'].value = new Date().toISOString().slice(0, 10);
+    form.elements['status'].value           = 'completed';
     Object.entries(prefill).forEach(([k, v]) => { if (form.elements[k]) form.elements[k].value = v; });
     syncFinanceTxFields();
   }
@@ -5982,20 +6431,34 @@ async function handleFinanceTransactionSubmit(e) {
   const id   = state.editingFinanceTransactionId;
   const type = form.elements['transaction_type']?.value;
   const isTransfer = type === 'transfer';
+  const tagsRaw = form.elements['tags']?.value.trim() || '';
+  const clientId = Number(form.elements['client_id']?.value) || null;
+  const txNumRaw = form.elements['transaction_number']?.value.trim() || '';
+  const now2 = new Date();
+  const autoTxNum = txNumRaw || (!id
+    ? `TXN-${now2.getFullYear()}${String(now2.getMonth()+1).padStart(2,'0')}${String(now2.getDate()).padStart(2,'0')}-${String(Math.floor(Math.random()*9000)+1000)}`
+    : undefined);
   const payload = {
-    transaction_date: form.elements['transaction_date'].value,
-    transaction_type: type,
-    amount:           Number(form.elements['amount'].value) || 0,
-    account_id:       !isTransfer ? (Number(form.elements['account_id']?.value) || null)      : null,
-    from_account_id:   isTransfer ? (Number(form.elements['from_account_id']?.value) || null) : null,
-    to_account_id:     isTransfer ? (Number(form.elements['to_account_id']?.value) || null)   : null,
-    client_id:        Number(form.elements['client_id']?.value)   || null,
-    category_id:      Number(form.elements['category_id']?.value) || null,
-    description:      form.elements['description']?.value.trim()  || null,
-    payment_method:   form.elements['payment_method']?.value      || null,
-    reference:        form.elements['reference']?.value.trim()    || null,
-    updated_at:       new Date().toISOString(),
+    transaction_date:    form.elements['transaction_date'].value,
+    transaction_type:    type,
+    status:              form.elements['status']?.value || 'completed',
+    amount:              Number(form.elements['amount'].value) || 0,
+    account_id:          !isTransfer ? (Number(form.elements['account_id']?.value) || null)      : null,
+    from_account_id:      isTransfer ? (Number(form.elements['from_account_id']?.value) || null) : null,
+    to_account_id:        isTransfer ? (Number(form.elements['to_account_id']?.value) || null)   : null,
+    client_id:           clientId,
+    client_name:         clientId ? (state.crmClients.find(c => Number(c.id) === clientId)?.client_name || null) : null,
+    category_id:         Number(form.elements['category_id']?.value) || null,
+    description:         form.elements['description']?.value.trim()  || null,
+    payment_method:      form.elements['payment_method']?.value      || null,
+    reference:           form.elements['reference']?.value.trim()    || null,
+    due_date:            form.elements['due_date']?.value            || null,
+    project_name:        form.elements['project_name']?.value.trim() || null,
+    internal_notes:      form.elements['internal_notes']?.value.trim() || null,
+    tags:                tagsRaw ? tagsRaw.split(',').map(t => t.trim()).filter(Boolean) : [],
+    updated_at:          new Date().toISOString(),
   };
+  if (autoTxNum !== undefined) payload.transaction_number = autoTxNum;
   if (!payload.transaction_date)        { toast('Date is required.', 'error'); return; }
   if (!payload.amount || payload.amount <= 0) { toast('Amount must be greater than 0.', 'error'); return; }
   if (isTransfer && (!payload.from_account_id || !payload.to_account_id)) {
@@ -6006,9 +6469,13 @@ async function handleFinanceTransactionSubmit(e) {
   if (btn) btn.disabled = true;
   let ok = false;
   if (id) {
-    ok = !!(await updateFinanceTransaction(id, payload));
+    const oldTx = state.financeTransactions.find(t => Number(t.id) === id);
+    const result = await updateFinanceTransaction(id, payload);
+    if (result) await insertFinanceAuditLog({ entityType: 'transaction', entityId: id, action: 'updated', oldData: oldTx, newData: result });
+    ok = !!result;
   } else {
     payload.created_at = new Date().toISOString();
+    payload.created_by = state.currentUser?.id || null;
     ok = !!(await createFinanceTransaction(payload));
   }
   if (btn) btn.disabled = false;
@@ -6033,6 +6500,7 @@ async function handleSplitReceiptSubmit(e) {
   const incomeCatId = Number(form.elements['income_category_id']?.value) || null;
   const ptCatId     = Number(form.elements['pt_category_id']?.value)     || null;
   const reference   = form.elements['reference']?.value.trim()           || null;
+  const projectName = form.elements['project_name']?.value.trim()        || null;
   if (!txDate)           { toast('Date is required.',                          'error'); return; }
   if (!acctId)           { toast('Account is required.',                        'error'); return; }
   if (totalAmt <= 0)     { toast('Total amount must be greater than 0.',        'error'); return; }
@@ -6041,23 +6509,120 @@ async function handleSplitReceiptSubmit(e) {
   const btn = form.querySelector('[type="submit"]');
   if (btn) btn.disabled = true;
   const now = new Date().toISOString();
+  const createdBy = state.currentUser?.id || null;
   const incomeResult = await createFinanceTransaction({
     transaction_date: txDate, transaction_type: 'income', account_id: acctId,
     client_id: clientId, category_id: incomeCatId, amount: svcAmt,
-    description: 'Service income (split receipt)', reference, created_at: now, updated_at: now,
+    project_name: projectName, description: 'Service income (split receipt)',
+    reference, created_by: createdBy, created_at: now, updated_at: now,
   });
   if (!incomeResult) { if (btn) btn.disabled = false; return; }
   const ptResult = await createFinanceTransaction({
     transaction_date: txDate, transaction_type: 'pass_through_received', account_id: acctId,
     client_id: clientId, category_id: ptCatId, amount: ptAmt,
-    description: 'Client budget (split receipt)',
-    related_transaction_id: incomeResult.id, reference, created_at: now, updated_at: now,
+    project_name: projectName, description: 'Client budget (split receipt)',
+    related_transaction_id: incomeResult.id, reference,
+    created_by: createdBy, created_at: now, updated_at: now,
   });
   if (btn) btn.disabled = false;
   if (ptResult) {
     toast('Split receipt recorded.', 'success');
     closeModal();
     state.financeTransactions = await fetchFinanceTransactions();
+    renderFinanceView();
+  }
+}
+
+function openFinanceForecastModal(id = null, prefill = {}) {
+  state.editingFinanceForecastId = id;
+  const form  = $('#finance-forecast-form');
+  const title = $('#finance-forecast-modal-title');
+  if (!form) return;
+  form.reset();
+  if (title) title.textContent = id ? 'Edit Forecast' : 'New Forecast';
+
+  const clientSel = $('#finance-forecast-client');
+  if (clientSel) {
+    clientSel.innerHTML = '<option value="">— No client —</option>' +
+      state.crmClients.filter(c => !c.is_archived)
+        .map(c => `<option value="${c.id}">${escapeHtml(c.client_name)}</option>`).join('');
+  }
+  populateFinanceAccountSelects(['finance-forecast-account']);
+  const catSel = $('#finance-forecast-category');
+  if (catSel) {
+    catSel.innerHTML = '<option value="">— No category —</option>' +
+      state.financeCategories.filter(c => c.is_active)
+        .map(c => `<option value="${c.id}">${escapeHtml(c.category_name)}</option>`).join('');
+  }
+
+  if (id) {
+    const fc = state.financeForecasts.find(f => Number(f.id) === id);
+    if (fc) {
+      form.elements['expected_date'].value  = fc.expected_date?.slice(0, 10) || '';
+      form.elements['forecast_type'].value  = fc.forecast_type || 'expected_income';
+      form.elements['amount'].value         = fc.amount || '';
+      form.elements['probability'].value    = fc.probability ?? 100;
+      form.elements['status'].value         = fc.status || 'expected';
+      form.elements['account_id'].value     = fc.account_id || '';
+      form.elements['client_id'].value      = fc.client_id || '';
+      form.elements['project_name'].value   = fc.project_name || '';
+      form.elements['category_id'].value    = fc.category_id || '';
+      form.elements['description'].value    = fc.description || '';
+      form.elements['internal_notes'].value = fc.internal_notes || '';
+      form.elements['tags'].value           = (fc.tags || []).join(', ');
+    }
+  } else {
+    form.elements['expected_date'].value = new Date().toISOString().slice(0, 10);
+    form.elements['probability'].value   = 100;
+    Object.entries(prefill).forEach(([k, v]) => { if (form.elements[k]) form.elements[k].value = v; });
+  }
+  openModal('finance-forecast-modal');
+}
+
+async function handleFinanceForecastSubmit(e) {
+  e.preventDefault();
+  if (!isAdmin()) return;
+  const form = e.target;
+  const id   = state.editingFinanceForecastId;
+  const clientId = Number(form.elements['client_id']?.value) || null;
+  const tagsRaw  = form.elements['tags']?.value.trim() || '';
+  const payload = {
+    expected_date:  form.elements['expected_date'].value,
+    forecast_type:  form.elements['forecast_type'].value,
+    amount:         Number(form.elements['amount'].value) || 0,
+    probability:    Number(form.elements['probability'].value) ?? 100,
+    status:         form.elements['status'].value || 'expected',
+    account_id:     Number(form.elements['account_id']?.value)  || null,
+    client_id:      clientId,
+    client_name:    clientId ? (state.crmClients.find(c => Number(c.id) === clientId)?.client_name || null) : null,
+    project_name:   form.elements['project_name']?.value.trim()   || null,
+    category_id:    Number(form.elements['category_id']?.value)   || null,
+    description:    form.elements['description']?.value.trim()    || null,
+    internal_notes: form.elements['internal_notes']?.value.trim() || null,
+    tags:           tagsRaw ? tagsRaw.split(',').map(t => t.trim()).filter(Boolean) : [],
+    updated_at:     new Date().toISOString(),
+  };
+  if (!payload.expected_date)              { toast('Expected date is required.', 'error'); return; }
+  if (!payload.amount || payload.amount <= 0) { toast('Amount must be greater than 0.', 'error'); return; }
+  const btn = form.querySelector('[type="submit"]');
+  if (btn) btn.disabled = true;
+  let ok = false;
+  if (id) {
+    const oldFc = state.financeForecasts.find(f => Number(f.id) === id);
+    const result = await updateFinanceForecast(id, payload);
+    if (result) await insertFinanceAuditLog({ entityType: 'forecast', entityId: id, action: 'updated', oldData: oldFc, newData: result });
+    ok = !!result;
+  } else {
+    payload.forecast_date = new Date().toISOString().slice(0, 10);
+    payload.created_by    = state.currentUser?.id || null;
+    payload.created_at    = new Date().toISOString();
+    ok = !!(await createFinanceForecast(payload));
+  }
+  if (btn) btn.disabled = false;
+  if (ok) {
+    toast(id ? 'Forecast updated.' : 'Forecast created.', 'success');
+    closeModal();
+    state.financeForecasts = await fetchFinanceForecasts();
     renderFinanceView();
   }
 }
@@ -6508,13 +7073,33 @@ function closeModal() {
 function openConfirm(type, id, label) {
   state.pendingDelete = { type, id };
 
-  const isArchive = type.endsWith('_archive');
+  const isArchive  = type.endsWith('_archive');
+  const isSoftDel  = type.endsWith('_soft_delete');
+  const isPermaDel = type.endsWith('_permanent_delete');
 
   const titleEl = $('#confirm-modal-title');
   if (titleEl) {
-    titleEl.textContent = isArchive
-      ? `Archive this ${labelize(type.replace('_archive', ''))}?`
-      : 'Delete this item?';
+    titleEl.textContent = isArchive  ? `Archive this ${labelize(type.replace('_archive', ''))}?`
+                        : isSoftDel  ? 'Move to Trash?'
+                        : isPermaDel ? 'Permanently Delete?'
+                        : 'Delete this item?';
+  }
+
+  const iconWrap = $('#confirm-icon-wrap');
+  if (iconWrap) {
+    if (isArchive) {
+      iconWrap.className = 'w-12 h-12 mx-auto rounded-full bg-amber-50 text-amber-500 flex items-center justify-center mb-4';
+      iconWrap.innerHTML = '<i data-lucide="archive" class="w-5 h-5"></i>';
+    } else if (isSoftDel) {
+      iconWrap.className = 'w-12 h-12 mx-auto rounded-full bg-amber-50 text-amber-600 flex items-center justify-center mb-4';
+      iconWrap.innerHTML = '<i data-lucide="trash" class="w-5 h-5"></i>';
+    } else if (isPermaDel) {
+      iconWrap.className = 'w-12 h-12 mx-auto rounded-full bg-red-50 text-red-700 flex items-center justify-center mb-4';
+      iconWrap.innerHTML = '<i data-lucide="trash-2" class="w-5 h-5"></i>';
+    } else {
+      iconWrap.className = 'w-12 h-12 mx-auto rounded-full bg-rose-50 text-rose-600 flex items-center justify-center mb-4';
+      iconWrap.innerHTML = '<i data-lucide="trash-2" class="w-5 h-5"></i>';
+    }
   }
 
   const btn = $('#confirm-delete-btn');
@@ -6522,15 +7107,22 @@ function openConfirm(type, id, label) {
     if (isArchive) {
       btn.className = 'h-9 px-4 inline-flex items-center gap-2 bg-amber-500 hover:bg-amber-600 text-white text-sm font-medium rounded-lg shadow-sm';
       btn.innerHTML = '<i data-lucide="archive" class="w-4 h-4"></i> Archive';
+    } else if (isSoftDel) {
+      btn.className = 'h-9 px-4 inline-flex items-center gap-2 bg-amber-500 hover:bg-amber-600 text-white text-sm font-medium rounded-lg shadow-sm';
+      btn.innerHTML = '<i data-lucide="trash" class="w-4 h-4"></i> Move to Trash';
+    } else if (isPermaDel) {
+      btn.className = 'h-9 px-4 inline-flex items-center gap-2 bg-red-700 hover:bg-red-800 text-white text-sm font-medium rounded-lg shadow-sm';
+      btn.innerHTML = '<i data-lucide="trash-2" class="w-4 h-4"></i> Delete Permanently';
     } else {
       btn.className = 'h-9 px-4 inline-flex items-center gap-2 bg-rose-600 hover:bg-rose-700 text-white text-sm font-medium rounded-lg shadow-sm';
       btn.innerHTML = '<i data-lucide="trash-2" class="w-4 h-4"></i> Delete';
     }
   }
 
-  $('#confirm-msg').textContent = isArchive
-    ? `${label} will be moved to the archived list.`
-    : `${label} will be permanently removed.${type === 'project' ? ' Tasks under this project will also be deleted.' : ''}`;
+  $('#confirm-msg').textContent = isArchive  ? `${label} will be moved to the archived list.`
+                                 : isSoftDel  ? `${label} will be moved to Trash and hidden from active views. You can restore it later.`
+                                 : isPermaDel ? `${label} will be PERMANENTLY deleted from the database. This action cannot be undone.`
+                                 : `${label} will be permanently removed.${type === 'project' ? ' Tasks under this project will also be deleted.' : ''}`;
 
   refreshIcons();
   openModal('confirm-modal');
@@ -7640,7 +8232,7 @@ async function confirmDelete() {
   const btn = $('#confirm-delete-btn');
 
   btn.disabled = true;
-  btn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Deleting…`;
+  btn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Processing…`;
   refreshIcons();
 
   let ok = false;
@@ -7684,22 +8276,44 @@ async function confirmDelete() {
   if (type === 'finance_transaction_archive') {
     ok = !!(await archiveFinanceTransaction(id));
   }
+  if (type === 'finance_transaction_soft_delete') {
+    ok = !!(await softDeleteFinanceTransaction(id));
+  }
+  if (type === 'finance_transaction_permanent_delete') {
+    ok = await permanentDeleteFinanceTransaction(id);
+  }
+
+  if (type === 'finance_forecast_archive') {
+    ok = !!(await archiveFinanceForecast(id));
+  }
+  if (type === 'finance_forecast_soft_delete') {
+    ok = !!(await softDeleteFinanceForecast(id));
+  }
+  if (type === 'finance_forecast_permanent_delete') {
+    ok = await permanentDeleteFinanceForecast(id);
+  }
 
   btn.disabled = false;
   btn.innerHTML = type.endsWith('_archive')
     ? '<i data-lucide="archive" class="w-4 h-4"></i> Archive'
+    : type.endsWith('_soft_delete')
+    ? '<i data-lucide="trash" class="w-4 h-4"></i> Move to Trash'
+    : type.endsWith('_permanent_delete')
+    ? '<i data-lucide="trash-2" class="w-4 h-4"></i> Delete Permanently'
     : '<i data-lucide="trash-2" class="w-4 h-4"></i> Delete';
   refreshIcons();
 
   closeConfirm();
 
   if (ok) {
-    toast(
-      type.endsWith('_archive')
-        ? `${labelize(type.replace('_archive', ''))} archived`
-        : `${labelize(type)} deleted`,
-      'success'
-    );
+    const toastMsg = type.endsWith('_archive')
+      ? `${labelize(type.replace('_archive', ''))} archived`
+      : type.endsWith('_soft_delete')
+      ? 'Moved to Trash'
+      : type.endsWith('_permanent_delete')
+      ? 'Permanently deleted'
+      : `${labelize(type)} deleted`;
+    toast(toastMsg, 'success');
 
     await refreshDataAndRender();
 
@@ -10031,6 +10645,10 @@ if (action === 'open-split-receipt-modal') {
   openSplitReceiptModal();
   return;
 }
+if (action === 'open-account-ledger') {
+  openAccountLedgerModal(Number(trigger.dataset.id));
+  return;
+}
 if (action === 'open-finance-account-modal') {
   openFinanceAccountModal();
   return;
@@ -10047,6 +10665,72 @@ if (action === 'archive-finance-transaction') {
   const id = Number(trigger.dataset.id);
   const tx = state.financeTransactions.find(t => Number(t.id) === id);
   openConfirm('finance_transaction_archive', id, tx?.description ? `”${tx.description}”` : 'This transaction');
+  return;
+}
+if (action === 'restore-finance-transaction') {
+  const id = Number(trigger.dataset.id);
+  (async () => {
+    const ok = await restoreFinanceTransaction(id);
+    if (ok) {
+      toast('Transaction restored.', 'success');
+      state.financeTransactions = await fetchFinanceTransactions();
+      renderFinanceView();
+    }
+  })();
+  return;
+}
+if (action === 'soft-delete-finance-transaction') {
+  const id = Number(trigger.dataset.id);
+  const tx = state.financeTransactions.find(t => Number(t.id) === id);
+  openConfirm('finance_transaction_soft_delete', id, tx?.description ? `”${tx.description}”` : 'This transaction');
+  return;
+}
+if (action === 'permanent-delete-finance-transaction') {
+  const id = Number(trigger.dataset.id);
+  const tx = state.financeTransactions.find(t => Number(t.id) === id);
+  openConfirm('finance_transaction_permanent_delete', id, tx?.description ? `”${tx.description}”` : 'This transaction');
+  return;
+}
+if (action === 'open-finance-forecast-modal') {
+  openFinanceForecastModal();
+  return;
+}
+if (action === 'edit-finance-forecast') {
+  openFinanceForecastModal(Number(trigger.dataset.id));
+  return;
+}
+if (action === 'archive-finance-forecast') {
+  const id = Number(trigger.dataset.id);
+  const fc = state.financeForecasts.find(f => Number(f.id) === id);
+  openConfirm('finance_forecast_archive', id, fc?.description ? `”${fc.description}”` : 'This forecast');
+  return;
+}
+if (action === 'restore-finance-forecast') {
+  const id = Number(trigger.dataset.id);
+  (async () => {
+    const ok = await restoreFinanceForecast(id);
+    if (ok) {
+      toast('Forecast restored.', 'success');
+      state.financeForecasts = await fetchFinanceForecasts();
+      renderFinanceView();
+    }
+  })();
+  return;
+}
+if (action === 'soft-delete-finance-forecast') {
+  const id = Number(trigger.dataset.id);
+  const fc = state.financeForecasts.find(f => Number(f.id) === id);
+  openConfirm('finance_forecast_soft_delete', id, fc?.description ? `”${fc.description}”` : 'This forecast');
+  return;
+}
+if (action === 'permanent-delete-finance-forecast') {
+  const id = Number(trigger.dataset.id);
+  const fc = state.financeForecasts.find(f => Number(f.id) === id);
+  openConfirm('finance_forecast_permanent_delete', id, fc?.description ? `”${fc.description}”` : 'This forecast');
+  return;
+}
+if (action === 'convert-forecast-to-tx') {
+  convertForecastToTransaction(Number(trigger.dataset.id));
   return;
 }
 });
@@ -10066,6 +10750,7 @@ if (action === 'archive-finance-transaction') {
   $('#finance-account-form')?.addEventListener('submit', handleFinanceAccountSubmit);
   $('#finance-transaction-form')?.addEventListener('submit', handleFinanceTransactionSubmit);
   $('#split-receipt-form')?.addEventListener('submit', handleSplitReceiptSubmit);
+  $('#finance-forecast-form')?.addEventListener('submit', handleFinanceForecastSubmit);
   $('#confirm-delete-btn').addEventListener('click', confirmDelete);
 
   // CRM Leads filters
@@ -10159,6 +10844,24 @@ if (action === 'archive-finance-transaction') {
 
   // Transaction type sync
   $('#finance-tx-type')?.addEventListener('change', syncFinanceTxFields);
+
+  // Finance Forecast filters
+  $('#finance-forecast-search')?.addEventListener('input', (e) => {
+    state.filters.financeForecasts.search = e.target.value;
+    renderFinanceForecast();
+  });
+  $('#finance-forecast-type-filter')?.addEventListener('change', (e) => {
+    state.filters.financeForecasts.type = e.target.value;
+    renderFinanceForecast();
+  });
+  $('#finance-forecast-status-filter')?.addEventListener('change', (e) => {
+    state.filters.financeForecasts.status = e.target.value;
+    renderFinanceForecast();
+  });
+  $('#finance-forecast-archived-filter')?.addEventListener('change', (e) => {
+    state.filters.financeForecasts.archived = e.target.value;
+    renderFinanceForecast();
+  });
 
   // Split receipt: auto-compute pass-through amount
   const splitTotalInput = $('#split-total-amount');
@@ -10785,16 +11488,18 @@ renderStaticButtonMounts();
     }
 
     await cleanupOldNotifications();
-    const [notifications, financeAccounts, financeCategories, financeTransactions] = await Promise.all([
+    const [notifications, financeAccounts, financeCategories, financeTransactions, financeForecasts] = await Promise.all([
       fetchNotifications(),
       fetchFinanceAccounts(),
       fetchFinanceCategories(),
       fetchFinanceTransactions(),
+      fetchFinanceForecasts(),
     ]);
     state.notifications       = notifications;
     state.financeAccounts     = financeAccounts;
     state.financeCategories   = financeCategories;
     state.financeTransactions = financeTransactions;
+    state.financeForecasts    = financeForecasts;
 
   } catch (err) {
     console.error(err);
