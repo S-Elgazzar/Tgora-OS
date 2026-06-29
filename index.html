@@ -165,7 +165,6 @@
         <a href="#" data-view="finance" id="nav-finance-item" class="nav-item">
           <i data-lucide="wallet" class="w-4 h-4"></i>
           <span>Finance</span>
-          <span class="sidebar-badge-soon">Soon</span>
         </a>
         <a href="#" data-view="hr" id="nav-hr-item" class="nav-item">
           <i data-lucide="id-card" class="w-4 h-4"></i>
@@ -1967,18 +1966,158 @@
 
 </section>
 
-<!-- ============ FINANCE VIEW (COMING SOON) ============ -->
+<!-- ============ FINANCE VIEW ============ -->
 <section id="view-finance" class="view hidden">
-  <div class="mb-7">
-    <p class="text-xs font-medium text-brand-600 uppercase tracking-wider mb-1">Business</p>
-    <h2 class="text-2xl sm:text-3xl font-semibold tracking-tight text-gray-900">Finance</h2>
-    <p class="text-sm text-gray-500 mt-1">This module is coming soon.</p>
+  <!-- Header -->
+  <div class="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+    <div>
+      <p class="text-xs font-medium text-brand-600 uppercase tracking-wider mb-1">Business</p>
+      <h2 class="text-2xl sm:text-3xl font-semibold tracking-tight text-gray-900">Finance</h2>
+    </div>
+    <div class="flex items-center gap-2">
+      <button data-action="open-split-receipt-modal" class="h-9 px-4 inline-flex items-center gap-2 border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 text-sm font-medium rounded-lg shadow-sm">
+        <i data-lucide="git-fork" class="w-4 h-4"></i> Split Receipt
+      </button>
+      <button data-action="open-finance-transaction-modal" class="h-9 px-4 inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg shadow-sm">
+        <i data-lucide="plus" class="w-4 h-4"></i> New Transaction
+      </button>
+    </div>
   </div>
 
-  <div class="stat-card flex flex-col items-center justify-center text-center py-16">
-    <i data-lucide="wallet" class="w-10 h-10 text-gray-300 mb-3"></i>
-    <h4 class="text-base font-semibold text-gray-900">Finance is coming soon</h4>
-    <p class="text-sm text-gray-500 mt-1 max-w-sm">This area is reserved for upcoming functionality.</p>
+  <!-- Tab bar -->
+  <div class="inline-flex items-center gap-1 bg-gray-100 p-1 rounded-xl mb-6">
+    <button data-finance-tab="dashboard"     class="view-mode-btn h-8 px-4 rounded-lg text-sm font-medium transition-colors bg-white text-gray-900 shadow-sm">Dashboard</button>
+    <button data-finance-tab="transactions"  class="view-mode-btn h-8 px-4 rounded-lg text-sm font-medium transition-colors text-gray-500">Transactions</button>
+    <button data-finance-tab="accounts"      class="view-mode-btn h-8 px-4 rounded-lg text-sm font-medium transition-colors text-gray-500">Accounts</button>
+  </div>
+
+  <!-- Dashboard Tab -->
+  <div id="finance-section-dashboard">
+    <!-- Stat cards -->
+    <div id="finance-dashboard-stats" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-4 mb-6"></div>
+
+    <!-- Charts + Account Balances row -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+      <!-- Income vs Expenses bar chart -->
+      <div class="lg:col-span-2 shadow-card rounded-2xl bg-white p-5">
+        <h3 class="text-sm font-semibold text-gray-800 mb-4">Income vs Expenses (6 months)</h3>
+        <div class="h-56">
+          <canvas id="finance-income-expense-chart"></canvas>
+        </div>
+      </div>
+      <!-- Account balances -->
+      <div class="shadow-card rounded-2xl bg-white p-5">
+        <h3 class="text-sm font-semibold text-gray-800 mb-3">Account Balances</h3>
+        <div id="finance-account-balances"></div>
+      </div>
+    </div>
+
+    <!-- Expense category doughnut + Recent transactions row -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+      <div class="shadow-card rounded-2xl bg-white p-5">
+        <h3 class="text-sm font-semibold text-gray-800 mb-4">Expenses by Category</h3>
+        <div class="h-56">
+          <canvas id="finance-expense-category-chart"></canvas>
+        </div>
+      </div>
+      <!-- Recent transactions -->
+      <div class="lg:col-span-2 shadow-card rounded-2xl bg-white p-5">
+        <h3 class="text-sm font-semibold text-gray-800 mb-3">Recent Transactions</h3>
+        <div class="table-scroll-container">
+          <table class="w-full text-left">
+            <thead>
+              <tr class="border-b border-gray-100">
+                <th class="px-4 py-2 text-xs font-medium text-gray-400 uppercase">Date</th>
+                <th class="px-4 py-2 text-xs font-medium text-gray-400 uppercase">Type</th>
+                <th class="px-4 py-2 text-xs font-medium text-gray-400 uppercase">Account</th>
+                <th class="px-4 py-2 text-xs font-medium text-gray-400 uppercase">Description</th>
+                <th class="px-4 py-2 text-xs font-medium text-gray-400 uppercase text-right">Amount</th>
+              </tr>
+            </thead>
+            <tbody id="finance-recent-transactions"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Transactions Tab -->
+  <div id="finance-section-transactions" class="hidden">
+    <!-- Toolbar -->
+    <div class="flex flex-wrap items-center gap-3 mb-4">
+      <input id="finance-tx-search" type="text" placeholder="Search transactions…" class="form-input h-9 w-48 text-sm" />
+      <select id="finance-tx-type-filter" class="form-input h-9 text-sm w-44">
+        <option value="all">All Types</option>
+        <option value="income">Income</option>
+        <option value="expense">Expense</option>
+        <option value="transfer">Transfer</option>
+        <option value="capital_injection">Capital Injection</option>
+        <option value="pass_through_received">Pass-Through In</option>
+        <option value="pass_through_spent">Pass-Through Out</option>
+      </select>
+      <select id="finance-tx-account-filter" class="form-input h-9 text-sm w-44">
+        <option value="">All Accounts</option>
+      </select>
+      <select id="finance-tx-archived-filter" class="form-input h-9 text-sm w-36">
+        <option value="active">Active</option>
+        <option value="archived">Archived</option>
+        <option value="all">All</option>
+      </select>
+    </div>
+
+    <div class="shadow-card rounded-2xl bg-white">
+      <div class="table-scroll-container">
+        <table class="w-full text-left">
+          <thead>
+            <tr class="border-b border-gray-100">
+              <th class="px-4 py-3 text-xs font-medium text-gray-400 uppercase whitespace-nowrap">Date</th>
+              <th class="px-4 py-3 text-xs font-medium text-gray-400 uppercase">Type</th>
+              <th class="px-4 py-3 text-xs font-medium text-gray-400 uppercase">Account</th>
+              <th class="px-4 py-3 text-xs font-medium text-gray-400 uppercase">Category</th>
+              <th class="px-4 py-3 text-xs font-medium text-gray-400 uppercase">Description</th>
+              <th class="px-4 py-3 text-xs font-medium text-gray-400 uppercase text-right whitespace-nowrap">Amount</th>
+              <th class="px-4 py-3 text-xs font-medium text-gray-400 uppercase text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="finance-tx-table-body"></tbody>
+        </table>
+      </div>
+      <div id="finance-tx-empty" class="hidden flex flex-col items-center justify-center py-16 text-center">
+        <i data-lucide="receipt" class="w-8 h-8 text-gray-300 mb-2"></i>
+        <p class="text-sm text-gray-400">No transactions found.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Accounts Tab -->
+  <div id="finance-section-accounts" class="hidden">
+    <div class="mb-4 flex justify-end">
+      <button data-action="open-finance-account-modal" class="h-9 px-4 inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg shadow-sm">
+        <i data-lucide="plus" class="w-4 h-4"></i> New Account
+      </button>
+    </div>
+
+    <div class="shadow-card rounded-2xl bg-white">
+      <div class="table-scroll-container">
+        <table class="w-full text-left">
+          <thead>
+            <tr class="border-b border-gray-100">
+              <th class="px-4 py-3 text-xs font-medium text-gray-400 uppercase">Account</th>
+              <th class="px-4 py-3 text-xs font-medium text-gray-400 uppercase">Type</th>
+              <th class="px-4 py-3 text-xs font-medium text-gray-400 uppercase">Owner</th>
+              <th class="px-4 py-3 text-xs font-medium text-gray-400 uppercase text-right">Balance</th>
+              <th class="px-4 py-3 text-xs font-medium text-gray-400 uppercase text-center">Status</th>
+              <th class="px-4 py-3 text-xs font-medium text-gray-400 uppercase text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="finance-accounts-table-body"></tbody>
+        </table>
+      </div>
+      <div id="finance-accounts-empty" class="hidden flex flex-col items-center justify-center py-16 text-center">
+        <i data-lucide="landmark" class="w-8 h-8 text-gray-300 mb-2"></i>
+        <p class="text-sm text-gray-400">No accounts yet.</p>
+      </div>
+    </div>
   </div>
 </section>
 
@@ -3037,6 +3176,256 @@
           </button>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- ===== Finance Account Modal ===== -->
+  <div id="finance-account-modal" class="modal hidden">
+    <div class="modal-overlay" data-action="close-modal"></div>
+    <div class="modal-panel">
+      <div class="px-6 py-5 border-b border-gray-100 flex items-center justify-between">
+        <h3 id="finance-acct-modal-title" class="text-lg font-semibold text-gray-900">New Account</h3>
+        <button data-action="close-modal" class="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center">
+          <i data-lucide="x" class="w-4 h-4 text-gray-500"></i>
+        </button>
+      </div>
+      <form id="finance-account-form" class="px-6 py-5 space-y-4">
+        <div>
+          <label class="form-label">Account Name <span class="text-rose-500">*</span></label>
+          <input name="account_name" type="text" required class="form-input" placeholder="e.g. CIB Business" />
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="form-label">Account Type</label>
+            <select name="account_type" class="form-input">
+              <option value="business_bank">Business Bank</option>
+              <option value="personal_account">Personal Account</option>
+              <option value="partner_account">Partner Account</option>
+              <option value="cash">Cash</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+          <div>
+            <label class="form-label">Owner Name</label>
+            <input name="owner_name" type="text" class="form-input" placeholder="Optional" />
+          </div>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="form-label">Currency</label>
+            <select name="currency" class="form-input">
+              <option value="EGP">EGP</option>
+              <option value="USD">USD</option>
+              <option value="EUR">EUR</option>
+            </select>
+          </div>
+          <div>
+            <label class="form-label">Opening Balance</label>
+            <input name="opening_balance" type="number" min="0" step="0.01" class="form-input" value="0" />
+          </div>
+        </div>
+        <div>
+          <label class="form-label">Notes</label>
+          <textarea name="notes" rows="2" class="form-input resize-none" placeholder="Optional notes"></textarea>
+        </div>
+        <div class="flex items-center gap-2">
+          <input name="is_active" type="checkbox" id="finance-acct-active" class="rounded" checked />
+          <label for="finance-acct-active" class="text-sm text-gray-700">Active</label>
+        </div>
+        <div class="flex items-center justify-end gap-2 pt-4 border-t border-gray-100">
+          <button type="button" data-action="close-modal" class="h-9 px-4 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50">Cancel</button>
+          <button type="submit" class="h-9 px-4 inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg shadow-sm">
+            <i data-lucide="check" class="w-4 h-4"></i> Save Account
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ===== Finance Transaction Modal ===== -->
+  <div id="finance-transaction-modal" class="modal hidden">
+    <div class="modal-overlay" data-action="close-modal"></div>
+    <div class="modal-panel">
+      <div class="px-6 py-5 border-b border-gray-100 flex items-center justify-between">
+        <h3 id="finance-tx-modal-title" class="text-lg font-semibold text-gray-900">New Transaction</h3>
+        <button data-action="close-modal" class="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center">
+          <i data-lucide="x" class="w-4 h-4 text-gray-500"></i>
+        </button>
+      </div>
+      <form id="finance-transaction-form" class="px-6 py-5 space-y-4">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="form-label">Date <span class="text-rose-500">*</span></label>
+            <input name="transaction_date" type="date" required class="form-input" />
+          </div>
+          <div>
+            <label class="form-label">Type <span class="text-rose-500">*</span></label>
+            <select name="transaction_type" id="finance-tx-type" required class="form-input">
+              <option value="income">Income</option>
+              <option value="expense">Expense</option>
+              <option value="transfer">Transfer</option>
+              <option value="capital_injection">Capital Injection</option>
+              <option value="pass_through_received">Pass-Through In</option>
+              <option value="pass_through_spent">Pass-Through Out</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Account (non-transfer) -->
+        <div id="finance-tx-account-row">
+          <label class="form-label">Account <span class="text-rose-500">*</span></label>
+          <select id="finance-tx-account" name="account_id" class="form-input">
+            <option value="">— Select account —</option>
+          </select>
+        </div>
+
+        <!-- From / To (transfer) -->
+        <div id="finance-tx-from-to-rows" class="hidden space-y-4">
+          <div>
+            <label class="form-label">From Account <span class="text-rose-500">*</span></label>
+            <select id="finance-tx-from-acct" name="from_account_id" class="form-input">
+              <option value="">— Select account —</option>
+            </select>
+          </div>
+          <div>
+            <label class="form-label">To Account <span class="text-rose-500">*</span></label>
+            <select id="finance-tx-to-acct" name="to_account_id" class="form-input">
+              <option value="">— Select account —</option>
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <label class="form-label">Amount (EGP) <span class="text-rose-500">*</span></label>
+          <input name="amount" type="number" min="0.01" step="0.01" required class="form-input" placeholder="0.00" />
+        </div>
+
+        <div>
+          <label class="form-label">Category</label>
+          <select id="finance-tx-category" name="category_id" class="form-input">
+            <option value="">— No category —</option>
+          </select>
+        </div>
+
+        <!-- Client (income / pass-through) -->
+        <div id="finance-tx-client-row">
+          <label class="form-label">Client</label>
+          <select id="finance-tx-client" name="client_id" class="form-input">
+            <option value="">— No client —</option>
+          </select>
+        </div>
+
+        <div>
+          <label class="form-label">Description</label>
+          <input name="description" type="text" class="form-input" placeholder="Brief description" />
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="form-label">Payment Method</label>
+            <select name="payment_method" class="form-input">
+              <option value="">—</option>
+              <option value="bank_transfer">Bank Transfer</option>
+              <option value="cash">Cash</option>
+              <option value="instapay">Instapay</option>
+              <option value="check">Check</option>
+              <option value="online">Online</option>
+            </select>
+          </div>
+          <div>
+            <label class="form-label">Reference</label>
+            <input name="reference" type="text" class="form-input" placeholder="Invoice #, receipt #…" />
+          </div>
+        </div>
+
+        <div class="flex items-center justify-end gap-2 pt-4 border-t border-gray-100">
+          <button type="button" data-action="close-modal" class="h-9 px-4 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50">Cancel</button>
+          <button type="submit" class="h-9 px-4 inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg shadow-sm">
+            <i data-lucide="check" class="w-4 h-4"></i> Save Transaction
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ===== Split Receipt Modal ===== -->
+  <div id="split-receipt-modal" class="modal hidden">
+    <div class="modal-overlay" data-action="close-modal"></div>
+    <div class="modal-panel">
+      <div class="px-6 py-5 border-b border-gray-100 flex items-center justify-between">
+        <div>
+          <h3 class="text-lg font-semibold text-gray-900">Split Client Receipt</h3>
+          <p class="text-xs text-gray-500 mt-0.5">Creates one income + one pass-through transaction.</p>
+        </div>
+        <button data-action="close-modal" class="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center">
+          <i data-lucide="x" class="w-4 h-4 text-gray-500"></i>
+        </button>
+      </div>
+      <form id="split-receipt-form" class="px-6 py-5 space-y-4">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="form-label">Date <span class="text-rose-500">*</span></label>
+            <input name="transaction_date" type="date" required class="form-input" />
+          </div>
+          <div>
+            <label class="form-label">Account <span class="text-rose-500">*</span></label>
+            <select id="split-receipt-account" name="account_id" class="form-input">
+              <option value="">— Select account —</option>
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <label class="form-label">Client</label>
+          <select id="split-client-id" name="client_id" class="form-input">
+            <option value="">— No client —</option>
+          </select>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div>
+            <label class="form-label">Total Received (EGP) <span class="text-rose-500">*</span></label>
+            <input id="split-total-amount" name="total_amount" type="number" min="0.01" step="0.01" required class="form-input" placeholder="0.00" />
+          </div>
+          <div>
+            <label class="form-label">Our Service (EGP) <span class="text-rose-500">*</span></label>
+            <input id="split-service-amount" name="service_amount" type="number" min="0.01" step="0.01" required class="form-input" placeholder="0.00" />
+          </div>
+          <div>
+            <label class="form-label">Client Budget (auto)</label>
+            <div class="form-input bg-gray-50 text-gray-500 flex items-center">
+              <span id="split-pt-display">0 EGP</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="form-label">Income Category</label>
+            <select id="split-income-cat" name="income_category_id" class="form-input">
+              <option value="">— Category —</option>
+            </select>
+          </div>
+          <div>
+            <label class="form-label">Pass-Through Category</label>
+            <select id="split-pt-cat" name="pt_category_id" class="form-input">
+              <option value="">— Category —</option>
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <label class="form-label">Reference</label>
+          <input name="reference" type="text" class="form-input" placeholder="Invoice #, receipt #…" />
+        </div>
+
+        <div class="flex items-center justify-end gap-2 pt-4 border-t border-gray-100">
+          <button type="button" data-action="close-modal" class="h-9 px-4 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50">Cancel</button>
+          <button type="submit" class="h-9 px-4 inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg shadow-sm">
+            <i data-lucide="git-fork" class="w-4 h-4"></i> Record Split Receipt
+          </button>
+        </div>
+      </form>
     </div>
   </div>
 

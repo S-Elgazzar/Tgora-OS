@@ -78,6 +78,8 @@ const state = {
     crmDeals:    { archived: 'active', search: '', stage: 'all', status: 'all' },
     crmActivities: { archived: 'active', search: '', type: 'all', status: 'all' },
     crmProposals:  { archived: 'active', search: '', status: 'all' },
+    financeTransactions: { search: '', type: 'all', account: '', archived: 'active' },
+    financeAccounts:     { search: '' },
   },
   pendingDelete: null, // { type: 'project' | 'task', id }
   crmLeads: [],
@@ -97,6 +99,12 @@ const state = {
   editingActivityId: null,
   editingNoteId: null,
   editingProposalId: null,
+  financeAccounts: [],
+  financeCategories: [],
+  financeTransactions: [],
+  financeTab: 'dashboard',
+  editingFinanceAccountId: null,
+  editingFinanceTransactionId: null,
   memberTasksBase: [],       // all tasks for the currently viewed member (set in openMemberDetails)
   memberTasksCardBase: null, // card-filtered subset; null = show all member tasks
   leadEditReturnView: null,
@@ -1298,6 +1306,59 @@ async function archiveCrmProposal(id) {
   return updateCrmProposal(id, { is_archived: true, status: 'archived', updated_at: new Date().toISOString() });
 }
 
+// ---------- Finance Data Layer ----------
+async function fetchFinanceAccounts() {
+  if (!isAdmin()) return [];
+  const { data, error } = await supabaseClient
+    .from('finance_accounts').select('*').order('account_name');
+  if (error) { console.error('fetchFinanceAccounts', error); return []; }
+  return data || [];
+}
+async function fetchFinanceCategories() {
+  if (!isAdmin()) return [];
+  const { data, error } = await supabaseClient
+    .from('finance_categories').select('*').order('category_type').order('category_name');
+  if (error) { console.error('fetchFinanceCategories', error); return []; }
+  return data || [];
+}
+async function fetchFinanceTransactions() {
+  if (!isAdmin()) return [];
+  const { data, error } = await supabaseClient
+    .from('finance_transactions')
+    .select('*')
+    .order('transaction_date', { ascending: false })
+    .order('created_at', { ascending: false });
+  if (error) { console.error('fetchFinanceTransactions', error); return []; }
+  return data || [];
+}
+async function createFinanceAccount(payload) {
+  if (!isAdmin()) return null;
+  const { data, error } = await supabaseClient.from('finance_accounts').insert([payload]).select().single();
+  if (error) { console.error('createFinanceAccount', error); toast(error.message || 'Failed to create account', 'error'); return null; }
+  return data;
+}
+async function updateFinanceAccount(id, payload) {
+  if (!isAdmin()) return null;
+  const { data, error } = await supabaseClient.from('finance_accounts').update(payload).eq('id', id).select().single();
+  if (error) { console.error('updateFinanceAccount', error); toast(error.message || 'Failed to update account', 'error'); return null; }
+  return data;
+}
+async function createFinanceTransaction(payload) {
+  if (!isAdmin()) return null;
+  const { data, error } = await supabaseClient.from('finance_transactions').insert([payload]).select().single();
+  if (error) { console.error('createFinanceTransaction', error); toast(error.message || 'Failed to create transaction', 'error'); return null; }
+  return data;
+}
+async function updateFinanceTransaction(id, payload) {
+  if (!isAdmin()) return null;
+  const { data, error } = await supabaseClient.from('finance_transactions').update(payload).eq('id', id).select().single();
+  if (error) { console.error('updateFinanceTransaction', error); toast(error.message || 'Failed to update transaction', 'error'); return null; }
+  return data;
+}
+async function archiveFinanceTransaction(id) {
+  return updateFinanceTransaction(id, { is_archived: true, updated_at: new Date().toISOString() });
+}
+
 async function insertNotification(payload) {
   // Dedup guard: do not insert if an identical notification already exists
   // (same user_id + type + entity_type + entity_id).
@@ -2463,6 +2524,8 @@ if (teamCountEl) {
 let projectsChartInstance = null;
 let tasksChartInstance = null;
 let teamChartInstance = null;
+let financeIncomeExpenseChartInstance = null;
+let financeExpenseCategoryChartInstance = null;
 
 function renderCharts() {
 
@@ -5322,7 +5385,10 @@ async function refreshDataAndRender() {
     crmDeals,
     crmActivities,
     crmNotes,
-    crmProposals
+    crmProposals,
+    financeAccounts,
+    financeCategories,
+    financeTransactions,
   ] = await Promise.all([
     fetchProjects(),
     fetchTasks(),
@@ -5334,7 +5400,10 @@ async function refreshDataAndRender() {
     fetchCrmDeals(),
     fetchCrmActivities(),
     fetchCrmNotes(),
-    fetchCrmProposals()
+    fetchCrmProposals(),
+    fetchFinanceAccounts(),
+    fetchFinanceCategories(),
+    fetchFinanceTransactions(),
   ]);
 
   const prevRole = state.currentRole;
@@ -5349,6 +5418,9 @@ async function refreshDataAndRender() {
   state.crmActivities = crmActivities;
   state.crmNotes    = crmNotes;
   state.crmProposals = crmProposals;
+  state.financeAccounts     = financeAccounts;
+  state.financeCategories   = financeCategories;
+  state.financeTransactions = financeTransactions;
 
   // Re-derive role from the freshly-fetched team members so that external
   // role changes are reflected without a full page reload.
@@ -5373,6 +5445,621 @@ async function refreshDataAndRender() {
   updateSidebarUserCard();
 
   console.log('refreshDataAndRender completed');
+}
+
+// ============================================================
+// Finance Module
+// ============================================================
+
+const fmtMoney = (amount, currency = 'EGP') =>
+  `${Number(amount || 0).toLocaleString('en-EG', { minimumFractionDigits: 0, maximumFractionDigits: 2 })} ${currency}`;
+
+const FINANCE_TX_TYPE_LABELS = {
+  income:                'Income',
+  expense:               'Expense',
+  transfer:              'Transfer',
+  capital_injection:     'Capital Injection',
+  pass_through_received: 'Pass-Through In',
+  pass_through_spent:    'Pass-Through Out',
+};
+
+const FINANCE_TX_TYPE_COLORS = {
+  income:                'text-emerald-600',
+  expense:               'text-rose-600',
+  transfer:              'text-blue-600',
+  capital_injection:     'text-indigo-600',
+  pass_through_received: 'text-amber-600',
+  pass_through_spent:    'text-orange-600',
+};
+
+const FINANCE_TX_TYPE_BG = {
+  income:                'bg-emerald-50',
+  expense:               'bg-rose-50',
+  transfer:              'bg-blue-50',
+  capital_injection:     'bg-indigo-50',
+  pass_through_received: 'bg-amber-50',
+  pass_through_spent:    'bg-orange-50',
+};
+
+const FINANCE_ACCT_TYPE_LABELS = {
+  business_bank:    'Business Bank',
+  personal_account: 'Personal Account',
+  partner_account:  'Partner Account',
+  cash:             'Cash',
+  other:            'Other',
+};
+
+function financeTypeBadge(txType) {
+  const bg    = FINANCE_TX_TYPE_BG[txType]    || 'bg-gray-50';
+  const color = FINANCE_TX_TYPE_COLORS[txType] || 'text-gray-600';
+  const label = FINANCE_TX_TYPE_LABELS[txType] || txType;
+  return `<span class="inline-flex px-2 py-0.5 text-xs font-medium rounded-full ${bg} ${color}">${escapeHtml(label)}</span>`;
+}
+
+function getAccountName(id) {
+  if (!id) return '—';
+  return state.financeAccounts.find(a => Number(a.id) === Number(id))?.account_name || '—';
+}
+
+function getCategoryName(id) {
+  if (!id) return '—';
+  return state.financeCategories.find(c => Number(c.id) === Number(id))?.category_name || '—';
+}
+
+function getAccountBalance(accountId) {
+  const acct = state.financeAccounts.find(a => Number(a.id) === Number(accountId));
+  if (!acct) return 0;
+  let balance = Number(acct.opening_balance) || 0;
+  state.financeTransactions.filter(t => !t.is_archived).forEach(t => {
+    const type = t.transaction_type;
+    const amt  = Number(t.amount) || 0;
+    if (type === 'transfer') {
+      if (Number(t.from_account_id) === Number(accountId)) balance -= amt;
+      if (Number(t.to_account_id)   === Number(accountId)) balance += amt;
+    } else if (Number(t.account_id) === Number(accountId)) {
+      if (['income', 'capital_injection', 'pass_through_received'].includes(type)) balance += amt;
+      else if (['expense', 'pass_through_spent'].includes(type))                   balance -= amt;
+    }
+  });
+  return balance;
+}
+
+function getFinanceSummary() {
+  const activeTx = state.financeTransactions.filter(t => !t.is_archived);
+  const now = new Date();
+  const thisMonth = (t) => {
+    const d = new Date(t.transaction_date);
+    return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+  };
+  let totalCapital = 0, realIncome = 0, realExpenses = 0, passThroughHeld = 0, cashFlowThisMonth = 0;
+  activeTx.forEach(t => {
+    const amt = Number(t.amount) || 0;
+    switch (t.transaction_type) {
+      case 'capital_injection':     totalCapital += amt; break;
+      case 'income':                realIncome   += amt; if (thisMonth(t)) cashFlowThisMonth += amt; break;
+      case 'expense':               realExpenses += amt; if (thisMonth(t)) cashFlowThisMonth -= amt; break;
+      case 'pass_through_received': passThroughHeld += amt; break;
+      case 'pass_through_spent':    passThroughHeld -= amt; break;
+    }
+  });
+  const netProfit = realIncome - realExpenses;
+  const totalAccountBalances = state.financeAccounts
+    .filter(a => a.is_active)
+    .reduce((sum, a) => sum + getAccountBalance(a.id), 0);
+  return { totalCapital, realIncome, realExpenses, netProfit, passThroughHeld, cashFlowThisMonth, totalAccountBalances };
+}
+
+function renderFinanceCharts(summary) {
+  // Income vs Expenses bar chart — last 6 months
+  const barCanvas = $('#finance-income-expense-chart');
+  if (barCanvas) {
+    const months = [], incomeData = [], expenseData = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(1);
+      d.setMonth(d.getMonth() - i);
+      months.push(d.toLocaleString('default', { month: 'short', year: '2-digit' }));
+      const y = d.getFullYear(), m = d.getMonth();
+      const monthTx = state.financeTransactions.filter(t => {
+        if (t.is_archived) return false;
+        const td = new Date(t.transaction_date);
+        return td.getFullYear() === y && td.getMonth() === m;
+      });
+      incomeData.push(monthTx.filter(t => t.transaction_type === 'income').reduce((s, t) => s + Number(t.amount), 0));
+      expenseData.push(monthTx.filter(t => t.transaction_type === 'expense').reduce((s, t) => s + Number(t.amount), 0));
+    }
+    if (financeIncomeExpenseChartInstance) { financeIncomeExpenseChartInstance.destroy(); financeIncomeExpenseChartInstance = null; }
+    financeIncomeExpenseChartInstance = new Chart(barCanvas, {
+      type: 'bar',
+      data: {
+        labels: months,
+        datasets: [
+          { label: 'Income',   data: incomeData,   backgroundColor: '#10b981' },
+          { label: 'Expenses', data: expenseData, backgroundColor: '#f43f5e' },
+        ],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { position: 'bottom' } },
+        scales: { y: { beginAtZero: true, ticks: { callback: v => fmtMoney(v) } } },
+      },
+    });
+  }
+
+  // Expenses by category doughnut
+  const doughnutCanvas = $('#finance-expense-category-chart');
+  if (doughnutCanvas) {
+    const catTotals = {};
+    state.financeTransactions.filter(t => !t.is_archived && t.transaction_type === 'expense').forEach(t => {
+      const name = getCategoryName(t.category_id);
+      catTotals[name] = (catTotals[name] || 0) + Number(t.amount);
+    });
+    const labels = Object.keys(catTotals);
+    const values = Object.values(catTotals);
+    if (financeExpenseCategoryChartInstance) { financeExpenseCategoryChartInstance.destroy(); financeExpenseCategoryChartInstance = null; }
+    if (labels.length) {
+      const palette = ['#6366f1','#10b981','#f59e0b','#f43f5e','#3b82f6','#8b5cf6','#ec4899','#14b8a6','#f97316','#06b6d4'];
+      financeExpenseCategoryChartInstance = new Chart(doughnutCanvas, {
+        type: 'doughnut',
+        data: { labels, datasets: [{ data: values, backgroundColor: palette.slice(0, labels.length) }] },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } },
+      });
+    }
+  }
+}
+
+function renderFinanceDashboard() {
+  const summary = getFinanceSummary();
+
+  // Stat cards
+  const statsEl = $('#finance-dashboard-stats');
+  if (statsEl) {
+    const netColor = summary.netProfit >= 0 ? 'emerald' : 'rose';
+    const cfColor  = summary.cashFlowThisMonth >= 0 ? 'emerald' : 'rose';
+    const cards = [
+      { label: 'Total Capital',          value: fmtMoney(summary.totalCapital),          icon: 'landmark',        color: 'indigo' },
+      { label: 'Real Income',            value: fmtMoney(summary.realIncome),            icon: 'trending-up',     color: 'emerald' },
+      { label: 'Real Expenses',          value: fmtMoney(summary.realExpenses),          icon: 'trending-down',   color: 'rose' },
+      { label: 'Net Profit',             value: fmtMoney(summary.netProfit),             icon: 'bar-chart-2',     color: netColor },
+      { label: 'Cash in Accounts',       value: fmtMoney(summary.totalAccountBalances), icon: 'wallet',          color: 'blue' },
+      { label: 'Pass-Through Held',      value: fmtMoney(summary.passThroughHeld),      icon: 'arrow-right-left',color: 'amber' },
+      { label: 'Cash Flow (This Month)', value: fmtMoney(summary.cashFlowThisMonth),    icon: 'calendar',        color: cfColor },
+    ];
+    statsEl.innerHTML = cards.map(c => `
+      <div class="stat-card">
+        <div class="stat-card-content">
+          <p class="stat-label">${c.label}</p>
+          <p class="stat-value text-${c.color}-600">${c.value}</p>
+        </div>
+        <div class="stat-card-icon bg-${c.color}-50">
+          <i data-lucide="${c.icon}" class="w-5 h-5 text-${c.color}-500"></i>
+        </div>
+      </div>`).join('');
+  }
+
+  // Account balances list
+  const balancesEl = $('#finance-account-balances');
+  if (balancesEl) {
+    const accounts = state.financeAccounts.filter(a => a.is_active);
+    balancesEl.innerHTML = accounts.length
+      ? accounts.map(a => {
+          const bal = getAccountBalance(a.id);
+          return `<div class="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
+            <div>
+              <p class="text-sm font-medium text-gray-800">${escapeHtml(a.account_name)}</p>
+              <p class="text-xs text-gray-400">${escapeHtml(FINANCE_ACCT_TYPE_LABELS[a.account_type] || a.account_type)}</p>
+            </div>
+            <span class="text-sm font-semibold ${bal < 0 ? 'text-rose-600' : 'text-gray-800'}">${fmtMoney(bal)}</span>
+          </div>`;
+        }).join('')
+      : '<p class="text-sm text-gray-400 py-3">No accounts.</p>';
+  }
+
+  // Recent transactions table
+  const recentEl = $('#finance-recent-transactions');
+  if (recentEl) {
+    const recent = state.financeTransactions.filter(t => !t.is_archived).slice(0, 8);
+    recentEl.innerHTML = recent.length
+      ? recent.map(t => {
+          const isTransfer = t.transaction_type === 'transfer';
+          const acct = isTransfer
+            ? `${getAccountName(t.from_account_id)} → ${getAccountName(t.to_account_id)}`
+            : getAccountName(t.account_id);
+          return `<tr class="hover:bg-gray-50">
+            <td class="px-4 py-2 text-sm text-gray-600 whitespace-nowrap">${fmtDate(t.transaction_date)}</td>
+            <td class="px-4 py-2 text-sm">${financeTypeBadge(t.transaction_type)}</td>
+            <td class="px-4 py-2 text-sm text-gray-500 whitespace-nowrap">${escapeHtml(acct)}</td>
+            <td class="px-4 py-2 text-sm text-gray-600">${escapeHtml(t.description || '—')}</td>
+            <td class="px-4 py-2 text-sm font-medium text-right whitespace-nowrap ${FINANCE_TX_TYPE_COLORS[t.transaction_type] || ''}">${fmtMoney(t.amount)}</td>
+          </tr>`;
+        }).join('')
+      : '<tr><td colspan="5" class="px-4 py-6 text-center text-gray-400 text-sm">No transactions yet.</td></tr>';
+  }
+
+  renderFinanceCharts(summary);
+  refreshIcons();
+}
+
+function renderFinanceTransactions() {
+  const f = state.filters.financeTransactions;
+
+  // Populate account filter
+  const acctFilterEl = $('#finance-tx-account-filter');
+  if (acctFilterEl) {
+    const prev = acctFilterEl.value;
+    acctFilterEl.innerHTML = '<option value="">All Accounts</option>' +
+      state.financeAccounts.filter(a => a.is_active)
+        .map(a => `<option value="${a.id}">${escapeHtml(a.account_name)}</option>`).join('');
+    if (prev) acctFilterEl.value = prev;
+  }
+
+  let txs = state.financeTransactions;
+
+  if (f.archived === 'active')   txs = txs.filter(t => !t.is_archived);
+  if (f.archived === 'archived') txs = txs.filter(t =>  t.is_archived);
+  if (f.type && f.type !== 'all') txs = txs.filter(t => t.transaction_type === f.type);
+  if (f.account) {
+    const aid = Number(f.account);
+    txs = txs.filter(t => Number(t.account_id) === aid || Number(t.from_account_id) === aid || Number(t.to_account_id) === aid);
+  }
+  if (f.search) {
+    const q = f.search.toLowerCase();
+    txs = txs.filter(t =>
+      (t.description || '').toLowerCase().includes(q) ||
+      (t.reference   || '').toLowerCase().includes(q) ||
+      getAccountName(t.account_id).toLowerCase().includes(q) ||
+      getCategoryName(t.category_id).toLowerCase().includes(q)
+    );
+  }
+
+  const tbody = $('#finance-tx-table-body');
+  const empty  = $('#finance-tx-empty');
+  if (!txs.length) {
+    if (tbody) tbody.innerHTML = '';
+    if (empty) empty.classList.remove('hidden');
+    refreshIcons();
+    return;
+  }
+  if (empty) empty.classList.add('hidden');
+  if (tbody) {
+    tbody.innerHTML = txs.map(t => {
+      const isTransfer = t.transaction_type === 'transfer';
+      const acct = isTransfer
+        ? `${getAccountName(t.from_account_id)} → ${getAccountName(t.to_account_id)}`
+        : getAccountName(t.account_id);
+      return `<tr class="hover:bg-gray-50 ${t.is_archived ? 'opacity-60' : ''}">
+        <td class="px-4 py-2 text-sm text-gray-600 whitespace-nowrap">${fmtDate(t.transaction_date)}</td>
+        <td class="px-4 py-2 text-sm">${financeTypeBadge(t.transaction_type)}</td>
+        <td class="px-4 py-2 text-sm text-gray-500 whitespace-nowrap">${escapeHtml(acct)}</td>
+        <td class="px-4 py-2 text-sm text-gray-400">${escapeHtml(getCategoryName(t.category_id))}</td>
+        <td class="px-4 py-2 text-sm text-gray-600 max-w-xs truncate">${escapeHtml(t.description || '—')}</td>
+        <td class="px-4 py-2 text-sm font-medium text-right whitespace-nowrap ${FINANCE_TX_TYPE_COLORS[t.transaction_type] || ''}">${fmtMoney(t.amount)}</td>
+        <td class="px-4 py-2 text-right whitespace-nowrap">
+          ${!t.is_archived ? `
+            <button class="icon-btn" data-action="edit-finance-transaction" data-id="${t.id}" title="Edit"><i data-lucide="pencil" class="w-4 h-4"></i></button>
+            <button class="icon-btn text-rose-500" data-action="archive-finance-transaction" data-id="${t.id}" title="Archive"><i data-lucide="archive" class="w-4 h-4"></i></button>
+          ` : '<span class="text-xs text-gray-400">Archived</span>'}
+        </td>
+      </tr>`;
+    }).join('');
+  }
+  refreshIcons();
+}
+
+function renderFinanceAccounts() {
+  const tbody = $('#finance-accounts-table-body');
+  const empty  = $('#finance-accounts-empty');
+  const accounts = state.financeAccounts;
+  if (!accounts.length) {
+    if (tbody) tbody.innerHTML = '';
+    if (empty) empty.classList.remove('hidden');
+    refreshIcons();
+    return;
+  }
+  if (empty) empty.classList.add('hidden');
+  if (tbody) {
+    tbody.innerHTML = accounts.map(a => {
+      const bal = getAccountBalance(a.id);
+      return `<tr class="hover:bg-gray-50 ${!a.is_active ? 'opacity-60' : ''}">
+        <td class="px-4 py-3 text-sm font-medium text-gray-800">${escapeHtml(a.account_name)}</td>
+        <td class="px-4 py-3 text-sm text-gray-500">${escapeHtml(FINANCE_ACCT_TYPE_LABELS[a.account_type] || a.account_type)}</td>
+        <td class="px-4 py-3 text-sm text-gray-500">${escapeHtml(a.owner_name || '—')}</td>
+        <td class="px-4 py-3 text-sm font-semibold text-right whitespace-nowrap ${bal < 0 ? 'text-rose-600' : 'text-gray-800'}">${fmtMoney(bal)}</td>
+        <td class="px-4 py-3 text-center">
+          <span class="inline-flex px-2 py-0.5 text-xs font-medium rounded-full ${a.is_active ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-100 text-gray-500'}">${a.is_active ? 'Active' : 'Inactive'}</span>
+        </td>
+        <td class="px-4 py-3 text-right">
+          <button class="icon-btn" data-action="edit-finance-account" data-id="${a.id}" title="Edit"><i data-lucide="pencil" class="w-4 h-4"></i></button>
+        </td>
+      </tr>`;
+    }).join('');
+  }
+  refreshIcons();
+}
+
+function setFinanceTab(tab) {
+  state.financeTab = tab;
+  ['dashboard', 'transactions', 'accounts'].forEach(t => {
+    const section = $(`#finance-section-${t}`);
+    const btn = document.querySelector(`[data-finance-tab="${t}"]`);
+    if (section) section.classList.toggle('hidden', t !== tab);
+    if (btn) {
+      const active = t === tab;
+      btn.classList.toggle('bg-white', active);
+      btn.classList.toggle('text-gray-900', active);
+      btn.classList.toggle('shadow-sm', active);
+      btn.classList.toggle('text-gray-500', !active);
+    }
+  });
+}
+
+function renderFinanceView() {
+  if (!isAdmin()) return;
+  setFinanceTab(state.financeTab || 'dashboard');
+  renderFinanceDashboard();
+  renderFinanceTransactions();
+  renderFinanceAccounts();
+}
+
+// --- Finance Modal Helpers ---
+function populateFinanceCategorySelect(txType) {
+  const el = $('#finance-tx-category');
+  if (!el) return;
+  const current = el.value;
+  const catTypeMap = {
+    income:                ['income'],
+    expense:               ['expense'],
+    capital_injection:     ['capital'],
+    pass_through_received: ['pass_through'],
+    pass_through_spent:    ['pass_through'],
+    transfer:              [],
+  };
+  const allowed = catTypeMap[txType] || [];
+  const cats = allowed.length
+    ? state.financeCategories.filter(c => c.is_active && allowed.includes(c.category_type))
+    : state.financeCategories.filter(c => c.is_active);
+  el.innerHTML = '<option value="">— No category —</option>' +
+    cats.map(c => `<option value="${c.id}">${escapeHtml(c.category_name)}</option>`).join('');
+  if (current) el.value = current;
+}
+
+function populateFinanceAccountSelects(ids) {
+  const opts = '<option value="">— Select account —</option>' +
+    state.financeAccounts.filter(a => a.is_active)
+      .map(a => `<option value="${a.id}">${escapeHtml(a.account_name)}</option>`).join('');
+  ids.forEach(id => {
+    const el = $(`#${id}`);
+    if (!el) return;
+    const cur = el.value;
+    el.innerHTML = opts;
+    if (cur) el.value = cur;
+  });
+}
+
+function syncFinanceTxFields() {
+  const typeEl = $('#finance-tx-type');
+  if (!typeEl) return;
+  const type = typeEl.value;
+  const isTransfer = type === 'transfer';
+  $('#finance-tx-account-row')?.classList.toggle('hidden', isTransfer);
+  $('#finance-tx-from-to-rows')?.classList.toggle('hidden', !isTransfer);
+  $('#finance-tx-client-row')?.classList.toggle('hidden', !['income', 'pass_through_received', 'pass_through_spent'].includes(type));
+  populateFinanceCategorySelect(type);
+}
+
+function openFinanceTransactionModal(id = null, prefill = {}) {
+  state.editingFinanceTransactionId = id;
+  const form  = $('#finance-transaction-form');
+  const title = $('#finance-tx-modal-title');
+  if (!form) return;
+  form.reset();
+  if (title) title.textContent = id ? 'Edit Transaction' : 'New Transaction';
+
+  const clientSel = $('#finance-tx-client');
+  if (clientSel) {
+    clientSel.innerHTML = '<option value="">— No client —</option>' +
+      state.crmClients.filter(c => !c.is_archived)
+        .map(c => `<option value="${c.id}">${escapeHtml(c.client_name)}</option>`).join('');
+  }
+  populateFinanceAccountSelects(['finance-tx-account', 'finance-tx-from-acct', 'finance-tx-to-acct']);
+
+  if (id) {
+    const tx = state.financeTransactions.find(t => Number(t.id) === id);
+    if (tx) {
+      form.elements['transaction_date'].value = tx.transaction_date?.slice(0, 10) || '';
+      form.elements['transaction_type'].value = tx.transaction_type || 'income';
+      form.elements['amount'].value           = tx.amount || '';
+      form.elements['account_id'].value       = tx.account_id || '';
+      form.elements['from_account_id'].value  = tx.from_account_id || '';
+      form.elements['to_account_id'].value    = tx.to_account_id || '';
+      form.elements['client_id'].value        = tx.client_id || '';
+      form.elements['description'].value      = tx.description || '';
+      form.elements['payment_method'].value   = tx.payment_method || '';
+      form.elements['reference'].value        = tx.reference || '';
+      syncFinanceTxFields();
+      // Restore category after sync resets the dropdown
+      if (tx.category_id) setTimeout(() => { if (form.elements['category_id']) form.elements['category_id'].value = tx.category_id; }, 0);
+    }
+  } else {
+    form.elements['transaction_date'].value = new Date().toISOString().slice(0, 10);
+    Object.entries(prefill).forEach(([k, v]) => { if (form.elements[k]) form.elements[k].value = v; });
+    syncFinanceTxFields();
+  }
+  openModal('finance-transaction-modal');
+}
+
+function openFinanceAccountModal(id = null) {
+  state.editingFinanceAccountId = id;
+  const form  = $('#finance-account-form');
+  const title = $('#finance-acct-modal-title');
+  if (!form) return;
+  form.reset();
+  if (title) title.textContent = id ? 'Edit Account' : 'New Account';
+  if (id) {
+    const acct = state.financeAccounts.find(a => Number(a.id) === id);
+    if (acct) {
+      form.elements['account_name'].value    = acct.account_name    || '';
+      form.elements['account_type'].value    = acct.account_type    || 'business_bank';
+      form.elements['owner_name'].value      = acct.owner_name      || '';
+      form.elements['currency'].value        = acct.currency        || 'EGP';
+      form.elements['opening_balance'].value = acct.opening_balance ?? 0;
+      form.elements['notes'].value           = acct.notes           || '';
+      if (form.elements['is_active']) form.elements['is_active'].checked = acct.is_active !== false;
+    }
+  } else {
+    if (form.elements['is_active']) form.elements['is_active'].checked = true;
+  }
+  openModal('finance-account-modal');
+}
+
+function openSplitReceiptModal() {
+  const form = $('#split-receipt-form');
+  if (!form) return;
+  form.reset();
+  form.elements['transaction_date'].value = new Date().toISOString().slice(0, 10);
+
+  const clientSel = $('#split-client-id');
+  if (clientSel) {
+    clientSel.innerHTML = '<option value="">— Select client —</option>' +
+      state.crmClients.filter(c => !c.is_archived)
+        .map(c => `<option value="${c.id}">${escapeHtml(c.client_name)}</option>`).join('');
+  }
+  populateFinanceAccountSelects(['split-receipt-account']);
+
+  const incomeCats = state.financeCategories.filter(c => c.is_active && c.category_type === 'income');
+  const ptCats     = state.financeCategories.filter(c => c.is_active && c.category_type === 'pass_through');
+  const incomeSel = $('#split-income-cat');
+  if (incomeSel) incomeSel.innerHTML = '<option value="">— Category —</option>' +
+    incomeCats.map(c => `<option value="${c.id}">${escapeHtml(c.category_name)}</option>`).join('');
+  const ptSel = $('#split-pt-cat');
+  if (ptSel) ptSel.innerHTML = '<option value="">— Category —</option>' +
+    ptCats.map(c => `<option value="${c.id}">${escapeHtml(c.category_name)}</option>`).join('');
+
+  const ptDisplay = $('#split-pt-display');
+  if (ptDisplay) ptDisplay.textContent = '0 EGP';
+  openModal('split-receipt-modal');
+}
+
+// --- Finance Form Handlers ---
+async function handleFinanceAccountSubmit(e) {
+  e.preventDefault();
+  if (!isAdmin()) return;
+  const form = e.target;
+  const id   = state.editingFinanceAccountId;
+  const payload = {
+    account_name:    form.elements['account_name'].value.trim(),
+    account_type:    form.elements['account_type'].value,
+    owner_name:      form.elements['owner_name'].value.trim() || null,
+    currency:        form.elements['currency'].value || 'EGP',
+    opening_balance: Number(form.elements['opening_balance'].value) || 0,
+    notes:           form.elements['notes'].value.trim() || null,
+    is_active:       form.elements['is_active'] ? form.elements['is_active'].checked : true,
+    updated_at:      new Date().toISOString(),
+  };
+  if (!payload.account_name) { toast('Account name is required.', 'error'); return; }
+  const btn = form.querySelector('[type="submit"]');
+  if (btn) btn.disabled = true;
+  let ok = false;
+  if (id) {
+    ok = !!(await updateFinanceAccount(id, payload));
+  } else {
+    payload.created_at = new Date().toISOString();
+    ok = !!(await createFinanceAccount(payload));
+  }
+  if (btn) btn.disabled = false;
+  if (ok) {
+    toast(id ? 'Account updated.' : 'Account created.', 'success');
+    closeModal();
+    state.financeAccounts = await fetchFinanceAccounts();
+    renderFinanceView();
+  }
+}
+
+async function handleFinanceTransactionSubmit(e) {
+  e.preventDefault();
+  if (!isAdmin()) return;
+  const form = e.target;
+  const id   = state.editingFinanceTransactionId;
+  const type = form.elements['transaction_type']?.value;
+  const isTransfer = type === 'transfer';
+  const payload = {
+    transaction_date: form.elements['transaction_date'].value,
+    transaction_type: type,
+    amount:           Number(form.elements['amount'].value) || 0,
+    account_id:       !isTransfer ? (Number(form.elements['account_id']?.value) || null)      : null,
+    from_account_id:   isTransfer ? (Number(form.elements['from_account_id']?.value) || null) : null,
+    to_account_id:     isTransfer ? (Number(form.elements['to_account_id']?.value) || null)   : null,
+    client_id:        Number(form.elements['client_id']?.value)   || null,
+    category_id:      Number(form.elements['category_id']?.value) || null,
+    description:      form.elements['description']?.value.trim()  || null,
+    payment_method:   form.elements['payment_method']?.value      || null,
+    reference:        form.elements['reference']?.value.trim()    || null,
+    updated_at:       new Date().toISOString(),
+  };
+  if (!payload.transaction_date)        { toast('Date is required.', 'error'); return; }
+  if (!payload.amount || payload.amount <= 0) { toast('Amount must be greater than 0.', 'error'); return; }
+  if (isTransfer && (!payload.from_account_id || !payload.to_account_id)) {
+    toast('Both From and To accounts are required for a transfer.', 'error'); return;
+  }
+  if (!isTransfer && !payload.account_id) { toast('Account is required.', 'error'); return; }
+  const btn = form.querySelector('[type="submit"]');
+  if (btn) btn.disabled = true;
+  let ok = false;
+  if (id) {
+    ok = !!(await updateFinanceTransaction(id, payload));
+  } else {
+    payload.created_at = new Date().toISOString();
+    ok = !!(await createFinanceTransaction(payload));
+  }
+  if (btn) btn.disabled = false;
+  if (ok) {
+    toast(id ? 'Transaction updated.' : 'Transaction added.', 'success');
+    closeModal();
+    state.financeTransactions = await fetchFinanceTransactions();
+    renderFinanceView();
+  }
+}
+
+async function handleSplitReceiptSubmit(e) {
+  e.preventDefault();
+  if (!isAdmin()) return;
+  const form     = e.target;
+  const txDate   = form.elements['transaction_date'].value;
+  const clientId = Number(form.elements['client_id']?.value)          || null;
+  const acctId   = Number(form.elements['account_id']?.value)         || null;
+  const totalAmt = Number(form.elements['total_amount'].value)         || 0;
+  const svcAmt   = Number(form.elements['service_amount'].value)       || 0;
+  const ptAmt    = totalAmt - svcAmt;
+  const incomeCatId = Number(form.elements['income_category_id']?.value) || null;
+  const ptCatId     = Number(form.elements['pt_category_id']?.value)     || null;
+  const reference   = form.elements['reference']?.value.trim()           || null;
+  if (!txDate)           { toast('Date is required.',                          'error'); return; }
+  if (!acctId)           { toast('Account is required.',                        'error'); return; }
+  if (totalAmt <= 0)     { toast('Total amount must be greater than 0.',        'error'); return; }
+  if (svcAmt <= 0)       { toast('Service amount must be greater than 0.',      'error'); return; }
+  if (svcAmt >= totalAmt){ toast('Service amount must be less than total amount.','error'); return; }
+  const btn = form.querySelector('[type="submit"]');
+  if (btn) btn.disabled = true;
+  const now = new Date().toISOString();
+  const incomeResult = await createFinanceTransaction({
+    transaction_date: txDate, transaction_type: 'income', account_id: acctId,
+    client_id: clientId, category_id: incomeCatId, amount: svcAmt,
+    description: 'Service income (split receipt)', reference, created_at: now, updated_at: now,
+  });
+  if (!incomeResult) { if (btn) btn.disabled = false; return; }
+  const ptResult = await createFinanceTransaction({
+    transaction_date: txDate, transaction_type: 'pass_through_received', account_id: acctId,
+    client_id: clientId, category_id: ptCatId, amount: ptAmt,
+    description: 'Client budget (split receipt)',
+    related_transaction_id: incomeResult.id, reference, created_at: now, updated_at: now,
+  });
+  if (btn) btn.disabled = false;
+  if (ptResult) {
+    toast('Split receipt recorded.', 'success');
+    closeModal();
+    state.financeTransactions = await fetchFinanceTransactions();
+    renderFinanceView();
+  }
 }
 
 function applyMemberDashboardLayout() {
@@ -5407,6 +6094,7 @@ function renderAll() {
   renderCrmDeals();
   renderCrmActivities();
   renderCrmProposals();
+  renderFinanceView();
 
   const savedView = localStorage.getItem('tgora_current_view');
 
@@ -6993,6 +7681,10 @@ async function confirmDelete() {
     ok = !!(await archiveCrmProposal(id));
   }
 
+  if (type === 'finance_transaction_archive') {
+    ok = !!(await archiveFinanceTransaction(id));
+  }
+
   btn.disabled = false;
   btn.innerHTML = type.endsWith('_archive')
     ? '<i data-lucide="archive" class="w-4 h-4"></i> Archive'
@@ -7019,6 +7711,8 @@ async function confirmDelete() {
       setView('team');
     } else if (currentView === 'crm') {
       setView('crm');
+    } else if (currentView === 'finance') {
+      setView('finance');
     } else if (currentView === 'project-details') {
       setView('project-details');
       renderProjectDetails();
@@ -9327,6 +10021,34 @@ if (action === 'archive-proposal') {
   openConfirm('proposal_archive', id, proposal ? `”${proposal.proposal_title}”` : 'This proposal');
   return;
 }
+
+// Finance actions
+if (action === 'open-finance-transaction-modal') {
+  openFinanceTransactionModal();
+  return;
+}
+if (action === 'open-split-receipt-modal') {
+  openSplitReceiptModal();
+  return;
+}
+if (action === 'open-finance-account-modal') {
+  openFinanceAccountModal();
+  return;
+}
+if (action === 'edit-finance-transaction') {
+  openFinanceTransactionModal(Number(trigger.dataset.id));
+  return;
+}
+if (action === 'edit-finance-account') {
+  openFinanceAccountModal(Number(trigger.dataset.id));
+  return;
+}
+if (action === 'archive-finance-transaction') {
+  const id = Number(trigger.dataset.id);
+  const tx = state.financeTransactions.find(t => Number(t.id) === id);
+  openConfirm('finance_transaction_archive', id, tx?.description ? `”${tx.description}”` : 'This transaction');
+  return;
+}
 });
 
   // Forms
@@ -9341,6 +10063,9 @@ if (action === 'archive-proposal') {
   $('#activity-form')?.addEventListener('submit', handleActivitySubmit);
   $('#note-form')?.addEventListener('submit', handleNoteSubmit);
   $('#proposal-form')?.addEventListener('submit', handleProposalSubmit);
+  $('#finance-account-form')?.addEventListener('submit', handleFinanceAccountSubmit);
+  $('#finance-transaction-form')?.addEventListener('submit', handleFinanceTransactionSubmit);
+  $('#split-receipt-form')?.addEventListener('submit', handleSplitReceiptSubmit);
   $('#confirm-delete-btn').addEventListener('click', confirmDelete);
 
   // CRM Leads filters
@@ -9408,6 +10133,45 @@ if (action === 'archive-proposal') {
   document.querySelectorAll('[data-crm-tab]').forEach(btn => {
     btn.addEventListener('click', () => setCrmTab(btn.dataset.crmTab));
   });
+
+  // Finance Tab navigation
+  document.querySelectorAll('[data-finance-tab]').forEach(btn => {
+    btn.addEventListener('click', () => setFinanceTab(btn.dataset.financeTab));
+  });
+
+  // Finance Transactions filters
+  $('#finance-tx-type-filter')?.addEventListener('change', (e) => {
+    state.filters.financeTransactions.type = e.target.value;
+    renderFinanceTransactions();
+  });
+  $('#finance-tx-account-filter')?.addEventListener('change', (e) => {
+    state.filters.financeTransactions.account = e.target.value;
+    renderFinanceTransactions();
+  });
+  $('#finance-tx-archived-filter')?.addEventListener('change', (e) => {
+    state.filters.financeTransactions.archived = e.target.value;
+    renderFinanceTransactions();
+  });
+  $('#finance-tx-search')?.addEventListener('input', (e) => {
+    state.filters.financeTransactions.search = e.target.value;
+    renderFinanceTransactions();
+  });
+
+  // Transaction type sync
+  $('#finance-tx-type')?.addEventListener('change', syncFinanceTxFields);
+
+  // Split receipt: auto-compute pass-through amount
+  const splitTotalInput = $('#split-total-amount');
+  const splitSvcInput   = $('#split-service-amount');
+  const splitPtDisplay  = $('#split-pt-display');
+  function updateSplitPt() {
+    const total  = Number(splitTotalInput?.value) || 0;
+    const svc    = Number(splitSvcInput?.value)   || 0;
+    const pt     = Math.max(0, total - svc);
+    if (splitPtDisplay) splitPtDisplay.textContent = fmtMoney(pt);
+  }
+  splitTotalInput?.addEventListener('input', updateSplitPt);
+  splitSvcInput?.addEventListener('input',   updateSplitPt);
 
   // Lead form: autofill from linked client
   $('#lead-client-id')?.addEventListener('change', (e) => {
@@ -10021,7 +10785,16 @@ renderStaticButtonMounts();
     }
 
     await cleanupOldNotifications();
-    state.notifications = await fetchNotifications();
+    const [notifications, financeAccounts, financeCategories, financeTransactions] = await Promise.all([
+      fetchNotifications(),
+      fetchFinanceAccounts(),
+      fetchFinanceCategories(),
+      fetchFinanceTransactions(),
+    ]);
+    state.notifications       = notifications;
+    state.financeAccounts     = financeAccounts;
+    state.financeCategories   = financeCategories;
+    state.financeTransactions = financeTransactions;
 
   } catch (err) {
     console.error(err);
