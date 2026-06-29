@@ -759,6 +759,15 @@
     </div>
 
     <div class="flex items-center gap-2">
+      <!-- View mode: Table | Kanban -->
+      <div class="flex items-center gap-0.5 bg-gray-100 rounded-lg p-0.5" id="tasks-view-switcher">
+        <button type="button" class="view-mode-btn archive-toggle-btn active" data-view-mode="table" title="Table view">
+          <i data-lucide="list" class="w-3.5 h-3.5"></i>
+        </button>
+        <button type="button" class="view-mode-btn archive-toggle-btn" data-view-mode="kanban" title="Kanban view">
+          <i data-lucide="layout-dashboard" class="w-3.5 h-3.5"></i>
+        </button>
+      </div>
       <div class="flex items-center gap-0.5 bg-gray-100 rounded-lg p-0.5" id="tasks-archive-toggle">
         <button type="button" class="archive-toggle-btn active" data-archive-view="active">Active</button>
         <button type="button" class="archive-toggle-btn" data-archive-view="archived">Archived</button>
@@ -775,89 +784,96 @@
   </div>
 
   <!-- Tasks table -->
-  <div class="bg-white rounded-xl border border-gray-200 shadow-card overflow-hidden">
-    <div id="tasks-table-wrapper" class="table-scroll-container">
-      <table class="w-full text-sm">
-        <thead class="bg-gray-50 border-b border-gray-100">
-          <tr class="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-            <th class="px-5 py-3">Task</th>
-            <th class="px-5 py-3 relative">
-              <button type="button" id="tasks-project-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="tasks-project-popover" data-filter-module="tasks">
-                Project <i data-lucide="chevron-down" class="w-3 h-3"></i>
-              </button>
-              <div id="tasks-project-popover" class="task-th-popover hidden" data-filter-type="project" data-filter-module="tasks">
-                <!-- Filled by JS: All Projects + one per state.projects -->
-              </div>
-            </th>
-            <th class="px-5 py-3 relative">
-              <button type="button" id="tasks-assignee-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="tasks-assignee-popover" data-filter-module="tasks">
-                Assigned <i data-lucide="chevron-down" class="w-3 h-3"></i>
-              </button>
-              <div id="tasks-assignee-popover" class="task-th-popover hidden" data-filter-type="assignee" data-filter-module="tasks">
-                <!-- Filled by JS: All Assignees + one per state.teamMembers -->
-              </div>
-            </th>
-            <th class="px-5 py-3 relative">
-              <button type="button" id="tasks-status-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="tasks-status-popover" data-filter-module="tasks">
-                Status <i data-lucide="chevron-down" class="w-3 h-3"></i>
-              </button>
-              <div id="tasks-status-popover" class="task-th-popover hidden" data-filter-type="status" data-filter-module="tasks">
-                <button type="button" class="task-th-popover-option" data-value="all">All Statuses</button>
-                <button type="button" class="task-th-popover-option" data-value="todo">To Do</button>
-                <button type="button" class="task-th-popover-option" data-value="in_progress">In Progress</button>
-                <button type="button" class="task-th-popover-option" data-value="review">In Review</button>
-                <button type="button" class="task-th-popover-option" data-value="completed">Completed</button>
-                <button type="button" class="task-th-popover-option" data-value="on_hold">On Hold</button>
-              </div>
-            </th>
-            <th class="px-5 py-3 relative">
-              <button type="button" id="tasks-priority-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="tasks-priority-popover" data-filter-module="tasks">
-                Priority <i data-lucide="chevron-down" class="w-3 h-3"></i>
-              </button>
-              <div id="tasks-priority-popover" class="task-th-popover hidden" data-filter-type="priority" data-filter-module="tasks">
-                <button type="button" class="task-th-popover-option" data-value="all">All Priorities</button>
-                <button type="button" class="task-th-popover-option" data-value="urgent">Urgent</button>
-                <button type="button" class="task-th-popover-option" data-value="high">High</button>
-                <button type="button" class="task-th-popover-option" data-value="medium">Medium</button>
-                <button type="button" class="task-th-popover-option" data-value="low">Low</button>
-              </div>
-            </th>
-            <th class="px-5 py-3 relative">
-              <button type="button" id="tasks-deadline-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="tasks-deadline-popover" data-filter-module="tasks">
-                Deadline <i data-lucide="chevron-down" class="w-3 h-3"></i>
-              </button>
-              <div id="tasks-deadline-popover" class="task-th-popover hidden" data-filter-type="deadline" data-filter-module="tasks">
-                <button type="button" class="task-th-popover-option" data-value="">Any Deadline</button>
-                <button type="button" class="task-th-popover-option" data-value="overdue">Overdue</button>
-                <button type="button" class="task-th-popover-option" data-value="due_today">Due Today</button>
-                <button type="button" class="task-th-popover-option" data-value="due_this_week">Due This Week</button>
-                <button type="button" class="task-th-popover-option" data-value="no_deadline">No Deadline</button>
-              </div>
-            </th>
-            <th class="px-5 py-3 text-right">Actions</th>
-          </tr>
-        </thead>
+  <div id="tasks-table-container">
+    <div class="bg-white rounded-xl border border-gray-200 shadow-card overflow-hidden">
+      <div id="tasks-table-wrapper" class="table-scroll-container">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-50 border-b border-gray-100">
+            <tr class="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <th class="px-5 py-3">Task</th>
+              <th class="px-5 py-3 relative">
+                <button type="button" id="tasks-project-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="tasks-project-popover" data-filter-module="tasks">
+                  Project <i data-lucide="chevron-down" class="w-3 h-3"></i>
+                </button>
+                <div id="tasks-project-popover" class="task-th-popover hidden" data-filter-type="project" data-filter-module="tasks">
+                  <!-- Filled by JS: All Projects + one per state.projects -->
+                </div>
+              </th>
+              <th class="px-5 py-3 relative">
+                <button type="button" id="tasks-assignee-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="tasks-assignee-popover" data-filter-module="tasks">
+                  Assigned <i data-lucide="chevron-down" class="w-3 h-3"></i>
+                </button>
+                <div id="tasks-assignee-popover" class="task-th-popover hidden" data-filter-type="assignee" data-filter-module="tasks">
+                  <!-- Filled by JS: All Assignees + one per state.teamMembers -->
+                </div>
+              </th>
+              <th class="px-5 py-3 relative">
+                <button type="button" id="tasks-status-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="tasks-status-popover" data-filter-module="tasks">
+                  Status <i data-lucide="chevron-down" class="w-3 h-3"></i>
+                </button>
+                <div id="tasks-status-popover" class="task-th-popover hidden" data-filter-type="status" data-filter-module="tasks">
+                  <button type="button" class="task-th-popover-option" data-value="all">All Statuses</button>
+                  <button type="button" class="task-th-popover-option" data-value="todo">To Do</button>
+                  <button type="button" class="task-th-popover-option" data-value="in_progress">In Progress</button>
+                  <button type="button" class="task-th-popover-option" data-value="review">In Review</button>
+                  <button type="button" class="task-th-popover-option" data-value="completed">Completed</button>
+                  <button type="button" class="task-th-popover-option" data-value="on_hold">On Hold</button>
+                </div>
+              </th>
+              <th class="px-5 py-3 relative">
+                <button type="button" id="tasks-priority-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="tasks-priority-popover" data-filter-module="tasks">
+                  Priority <i data-lucide="chevron-down" class="w-3 h-3"></i>
+                </button>
+                <div id="tasks-priority-popover" class="task-th-popover hidden" data-filter-type="priority" data-filter-module="tasks">
+                  <button type="button" class="task-th-popover-option" data-value="all">All Priorities</button>
+                  <button type="button" class="task-th-popover-option" data-value="urgent">Urgent</button>
+                  <button type="button" class="task-th-popover-option" data-value="high">High</button>
+                  <button type="button" class="task-th-popover-option" data-value="medium">Medium</button>
+                  <button type="button" class="task-th-popover-option" data-value="low">Low</button>
+                </div>
+              </th>
+              <th class="px-5 py-3 relative">
+                <button type="button" id="tasks-deadline-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="tasks-deadline-popover" data-filter-module="tasks">
+                  Deadline <i data-lucide="chevron-down" class="w-3 h-3"></i>
+                </button>
+                <div id="tasks-deadline-popover" class="task-th-popover hidden" data-filter-type="deadline" data-filter-module="tasks">
+                  <button type="button" class="task-th-popover-option" data-value="">Any Deadline</button>
+                  <button type="button" class="task-th-popover-option" data-value="overdue">Overdue</button>
+                  <button type="button" class="task-th-popover-option" data-value="due_today">Due Today</button>
+                  <button type="button" class="task-th-popover-option" data-value="due_this_week">Due This Week</button>
+                  <button type="button" class="task-th-popover-option" data-value="no_deadline">No Deadline</button>
+                </div>
+              </th>
+              <th class="px-5 py-3 text-right">Actions</th>
+            </tr>
+          </thead>
 
-        <tbody id="tasks-table-body" class="divide-y divide-gray-100">
-          <!-- Filled by JS -->
-        </tbody>
-      </table>
-    </div>
-
-    <div id="tasks-empty" class="hidden px-5 py-20 text-center">
-      <div class="w-12 h-12 mx-auto rounded-full bg-gray-100 flex items-center justify-center mb-3">
-        <i data-lucide="list-checks" class="w-6 h-6 text-gray-400"></i>
+          <tbody id="tasks-table-body" class="divide-y divide-gray-100">
+            <!-- Filled by JS -->
+          </tbody>
+        </table>
       </div>
 
-      <p id="tasks-empty-title" class="text-sm font-medium text-gray-900">No tasks yet</p>
-      <p id="tasks-empty-message" class="text-xs text-gray-500 mt-1">Add a task to start tracking your work.</p>
+      <div id="tasks-empty" class="hidden px-5 py-20 text-center">
+        <div class="w-12 h-12 mx-auto rounded-full bg-gray-100 flex items-center justify-center mb-3">
+          <i data-lucide="list-checks" class="w-6 h-6 text-gray-400"></i>
+        </div>
 
-      <div class="mt-4" data-button-mount="tasks-empty-new-task"></div>
+        <p id="tasks-empty-title" class="text-sm font-medium text-gray-900">No tasks yet</p>
+        <p id="tasks-empty-message" class="text-xs text-gray-500 mt-1">Add a task to start tracking your work.</p>
 
-      <button id="tasks-empty-reset-btn" type="button" class="hidden mt-4 inline-flex items-center gap-2 h-9 px-3 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-medium rounded-lg">
-        <i data-lucide="rotate-ccw" class="w-4 h-4"></i> Reset Filters
-      </button>
+        <div class="mt-4" data-button-mount="tasks-empty-new-task"></div>
+
+        <button id="tasks-empty-reset-btn" type="button" class="hidden mt-4 inline-flex items-center gap-2 h-9 px-3 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-medium rounded-lg">
+          <i data-lucide="rotate-ccw" class="w-4 h-4"></i> Reset Filters
+        </button>
+      </div>
     </div>
+  </div>
+
+  <!-- Tasks kanban — hidden by default; shown when state.tasksViewMode === 'kanban' -->
+  <div id="tasks-kanban-container" class="hidden">
+    <!-- Filled by JS -->
   </div>
 </section>
 

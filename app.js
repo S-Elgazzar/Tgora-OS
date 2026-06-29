@@ -103,6 +103,7 @@ const state = {
   alertsFilter: 'all', // 'all' | 'overdue' | 'due_today'
   teamPerformanceRanking: [],
   teamPerformanceNotEnoughData: [],
+  tasksViewMode: localStorage.getItem('tgora_tasks_view_mode') || 'table',
 };
 
 // ---------- DOM Helpers ----------
@@ -3774,33 +3775,40 @@ function renderCrmClientsHeaderFilters() {
   );
 }
 
-function renderTasks() {
-  const tbody = $('#tasks-table-body');
-  const empty = $('#tasks-empty');
-  const data = getFilteredTasks();
+// ---------- Tasks View Rendering ----------
 
-  // Re-applied here (not only in setView()) so the toolbar and empty-state
-  // "New Task" buttons stay correctly hidden across every path that
-  // re-renders the Tasks table — filter changes, data refreshes, and empty
-  // states — not just full view switches. Gated by canCreateTask() (positive
-  // Admin/Manager check) rather than isMember() so an unmapped role_type
-  // string fails closed (button hidden) instead of failing open.
+function renderTasks() {
+  const data = getFilteredTasks();
+  renderTasksToolbar(data);
+  renderTasksView(data);
+}
+
+// Syncs all toolbar UI that is shared between table and kanban views.
+// Re-applied on every render (not just setView()) so filter changes, data
+// refreshes, and empty states keep the toolbar consistent.
+function renderTasksToolbar(data) {
+  const baseTasks = getTaskViewBase();
+
+  // New Task button visibility — gated by canCreateTask() so an unmapped
+  // role_type fails closed (hidden) rather than open.
   $$('[data-action="open-task-modal"]').forEach((btn) => {
     btn.classList.toggle('hidden', !canCreateTask());
   });
 
-  // Sync archive toggle buttons
+  // Archive toggle active state
   $$('#tasks-archive-toggle .archive-toggle-btn').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.archiveView === (state.filters.tasks.archiveView || 'active'));
   });
 
-  const baseTasks = getTaskViewBase();
+  // View mode switcher active state
+  $$('#tasks-view-switcher .view-mode-btn').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.viewMode === state.tasksViewMode);
+  });
 
   const summaryEl = $('#tasks-results-summary');
   if (summaryEl) {
     const total = baseTasks.length;
     const filtered = data.length;
-
     summaryEl.textContent =
       filtered === total
         ? `Showing all ${total} Tasks`
@@ -3822,6 +3830,30 @@ function renderTasks() {
 
   renderActiveFilterChips('tasks');
   renderHeaderFilters('tasks');
+}
+
+// Dispatches to the correct view renderer and toggles container visibility.
+function renderTasksView(data) {
+  const tableContainer = $('#tasks-table-container');
+  const kanbanContainer = $('#tasks-kanban-container');
+
+  if (state.tasksViewMode === 'kanban') {
+    tableContainer?.classList.add('hidden');
+    kanbanContainer?.classList.remove('hidden');
+    renderTasksKanban(data);
+  } else {
+    kanbanContainer?.classList.add('hidden');
+    tableContainer?.classList.remove('hidden');
+    renderTasksTable(data);
+  }
+}
+
+// Renders the tasks table and its empty state. Extracted from the former
+// monolithic renderTasks() — pure extraction, zero logic changes.
+function renderTasksTable(data) {
+  const tbody = $('#tasks-table-body');
+  const empty = $('#tasks-empty');
+  const baseTasks = getTaskViewBase();
 
   if (data.length === 0) {
     tbody.innerHTML = '';
@@ -3965,6 +3997,117 @@ function renderTasks() {
         </tr>`;
     })
     .join('');
+
+  refreshIcons();
+}
+
+// Ordered column definitions for the Kanban board.
+const KANBAN_COLUMNS = [
+  { status: 'todo',        label: 'To Do' },
+  { status: 'in_progress', label: 'In Progress' },
+  { status: 'review',      label: 'In Review' },
+  { status: 'completed',   label: 'Completed' },
+  { status: 'on_hold',     label: 'On Hold' },
+];
+
+// Pure function — returns HTML string for one kanban card.
+// No DOM reads, no role logic (permission flags derived by caller context).
+function renderTaskCard(task) {
+  const priority = (task.priority || 'medium').toLowerCase();
+  const project = state.projects.find((p) => p.id === task.project_id);
+  const canDrag = canFullyEditTask() || canLimitedEditTask(task);
+  const accentClass = renderTaskDeadlineRowClass(task);
+
+  const projectBadge = project
+    ? `<div class="kanban-card-meta">
+         <span class="kanban-card-project">
+           <span class="w-1.5 h-1.5 rounded-full bg-indigo-400 shrink-0 inline-block"></span>
+           ${escapeHtml(project.project_name)}
+         </span>
+       </div>`
+    : '';
+
+  const assigneeBadge = task.assigned_to
+    ? `<div class="flex items-center gap-1.5 min-w-0 shrink-0">
+         <div class="client-avatar ${avatarColor(task.assigned_to)}" style="width:1.25rem;height:1.25rem;font-size:0.5rem;">${initials(task.assigned_to)}</div>
+         <span class="kanban-card-assignee">${escapeHtml(task.assigned_to)}</span>
+       </div>`
+    : '';
+
+  const deadlineBadge = task.deadline
+    ? `<span class="kanban-card-deadline ${deadlineClass(task.deadline)}">${fmtDate(task.deadline)}</span>`
+    : '';
+
+  const notesIcon = task.notes
+    ? `<i data-lucide="message-square" class="w-3 h-3 text-amber-400 shrink-0" title="${escapeHtml(task.notes)}"></i>`
+    : '';
+
+  return `
+    <div class="kanban-card${accentClass ? ' ' + accentClass : ''}"
+         data-kanban-card
+         data-task-id="${task.id}"
+         ${canDrag ? 'draggable="true"' : ''}>
+      <div class="kanban-card-title-row">
+        <button type="button"
+                class="kanban-card-title"
+                data-action="open-task-details"
+                data-id="${task.id}">
+          ${escapeHtml(task.task_info || 'Untitled task')}
+        </button>
+        ${notesIcon}
+      </div>
+      ${projectBadge}
+      <div class="kanban-card-footer">
+        ${assigneeBadge}
+        <div class="kanban-card-badges">
+          ${renderPriorityBadge(priority)}
+          ${deadlineBadge}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// Renders the kanban board. Each column shows its subset of `data`;
+// empty columns show a placeholder. The board itself is written into
+// #tasks-kanban-container which persists across re-renders so drag
+// event listeners (attached to the container) survive without re-wiring.
+function renderTasksKanban(data) {
+  const container = $('#tasks-kanban-container');
+  if (!container) return;
+
+  const grouped = {};
+  KANBAN_COLUMNS.forEach(({ status }) => { grouped[status] = []; });
+  data.forEach((t) => {
+    const s = (t.status || 'todo').toLowerCase();
+    if (grouped[s] !== undefined) {
+      grouped[s].push(t);
+    } else {
+      grouped.todo.push(t);
+    }
+  });
+
+  container.innerHTML = `
+    <div class="kanban-board">
+      ${KANBAN_COLUMNS.map(({ status, label }) => {
+        const cards = grouped[status] || [];
+        return `
+          <div class="kanban-col" data-kanban-status="${status}">
+            <div class="kanban-col-header">
+              <span class="kanban-col-label">${label}</span>
+              <span class="kanban-col-count">${cards.length}</span>
+            </div>
+            <div class="kanban-col-body">
+              ${cards.length > 0
+                ? cards.map(renderTaskCard).join('')
+                : '<div class="kanban-col-empty">No tasks</div>'
+              }
+            </div>
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
 
   refreshIcons();
 }
@@ -9479,6 +9622,51 @@ document.addEventListener('click', (e) => {
   closeAllHeaderFilterPopovers();
 });
 
+// ---------- Kanban Drag & Drop Helpers ----------
+
+// Transient drag state. Not in `state` — it's ephemeral UI, not app data.
+let _draggedTaskId = null;
+let _dragInFlight = false;
+
+function startTaskDrag(e, taskId) {
+  _draggedTaskId = taskId;
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', String(taskId));
+  e.target.closest('[data-kanban-card]')?.classList.add('is-dragging');
+}
+
+// Called on drop: validates permission, then delegates status change to
+// updateTask() which handles completed_at stamping and all notifications.
+// _dragInFlight prevents a second drop from firing while the first is in-flight.
+async function handleTaskDrop(e, targetStatus) {
+  if (!_draggedTaskId || _dragInFlight) return;
+  const taskId = _draggedTaskId;
+  const task = state.tasks.find((t) => Number(t.id) === Number(taskId));
+  if (!task) return;
+
+  if ((task.status || '').toLowerCase() === targetStatus) return;
+
+  if (!canFullyEditTask() && !canLimitedEditTask(task)) {
+    toast('You do not have permission to move this task.', 'error');
+    return;
+  }
+
+  _dragInFlight = true;
+  try {
+    await updateTask(taskId, { status: targetStatus });
+    // updateTask() already toasts on error and returns null — no double-toast needed.
+  } finally {
+    _dragInFlight = false;
+  }
+}
+
+function finishTaskDrag() {
+  $$('[data-kanban-card].is-dragging').forEach((el) => el.classList.remove('is-dragging'));
+  _draggedTaskId = null;
+}
+
+// ---------- Event Listeners ----------
+
 $('#tasks-reset-filters')?.addEventListener('click', () => resetModuleFilters('tasks'));
 $('#tasks-empty-reset-btn')?.addEventListener('click', () => resetModuleFilters('tasks'));
 
@@ -9491,6 +9679,57 @@ $('#tasks-archive-toggle')?.addEventListener('click', (e) => {
   state.filters.tasks.archiveView = view;
   renderTasks();
 });
+
+// Tasks view mode switcher (Table / Kanban)
+$('#tasks-view-switcher')?.addEventListener('click', (e) => {
+  const btn = e.target.closest('.view-mode-btn');
+  if (!btn) return;
+  state.tasksViewMode = btn.dataset.viewMode;
+  localStorage.setItem('tgora_tasks_view_mode', state.tasksViewMode);
+  renderTasks();
+});
+
+// Kanban drag & drop — delegated from the persistent container so listeners
+// survive innerHTML re-renders of the board.
+const _kanbanContainer = $('#tasks-kanban-container');
+if (_kanbanContainer) {
+  _kanbanContainer.addEventListener('dragstart', (e) => {
+    const card = e.target.closest('[data-kanban-card]');
+    if (!card) return;
+    startTaskDrag(e, card.dataset.taskId);
+  });
+
+  _kanbanContainer.addEventListener('dragover', (e) => {
+    const col = e.target.closest('[data-kanban-status]');
+    if (!col) return;
+    e.preventDefault();
+    // Highlight only the current target column
+    $$('#tasks-kanban-container [data-kanban-status]').forEach((c) => c.classList.remove('drag-over'));
+    col.classList.add('drag-over');
+  });
+
+  _kanbanContainer.addEventListener('dragleave', (e) => {
+    const col = e.target.closest('[data-kanban-status]');
+    if (!col) return;
+    // Only remove highlight when cursor leaves the column entirely (not its children)
+    if (!col.contains(e.relatedTarget)) {
+      col.classList.remove('drag-over');
+    }
+  });
+
+  _kanbanContainer.addEventListener('drop', (e) => {
+    const col = e.target.closest('[data-kanban-status]');
+    if (!col) return;
+    e.preventDefault();
+    $$('#tasks-kanban-container [data-kanban-status]').forEach((c) => c.classList.remove('drag-over'));
+    handleTaskDrop(e, col.dataset.kanbanStatus);
+  });
+
+  _kanbanContainer.addEventListener('dragend', () => {
+    finishTaskDrag();
+    $$('#tasks-kanban-container [data-kanban-status]').forEach((c) => c.classList.remove('drag-over'));
+  });
+}
 
 $('#member-tasks-clear-filters')?.addEventListener('click', () => {
   Object.assign(state.filters.memberTasks, { status: 'all', priority: 'all', project: null, deadline: null });

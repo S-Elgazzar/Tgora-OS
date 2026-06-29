@@ -1278,3 +1278,195 @@ a:focus-visible {
   cursor: not-allowed;
   pointer-events: none;
 }
+
+/* ============================================
+   Kanban Board (Sprint 3.3)
+   ============================================ */
+
+.kanban-board {
+  display: flex;
+  gap: 1rem;
+  overflow-x: auto;
+  padding-bottom: 1.25rem;
+  align-items: flex-start;
+}
+
+/* Thin scrollbar for the board track */
+.kanban-board::-webkit-scrollbar { height: 6px; }
+.kanban-board::-webkit-scrollbar-track { background: transparent; }
+.kanban-board::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 9999px; }
+.kanban-board::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+
+.kanban-col {
+  flex: 0 0 272px;
+  background-color: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 280px);
+  min-height: 180px;
+  transition: border-color 0.15s, background-color 0.15s;
+}
+
+.kanban-col.drag-over {
+  border-color: #6366f1;
+  background-color: #eef2ff;
+}
+
+.kanban-col-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.625rem 0.875rem;
+  border-bottom: 1px solid #e5e7eb;
+  flex-shrink: 0;
+}
+
+.kanban-col-label {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  color: #374151;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.kanban-col-count {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: #6b7280;
+  background-color: #e5e7eb;
+  padding: 0.1rem 0.4rem;
+  border-radius: 9999px;
+  min-width: 1.25rem;
+  text-align: center;
+  line-height: 1.6;
+}
+
+.kanban-col-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.625rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+/* Thin scrollbar for column bodies */
+.kanban-col-body::-webkit-scrollbar { width: 4px; }
+.kanban-col-body::-webkit-scrollbar-track { background: transparent; }
+.kanban-col-body::-webkit-scrollbar-thumb { background: #e5e7eb; border-radius: 9999px; }
+
+.kanban-col-empty {
+  padding: 1.75rem 0.5rem;
+  text-align: center;
+  font-size: 0.6875rem;
+  color: #9ca3af;
+  border: 1.5px dashed #e5e7eb;
+  border-radius: 0.5rem;
+  flex: 1;
+}
+
+/* Card base */
+.kanban-card {
+  background-color: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-left: 3px solid transparent;
+  border-radius: 0.625rem;
+  padding: 0.6875rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4375rem;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  transition: box-shadow 0.15s, border-color 0.15s;
+}
+
+.kanban-card:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  border-color: #d1d5db;
+}
+
+/* Deadline accent — reuse existing row-class names for zero extra logic */
+.kanban-card.task-row-overdue { border-left-color: #ef4444; }
+.kanban-card.task-row-soon    { border-left-color: #f59e0b; }
+
+/* Drag interaction */
+.kanban-card[draggable="true"] { cursor: grab; }
+.kanban-card[draggable="true"]:active { cursor: grabbing; }
+.kanban-card.is-dragging { opacity: 0.4; box-shadow: none; }
+
+/* Card internals */
+.kanban-card-title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.375rem;
+}
+
+.kanban-card-title {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: #111827;
+  text-align: left;
+  line-height: 1.45;
+  flex: 1;
+  min-width: 0;
+  word-break: break-word;
+  transition: color 0.1s;
+}
+
+.kanban-card-title:hover { color: #4f46e5; }
+
+.kanban-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  flex-wrap: wrap;
+}
+
+.kanban-card-project {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3125rem;
+  font-size: 0.6875rem;
+  color: #6b7280;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.kanban-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.375rem;
+  flex-wrap: wrap;
+  margin-top: 0.0625rem;
+}
+
+.kanban-card-assignee {
+  font-size: 0.6875rem;
+  color: #6b7280;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 7rem;
+}
+
+.kanban-card-deadline {
+  font-size: 0.6875rem;
+  white-space: nowrap;
+}
+
+.kanban-card-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3125rem;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
+/* Responsive: allow horizontal scroll on narrow viewports */
+@media (max-width: 768px) {
+  .kanban-col { flex: 0 0 240px; }
+}
