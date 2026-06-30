@@ -105,6 +105,9 @@ const state = {
   financeTransactions: [],
   financeForecasts: [],
   financeTab: 'dashboard',
+  financeDateRange:   localStorage.getItem('tgora_finance_date_range')   || 'this_month',
+  financeCustomStart: localStorage.getItem('tgora_finance_custom_start') || '',
+  financeCustomEnd:   localStorage.getItem('tgora_finance_custom_end')   || '',
   editingFinanceAccountId: null,
   editingFinanceTransactionId: null,
   editingFinanceForecastId: null,
@@ -2663,6 +2666,7 @@ let tasksChartInstance = null;
 let teamChartInstance = null;
 let financeIncomeExpenseChartInstance = null;
 let financeExpenseCategoryChartInstance = null;
+let financeProjectRevenueChartInstance = null;
 
 function renderCharts() {
 
@@ -5725,6 +5729,168 @@ function getAccountBalance(accountId) {
   return balance;
 }
 
+function generateFinanceTxNumber() {
+  const year = new Date().getFullYear();
+  const prefix = `TRX-${year}-`;
+  const existing = state.financeTransactions
+    .filter(t => t.transaction_number && t.transaction_number.startsWith(prefix))
+    .map(t => parseInt(t.transaction_number.slice(prefix.length), 10))
+    .filter(n => !isNaN(n));
+  const next = existing.length ? Math.max(...existing) + 1 : 1;
+  return `${prefix}${String(next).padStart(6, '0')}`;
+}
+
+// ─── Finance Date Range Intelligence ─────────────────────────────────────────
+
+function getFinanceDateRange() {
+  const range = state.financeDateRange || 'this_month';
+  const now = new Date();
+  const y = now.getFullYear(), m = now.getMonth();
+  let startDate, endDate, label, isAllTime = false;
+
+  switch (range) {
+    case 'this_month':
+      startDate = new Date(y, m, 1);
+      endDate   = new Date(y, m + 1, 0);
+      label     = now.toLocaleString('default', { month: 'long', year: 'numeric' });
+      break;
+    case 'last_month':
+      startDate = new Date(y, m - 1, 1);
+      endDate   = new Date(y, m, 0);
+      label     = new Date(y, m - 1, 1).toLocaleString('default', { month: 'long', year: 'numeric' });
+      break;
+    case 'last_3_months':
+      startDate = new Date(y, m - 2, 1);
+      endDate   = new Date(y, m + 1, 0);
+      label     = 'Last 3 Months';
+      break;
+    case 'last_6_months':
+      startDate = new Date(y, m - 5, 1);
+      endDate   = new Date(y, m + 1, 0);
+      label     = 'Last 6 Months';
+      break;
+    case 'this_year':
+      startDate = new Date(y, 0, 1);
+      endDate   = new Date(y, 11, 31);
+      label     = String(y);
+      break;
+    case 'last_year':
+      startDate = new Date(y - 1, 0, 1);
+      endDate   = new Date(y - 1, 11, 31);
+      label     = String(y - 1);
+      break;
+    case 'last_2_years':
+      startDate = new Date(y - 1, 0, 1);
+      endDate   = new Date(y, 11, 31);
+      label     = `${y - 1}–${y}`;
+      break;
+    case 'all_time':
+      startDate = new Date(2000, 0, 1);
+      endDate   = new Date(2099, 11, 31);
+      label     = 'All Time';
+      isAllTime = true;
+      break;
+    case 'custom': {
+      const cs = state.financeCustomStart;
+      const ce = state.financeCustomEnd;
+      if (cs && ce) {
+        startDate = new Date(cs + 'T00:00:00');
+        endDate   = new Date(ce + 'T23:59:59');
+        label     = `${cs} – ${ce}`;
+      } else {
+        startDate = new Date(y, m, 1);
+        endDate   = new Date(y, m + 1, 0);
+        label     = 'Custom Range';
+      }
+      break;
+    }
+    default:
+      startDate = new Date(y, m, 1);
+      endDate   = new Date(y, m + 1, 0);
+      label     = 'This Month';
+  }
+  return { range, label, startDate, endDate, isAllTime };
+}
+
+function isInDateRange(dateStr, dr) {
+  if (!dateStr) return false;
+  if (dr.isAllTime) return true;
+  const d = new Date(dateStr + 'T00:00:00');
+  return d >= dr.startDate && d <= dr.endDate;
+}
+
+function getFinancePeriodSummary(dr) {
+  const activeTx = state.financeTransactions.filter(t =>
+    !t.is_archived && !t.is_deleted && t.status !== 'cancelled' && isInDateRange(t.transaction_date, dr)
+  );
+  const realIncome   = activeTx.filter(t => t.transaction_type === 'income').reduce((s, t) => s + Number(t.amount), 0);
+  const realExpenses = activeTx.filter(t => t.transaction_type === 'expense').reduce((s, t) => s + Number(t.amount), 0);
+  return { realIncome, realExpenses, netProfit: realIncome - realExpenses };
+}
+
+function getCashFlowForPeriod(dr) {
+  const activeTx = state.financeTransactions.filter(t => !t.is_archived && !t.is_deleted && t.status !== 'cancelled');
+  let openingBalance = state.financeAccounts.reduce((s, a) => s + (Number(a.opening_balance) || 0), 0);
+  activeTx.filter(t => !isInDateRange(t.transaction_date, dr) && !dr.isAllTime && new Date(t.transaction_date + 'T00:00:00') < dr.startDate).forEach(t => {
+    const amt = Number(t.amount) || 0;
+    const type = t.transaction_type;
+    if (['income', 'capital_injection', 'pass_through_received'].includes(type)) openingBalance += amt;
+    else if (['expense', 'pass_through_spent'].includes(type)) openingBalance -= amt;
+  });
+  let cashIn = 0, cashOut = 0;
+  activeTx.filter(t => isInDateRange(t.transaction_date, dr)).forEach(t => {
+    const amt = Number(t.amount) || 0;
+    const type = t.transaction_type;
+    if (['income', 'capital_injection', 'pass_through_received'].includes(type)) cashIn += amt;
+    else if (['expense', 'pass_through_spent'].includes(type)) cashOut += amt;
+  });
+  return { openingBalance, cashIn, cashOut, closingBalance: openingBalance + cashIn - cashOut, netMovement: cashIn - cashOut };
+}
+
+function getFinanceForecastForPeriod(dr) {
+  const now = new Date(); now.setHours(0, 0, 0, 0);
+  const active = state.financeForecasts.filter(f =>
+    !f.is_archived && !f.is_deleted && !['cancelled', 'received'].includes(f.status) &&
+    isInDateRange(f.expected_date, dr)
+  );
+  const expectedIncomeThisMonth   = active.filter(f => f.forecast_type === 'expected_income').reduce((s, f) => s + Number(f.amount), 0);
+  const expectedExpensesThisMonth = active.filter(f => f.forecast_type === 'expected_expense').reduce((s, f) => s + Number(f.amount), 0);
+  const expectedNetCashflow       = expectedIncomeThisMonth - expectedExpensesThisMonth;
+  const weightedIncome            = state.financeForecasts.filter(f => !f.is_archived && !f.is_deleted && !['cancelled', 'received'].includes(f.status) && f.forecast_type === 'expected_income').reduce((s, f) => s + Number(f.amount) * (Number(f.probability) || 100) / 100, 0);
+  const overdueCount              = state.financeForecasts.filter(f => !f.is_archived && !f.is_deleted && f.status === 'expected' && new Date(f.expected_date) < now).length;
+  return { expectedIncomeThisMonth, expectedExpensesThisMonth, expectedNetCashflow, weightedIncome, overdueCount };
+}
+
+function getFinanceDateRangeLabel() {
+  return getFinanceDateRange().label;
+}
+
+function getFinancePeriodBadge(color) {
+  const dr = getFinanceDateRange();
+  return `<span class="finance-period-chip finance-period-chip--${color}">${escapeHtml(dr.label)}</span>`;
+}
+
+// ─── Future Period Intelligence Architecture ──────────────────────────────────
+// These stubs are reserved for Sprint 4.3+ trend and variance features.
+// Do NOT implement yet — scaffolding only.
+//
+// function getPreviousPeriod(dr) {
+//   // Returns a { startDate, endDate, label } object for the period immediately
+//   // preceding `dr`. Used to calculate MoM / QoQ / YoY comparisons.
+//   // e.g. getPreviousPeriod({ range: 'this_month' }) → last calendar month
+// }
+//
+// function calculateTrend(currentValue, previousValue) {
+//   // Returns { direction: 'up'|'down'|'flat', pct: number, label: string }
+//   // Used to drive KPI trend arrows and colour coding on KPI cards.
+// }
+//
+// function calculateVariance(actual, forecast) {
+//   // Returns { variance: number, pct: number, favourable: bool }
+//   // Used in Forecast vs Actual report section and widget drilldowns.
+// }
+// ─────────────────────────────────────────────────────────────────────────────
+
 function getFinanceSummary() {
   const activeTx = state.financeTransactions.filter(t => !t.is_archived && !t.is_deleted && t.status !== 'cancelled');
   const now = new Date();
@@ -5764,6 +5930,130 @@ function getFinanceForecastSummary() {
   return { expectedIncomeThisMonth, expectedExpensesThisMonth, expectedNetCashflow, weightedIncome, overdueCount };
 }
 
+function getCashFlowThisMonth() {
+  const now = new Date();
+  const yr = now.getFullYear(), mo = now.getMonth();
+  const monthStart = new Date(yr, mo, 1);
+  const activeTx = state.financeTransactions.filter(t => !t.is_archived && !t.is_deleted && t.status !== 'cancelled');
+
+  let openingBalance = state.financeAccounts.reduce((s, a) => s + (Number(a.opening_balance) || 0), 0);
+  activeTx.filter(t => new Date(t.transaction_date + 'T00:00:00') < monthStart).forEach(t => {
+    const amt = Number(t.amount) || 0;
+    const type = t.transaction_type;
+    if (['income', 'capital_injection', 'pass_through_received'].includes(type)) openingBalance += amt;
+    else if (['expense', 'pass_through_spent'].includes(type)) openingBalance -= amt;
+  });
+
+  let cashIn = 0, cashOut = 0;
+  activeTx.filter(t => {
+    const d = new Date(t.transaction_date + 'T00:00:00');
+    return d.getFullYear() === yr && d.getMonth() === mo;
+  }).forEach(t => {
+    const amt = Number(t.amount) || 0;
+    const type = t.transaction_type;
+    if (['income', 'capital_injection', 'pass_through_received'].includes(type)) cashIn += amt;
+    else if (['expense', 'pass_through_spent'].includes(type)) cashOut += amt;
+  });
+
+  return { openingBalance, cashIn, cashOut, closingBalance: openingBalance + cashIn - cashOut, netMovement: cashIn - cashOut };
+}
+
+function getClientBalanceSummary(dr) {
+  const txs = state.financeTransactions.filter(t => !t.is_archived && !t.is_deleted && t.status !== 'cancelled' && (!dr || isInDateRange(t.transaction_date, dr)));
+  const map = {};
+  txs.forEach(t => {
+    if (!t.client_id && !t.client_name) return;
+    const key = t.client_id ? `id:${t.client_id}` : `name:${t.client_name}`;
+    if (!map[key]) {
+      map[key] = { clientId: t.client_id || null, clientName: t.client_name || getCrmClientName(t.client_id) || 'Unknown', revenue: 0, ptReceived: 0, ptSpent: 0, expenses: 0 };
+    }
+    const amt = Number(t.amount) || 0;
+    switch (t.transaction_type) {
+      case 'income':                map[key].revenue    += amt; break;
+      case 'pass_through_received': map[key].ptReceived += amt; break;
+      case 'pass_through_spent':    map[key].ptSpent    += amt; break;
+      case 'expense':               map[key].expenses   += amt; break;
+    }
+  });
+  return Object.values(map).map(c => ({
+    ...c,
+    ptRemaining:    c.ptReceived - c.ptSpent,
+    totalCashIn:    c.revenue + c.ptReceived,
+    profitEstimate: c.revenue - c.expenses,
+  })).sort((a, b) => b.revenue - a.revenue);
+}
+
+function getProjectPnL(dr) {
+  const txs = state.financeTransactions.filter(t => !t.is_archived && !t.is_deleted && t.status !== 'cancelled' && (!dr || isInDateRange(t.transaction_date, dr)));
+  const map = {};
+  txs.forEach(t => {
+    const type = t.transaction_type;
+    if (!['income', 'expense', 'pass_through_received', 'pass_through_spent'].includes(type)) return;
+    const key = t.project_name || '__unassigned__';
+    if (!map[key]) map[key] = { projectName: t.project_name || 'Unassigned', revenue: 0, expenses: 0, ptReceived: 0, ptSpent: 0 };
+    const amt = Number(t.amount) || 0;
+    switch (type) {
+      case 'income':                map[key].revenue    += amt; break;
+      case 'expense':               map[key].expenses   += amt; break;
+      case 'pass_through_received': map[key].ptReceived += amt; break;
+      case 'pass_through_spent':    map[key].ptSpent    += amt; break;
+    }
+  });
+  return Object.values(map).map(p => ({
+    ...p,
+    ptRemaining: p.ptReceived - p.ptSpent,
+    profit:  p.revenue - p.expenses,
+    margin:  p.revenue > 0 ? (p.revenue - p.expenses) / p.revenue * 100 : null,
+  })).sort((a, b) => b.revenue - a.revenue);
+}
+
+function getExecutiveInsights(summary, cashFlow, forecast, dr) {
+  const insights = [];
+  const CASH_THRESHOLD = 100000;
+  const activeTx = state.financeTransactions.filter(t => !t.is_archived && !t.is_deleted && t.status !== 'cancelled');
+  const periodDr = dr || getFinanceDateRange();
+  const periodTx = activeTx.filter(t => isInDateRange(t.transaction_date, periodDr));
+  const periodLabel = periodDr.label;
+
+  if (summary.totalAccountBalances < CASH_THRESHOLD) {
+    insights.push({ type: 'warning', icon: 'alert-triangle', html: `Cash in accounts (<strong>${fmtMoney(summary.totalAccountBalances)}</strong>) is below the <strong>${fmtMoney(CASH_THRESHOLD)}</strong> safety threshold.` });
+  }
+
+  const catExp = {};
+  periodTx.filter(t => t.transaction_type === 'expense').forEach(t => {
+    const n = getCategoryName(t.category_id) || 'Uncategorized';
+    catExp[n] = (catExp[n] || 0) + Number(t.amount);
+  });
+  const topCat = Object.entries(catExp).sort((a, b) => b[1] - a[1])[0];
+  if (topCat) insights.push({ type: 'info', icon: 'trending-down', html: `Highest expense category (${escapeHtml(periodLabel)}): <strong>${escapeHtml(topCat[0])}</strong> (${fmtMoney(topCat[1])}).` });
+
+  const projRev = {};
+  periodTx.filter(t => t.transaction_type === 'income' && t.project_name).forEach(t => {
+    projRev[t.project_name] = (projRev[t.project_name] || 0) + Number(t.amount);
+  });
+  const topProj = Object.entries(projRev).sort((a, b) => b[1] - a[1])[0];
+  if (topProj) insights.push({ type: 'positive', icon: 'briefcase', html: `Top revenue project (${escapeHtml(periodLabel)}): <strong>${escapeHtml(topProj[0])}</strong> (${fmtMoney(topProj[1])}).` });
+
+  const clientRev = {};
+  periodTx.filter(t => t.transaction_type === 'income' && (t.client_name || t.client_id)).forEach(t => {
+    const n = t.client_name || getCrmClientName(t.client_id) || 'Unknown';
+    clientRev[n] = (clientRev[n] || 0) + Number(t.amount);
+  });
+  const topClient = Object.entries(clientRev).sort((a, b) => b[1] - a[1])[0];
+  if (topClient) insights.push({ type: 'positive', icon: 'user', html: `Top client by revenue (${escapeHtml(periodLabel)}): <strong>${escapeHtml(topClient[0])}</strong> (${fmtMoney(topClient[1])}).` });
+
+  if (summary.passThroughHeld > 0) {
+    insights.push({ type: 'info', icon: 'arrow-right-left', html: `Currently holding <strong>${fmtMoney(summary.passThroughHeld)}</strong> in client funds (pass-through balance).` });
+  }
+
+  if (forecast.expectedNetCashflow !== 0) {
+    const sign = forecast.expectedNetCashflow >= 0 ? '+' : '';
+    insights.push({ type: forecast.expectedNetCashflow >= 0 ? 'positive' : 'warning', icon: 'calendar-check', html: `Forecasted net cashflow (${escapeHtml(periodLabel)}): <strong>${sign}${fmtMoney(forecast.expectedNetCashflow)}</strong>.` });
+  }
+
+  return insights;
+}
+
 function renderFinanceCharts(summary) {
   const fmtChartVal = (v) => {
     if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
@@ -5771,27 +6061,77 @@ function renderFinanceCharts(summary) {
     return String(Math.round(v));
   };
 
-  // Income vs Expenses — grouped bar chart, last 6 months
+  const dr = getFinanceDateRange();
+
+  function buildBuckets() {
+    const { range, startDate, endDate } = dr;
+    const buckets = [];
+
+    const pushDaily = (s, e) => {
+      const d = new Date(s);
+      while (d <= e) {
+        buckets.push({ label: d.toLocaleString('default', { day: 'numeric', month: 'short' }), s: new Date(d), e: new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999) });
+        d.setDate(d.getDate() + 1);
+      }
+    };
+
+    const pushMonthly = (s, e) => {
+      const d = new Date(s.getFullYear(), s.getMonth(), 1);
+      const endMonth = new Date(e.getFullYear(), e.getMonth(), 1);
+      while (d <= endMonth) {
+        buckets.push({ label: d.toLocaleString('default', { month: 'short', year: '2-digit' }), s: new Date(d), e: new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999) });
+        d.setMonth(d.getMonth() + 1);
+      }
+    };
+
+    if (range === 'this_month' || range === 'last_month') {
+      pushDaily(startDate, endDate);
+    } else if (range === 'all_time') {
+      const txYears = state.financeTransactions.filter(t => t.transaction_date).map(t => new Date(t.transaction_date).getFullYear()).filter(y => !isNaN(y));
+      const minYear = txYears.length ? Math.min(...txYears) : new Date().getFullYear();
+      const maxYear = new Date().getFullYear();
+      for (let y = minYear; y <= maxYear; y++) {
+        buckets.push({ label: String(y), s: new Date(y, 0, 1), e: new Date(y, 11, 31, 23, 59, 59, 999) });
+      }
+    } else if (range === 'last_2_years') {
+      let d = new Date(startDate.getFullYear(), Math.floor(startDate.getMonth() / 3) * 3, 1);
+      while (d <= endDate) {
+        const qN = Math.floor(d.getMonth() / 3) + 1;
+        const qEnd = new Date(d.getFullYear(), d.getMonth() + 3, 0);
+        buckets.push({ label: `Q${qN} ${d.getFullYear()}`, s: new Date(d), e: new Date(qEnd.getFullYear(), qEnd.getMonth(), qEnd.getDate(), 23, 59, 59, 999) });
+        d.setMonth(d.getMonth() + 3);
+      }
+    } else if (range === 'custom') {
+      const diffDays = Math.round((endDate - startDate) / 86400000);
+      if (diffDays <= 35) pushDaily(startDate, endDate);
+      else pushMonthly(startDate, endDate);
+    } else {
+      pushMonthly(startDate, endDate);
+    }
+
+    if (!buckets.length) buckets.push({ label: dr.label, s: new Date(startDate), e: new Date(endDate) });
+    return buckets;
+  }
+
+  // Revenue vs Expenses — period-aware grouped bar chart
   const barCanvas = $('#finance-income-expense-chart');
   if (barCanvas) {
-    const months = [], incomeData = [], expenseData = [];
-    for (let i = 5; i >= 0; i--) {
-      const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - i);
-      months.push(d.toLocaleString('default', { month: 'short', year: '2-digit' }));
-      const y = d.getFullYear(), m = d.getMonth();
-      const monthTx = state.financeTransactions.filter(t => {
-        if (t.is_archived || t.status === 'cancelled') return false;
-        const td = new Date(t.transaction_date);
-        return td.getFullYear() === y && td.getMonth() === m;
+    const buckets = buildBuckets();
+    const incomeData = [], expenseData = [];
+    buckets.forEach(b => {
+      const bTx = state.financeTransactions.filter(t => {
+        if (t.is_archived || t.is_deleted || t.status === 'cancelled') return false;
+        const d = new Date(t.transaction_date + 'T00:00:00');
+        return d >= b.s && d <= b.e;
       });
-      incomeData.push( monthTx.filter(t => t.transaction_type === 'income').reduce((s, t) => s + Number(t.amount), 0));
-      expenseData.push(monthTx.filter(t => t.transaction_type === 'expense').reduce((s, t) => s + Number(t.amount), 0));
-    }
+      incomeData.push(bTx.filter(t => t.transaction_type === 'income').reduce((s, t) => s + Number(t.amount), 0));
+      expenseData.push(bTx.filter(t => t.transaction_type === 'expense').reduce((s, t) => s + Number(t.amount), 0));
+    });
     if (financeIncomeExpenseChartInstance) { financeIncomeExpenseChartInstance.destroy(); financeIncomeExpenseChartInstance = null; }
     financeIncomeExpenseChartInstance = new Chart(barCanvas, {
       type: 'bar',
       data: {
-        labels: months,
+        labels: buckets.map(b => b.label),
         datasets: [
           { label: 'Income',   data: incomeData,   backgroundColor: 'rgba(16,185,129,0.85)', borderRadius: 4, borderSkipped: false },
           { label: 'Expenses', data: expenseData, backgroundColor: 'rgba(244,63,94,0.85)',  borderRadius: 4, borderSkipped: false },
@@ -5807,7 +6147,7 @@ function renderFinanceCharts(summary) {
         scales: {
           x: {
             grid: { display: false },
-            ticks: { maxRotation: 0, minRotation: 0, font: { size: 11 } },
+            ticks: { maxRotation: 45, minRotation: 0, font: { size: 11 }, maxTicksLimit: 20 },
           },
           y: {
             beginAtZero: true,
@@ -5819,12 +6159,12 @@ function renderFinanceCharts(summary) {
     });
   }
 
-  // Expenses by category doughnut
+  // Expenses by category doughnut — period-filtered
   const doughnutCanvas = $('#finance-expense-category-chart');
   if (doughnutCanvas) {
     const catTotals = {};
     state.financeTransactions
-      .filter(t => !t.is_archived && t.status !== 'cancelled' && t.transaction_type === 'expense')
+      .filter(t => !t.is_archived && !t.is_deleted && t.status !== 'cancelled' && t.transaction_type === 'expense' && isInDateRange(t.transaction_date, dr))
       .forEach(t => { const n = getCategoryName(t.category_id); catTotals[n] = (catTotals[n] || 0) + Number(t.amount); });
     const labels = Object.keys(catTotals);
     const values = Object.values(catTotals);
@@ -5851,62 +6191,979 @@ function renderFinanceCharts(summary) {
       ctx.fillText('No expense data yet', doughnutCanvas.width / 2, doughnutCanvas.height / 2);
     }
   }
+
+  // Revenue & Expenses by Project — horizontal bar — period-filtered
+  const projCanvas = $('#finance-project-revenue-chart');
+  if (projCanvas) {
+    const projData = getProjectPnL(dr).filter(p => p.revenue > 0 || p.expenses > 0).slice(0, 8);
+    if (financeProjectRevenueChartInstance) { financeProjectRevenueChartInstance.destroy(); financeProjectRevenueChartInstance = null; }
+    if (projData.length) {
+      financeProjectRevenueChartInstance = new Chart(projCanvas, {
+        type: 'bar',
+        data: {
+          labels: projData.map(p => p.projectName.length > 20 ? p.projectName.slice(0, 18) + '…' : p.projectName),
+          datasets: [
+            { label: 'Revenue',  data: projData.map(p => p.revenue),  backgroundColor: 'rgba(16,185,129,0.85)', borderRadius: 4 },
+            { label: 'Expenses', data: projData.map(p => p.expenses), backgroundColor: 'rgba(244,63,94,0.85)',  borderRadius: 4 },
+          ],
+        },
+        options: {
+          indexAxis: 'y',
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { position: 'bottom', labels: { usePointStyle: true, pointStyleWidth: 8, padding: 12, font: { size: 11 } } },
+            tooltip: { callbacks: { label: ctx => ` ${ctx.dataset.label}: ${fmtMoney(ctx.raw)}` } },
+          },
+          scales: {
+            x: {
+              beginAtZero: true,
+              grid: { color: 'rgba(0,0,0,0.05)' },
+              ticks: { callback: v => fmtChartVal(v), font: { size: 10 } },
+            },
+            y: { grid: { display: false }, ticks: { font: { size: 10 } } },
+          },
+        },
+      });
+    } else {
+      const ctx = projCanvas.getContext('2d');
+      ctx.clearRect(0, 0, projCanvas.width, projCanvas.height);
+      ctx.font = '13px system-ui, sans-serif';
+      ctx.fillStyle = '#9ca3af';
+      ctx.textAlign = 'center';
+      ctx.fillText('No project data yet', projCanvas.width / 2, projCanvas.height / 2);
+    }
+  }
+}
+
+const FINANCE_KPI_CONFIG = {
+  totalCapital: {
+    label: 'Total Capital', icon: 'landmark', color: 'indigo',
+    tooltip: 'Money injected into the business. Not counted as revenue or profit.',
+    formulaLines: ['SUM(', '  Capital Injection transactions', '  · Not Deleted', '  · Not Cancelled', ')'],
+    excludedList: ['Income', 'Expenses', 'Pass-Through', 'Transfers', 'Forecasts', 'Deleted', 'Cancelled'],
+    insight: 'Capital injections are investments in the business. They increase your cash balance but are never counted as revenue or operating profit.',
+    navAction: { tab: 'transactions', typeFilter: 'capital_injection' },
+    periodFiltered: false,
+    getData() {
+      const txs = state.financeTransactions.filter(t => !t.is_archived && !t.is_deleted && t.status !== 'cancelled' && t.transaction_type === 'capital_injection');
+      return { value: txs.reduce((s, t) => s + Number(t.amount), 0), rows: txs.map(t => ({ date: t.transaction_date, txNum: t.transaction_number, desc: t.description, amount: Number(t.amount), positive: true, client: t.client_name || getCrmClientName(t.client_id) || '', project: t.project_name || '', category: getCategoryName(t.category_id) || '', ref: t.reference || '' })) };
+    },
+  },
+  realRevenue: {
+    label: 'Real Revenue', icon: 'trending-up', color: 'emerald',
+    tooltip: 'Actual service income only. Excludes capital, transfers, client funds, and forecasts.',
+    formulaLines: ['SUM(', '  Income transactions', '  · In selected period', '  · Not Deleted', '  · Not Cancelled', ')'],
+    excludedList: ['Capital Injection', 'Pass-Through Received', 'Transfers', 'Forecasts', 'Deleted', 'Cancelled'],
+    insight: 'Revenue counts only service income. Capital injections, client pass-through funds, and account transfers never count as revenue — they are tracked separately.',
+    navAction: { tab: 'transactions', typeFilter: 'income' },
+    periodFiltered: true,
+    getData() {
+      const dr = getFinanceDateRange();
+      const txs = state.financeTransactions.filter(t => !t.is_archived && !t.is_deleted && t.status !== 'cancelled' && t.transaction_type === 'income' && isInDateRange(t.transaction_date, dr));
+      return { value: txs.reduce((s, t) => s + Number(t.amount), 0), rows: txs.map(t => ({ date: t.transaction_date, txNum: t.transaction_number, desc: t.description, amount: Number(t.amount), positive: true, client: t.client_name || getCrmClientName(t.client_id) || '', project: t.project_name || '', category: getCategoryName(t.category_id) || '', ref: t.reference || '' })) };
+    },
+  },
+  realExpenses: {
+    label: 'Real Expenses', icon: 'trending-down', color: 'rose',
+    tooltip: 'Actual company expenses only. Excludes transfers and client pass-through spending.',
+    formulaLines: ['SUM(', '  Expense transactions', '  · In selected period', '  · Not Deleted', '  · Not Cancelled', ')'],
+    excludedList: ['Pass-Through Spending', 'Transfers', 'Capital', 'Deleted', 'Cancelled'],
+    insight: 'Operating expenses only. Pass-through spending is excluded — those funds belong to the client and are tracked separately under Client Funds Held.',
+    navAction: { tab: 'transactions', typeFilter: 'expense' },
+    periodFiltered: true,
+    getData() {
+      const dr = getFinanceDateRange();
+      const txs = state.financeTransactions.filter(t => !t.is_archived && !t.is_deleted && t.status !== 'cancelled' && t.transaction_type === 'expense' && isInDateRange(t.transaction_date, dr));
+      return { value: txs.reduce((s, t) => s + Number(t.amount), 0), rows: txs.map(t => ({ date: t.transaction_date, txNum: t.transaction_number, desc: t.description, amount: Number(t.amount), positive: false, client: t.client_name || getCrmClientName(t.client_id) || '', project: t.project_name || '', category: getCategoryName(t.category_id) || '', ref: t.reference || '' })) };
+    },
+  },
+  netProfit: {
+    label: 'Net Profit', icon: 'bar-chart-2', color: 'emerald',
+    tooltip: 'Real Revenue minus Real Expenses for the selected period. Capital and pass-through are never included.',
+    formulaLines: ['Real Revenue (period)', '− Real Expenses (period)', '= Net Profit'],
+    excludedList: ['Capital', 'Pass-Through', 'Transfers', 'Forecasts'],
+    insight: 'Profit is calculated purely from service revenue and operating expenses. Capital and client funds are always excluded to keep the P&L clean and accurate.',
+    navAction: { tab: 'transactions', typeFilter: 'all' },
+    periodFiltered: true,
+    getData() {
+      const dr = getFinanceDateRange();
+      const ps = getFinancePeriodSummary(dr);
+      const pos = ps.netProfit >= 0;
+      return {
+        value: ps.netProfit, color: pos ? 'emerald' : 'rose',
+        breakdown: [
+          { label: 'Real Revenue',    value: fmtMoney(ps.realIncome),   color: 'emerald' },
+          { label: '− Real Expenses', value: fmtMoney(ps.realExpenses), color: 'rose'    },
+          { label: '= Net Profit',    value: `${pos ? '+' : ''}${fmtMoney(ps.netProfit)}`, color: pos ? 'emerald' : 'rose', bold: true },
+        ],
+      };
+    },
+  },
+  cashInAccounts: {
+    label: 'Cash in Accounts', icon: 'wallet', color: 'blue',
+    tooltip: 'Sum of current balances across all active accounts. Live — not period-filtered.',
+    formulaLines: ['Per account:', '  Opening Balance', '  + All Inflows', '  − All Outflows', '  = Current Balance', 'Summed across active accounts'],
+    excludedList: ['Inactive Accounts', 'Deleted Transactions', 'Cancelled Transactions'],
+    insight: 'This is the actual spendable cash position across all active accounts. It includes capital, revenue, and client funds — reflecting real-world bank balances.',
+    navAction: { tab: 'accounts' },
+    periodFiltered: false,
+    getData() {
+      const accounts = state.financeAccounts.filter(a => a.is_active);
+      const breakdown = accounts.map(a => ({ label: a.account_name, value: fmtMoney(getAccountBalance(a.id)), color: 'blue' }));
+      breakdown.push({ label: 'Total', value: fmtMoney(accounts.reduce((s, a) => s + getAccountBalance(a.id), 0)), color: 'blue', bold: true });
+      return { value: accounts.reduce((s, a) => s + getAccountBalance(a.id), 0), breakdown };
+    },
+  },
+  clientFundsHeld: {
+    label: 'Client Funds Held', icon: 'arrow-right-left', color: 'amber',
+    tooltip: 'Client pass-through funds received but not yet spent on their behalf. Live — not period-filtered.',
+    formulaLines: ['SUM(Pass-Through Received)', '− SUM(Pass-Through Spent)', '= Client Funds Held'],
+    excludedList: ['Income', 'Expenses', 'Capital', 'Transfers'],
+    insight: 'These funds belong to your clients. They must be spent on their behalf or returned — they are never counted as company revenue or profit.',
+    navAction: { tab: 'transactions', typeFilter: 'pass_through_received' },
+    periodFiltered: false,
+    getData() {
+      const base = state.financeTransactions.filter(t => !t.is_archived && !t.is_deleted && t.status !== 'cancelled');
+      const rcv = base.filter(t => t.transaction_type === 'pass_through_received');
+      const spt = base.filter(t => t.transaction_type === 'pass_through_spent');
+      const ptIn = rcv.reduce((s, t) => s + Number(t.amount), 0);
+      const ptOut = spt.reduce((s, t) => s + Number(t.amount), 0);
+      return {
+        value: ptIn - ptOut,
+        breakdown: [
+          { label: 'Funds Received',  value: fmtMoney(ptIn),        color: 'emerald' },
+          { label: '− Funds Spent',   value: fmtMoney(ptOut),       color: 'rose'    },
+          { label: '= Funds Held',    value: fmtMoney(ptIn - ptOut),color: 'amber', bold: true },
+        ],
+        rows: rcv.map(t => ({ date: t.transaction_date, txNum: t.transaction_number, desc: t.description || '', amount: Number(t.amount), positive: true, client: t.client_name || getCrmClientName(t.client_id) || '', project: t.project_name || '', category: getCategoryName(t.category_id) || '', ref: t.reference || '' })),
+      };
+    },
+  },
+  forecastIncoming: {
+    label: 'Forecast Incoming', icon: 'calendar-check', color: 'teal',
+    tooltip: 'Expected income from active forecasts due in the selected period. Not yet received.',
+    formulaLines: ['SUM(', '  Expected Income forecasts', '  Due in selected period', '  · Not Cancelled', '  · Not Received', ')'],
+    excludedList: ['Received', 'Cancelled', 'Deleted', 'Archived'],
+    insight: 'Forecasts are planning tools only. Revenue is recognized only when payment is received and recorded as an Income transaction.',
+    navAction: { tab: 'forecast' },
+    periodFiltered: true,
+    getData() {
+      const dr = getFinanceDateRange();
+      const fcs = state.financeForecasts.filter(f => !f.is_archived && !f.is_deleted && !['cancelled','received'].includes(f.status) && f.forecast_type === 'expected_income' && isInDateRange(f.expected_date, dr));
+      return { value: fcs.reduce((s, f) => s + Number(f.amount), 0), rows: fcs.map(f => ({ date: f.expected_date, txNum: '', desc: f.description || '', amount: Number(f.amount), positive: true, client: f.client_name || '', project: f.project_name || '', category: getCategoryName(f.category_id) || '', ref: '' })) };
+    },
+  },
+  forecastOutgoing: {
+    label: 'Forecast Outgoing', icon: 'calendar-x', color: 'orange',
+    tooltip: 'Expected expenses from active forecasts due in the selected period. Not yet paid.',
+    formulaLines: ['SUM(', '  Expected Expense forecasts', '  Due in selected period', '  · Not Cancelled', '  · Not Received', ')'],
+    excludedList: ['Received', 'Cancelled', 'Deleted', 'Archived'],
+    insight: 'Planned future payments. Expenses are only recorded when payments are made — forecasts do not reduce your current cash balance.',
+    navAction: { tab: 'forecast' },
+    periodFiltered: true,
+    getData() {
+      const dr = getFinanceDateRange();
+      const fcs = state.financeForecasts.filter(f => !f.is_archived && !f.is_deleted && !['cancelled','received'].includes(f.status) && f.forecast_type === 'expected_expense' && isInDateRange(f.expected_date, dr));
+      return { value: fcs.reduce((s, f) => s + Number(f.amount), 0), rows: fcs.map(f => ({ date: f.expected_date, txNum: '', desc: f.description || '', amount: Number(f.amount), positive: false, client: f.client_name || '', project: f.project_name || '', category: getCategoryName(f.category_id) || '', ref: '' })) };
+    },
+  },
+  cashFlowThisMonth: {
+    label: 'Cash Flow — Period', icon: 'activity', color: 'emerald',
+    tooltip: 'Net cash movement during the selected period (all transaction types included).',
+    formulaLines: ['Opening Balance', '+ Cash In', '  (Revenue · Capital · Client Funds)', '− Cash Out', '  (Expenses · Client Funds Spent)', '= Closing Balance'],
+    excludedList: ['Cancelled Transactions', 'Deleted Transactions', 'Inter-Account Transfers'],
+    insight: 'Tracks all real cash movements in the selected period. Transfers between accounts are excluded as they do not change the total cash position.',
+    navAction: { tab: 'transactions', typeFilter: 'all' },
+    periodFiltered: true,
+    getData() {
+      const dr = getFinanceDateRange();
+      const cf = getCashFlowForPeriod(dr);
+      const pos = cf.netMovement >= 0;
+      return {
+        value: cf.netMovement, color: pos ? 'emerald' : 'rose',
+        displayValue: `${pos ? '+' : ''}${fmtMoney(cf.netMovement)}`,
+        breakdown: [
+          { label: 'Opening Balance',   value: fmtMoney(cf.openingBalance),  color: 'gray'                   },
+          { label: '+ Cash In',         value: fmtMoney(cf.cashIn),          color: 'emerald'                },
+          { label: '− Cash Out',        value: fmtMoney(cf.cashOut),         color: 'rose'                   },
+          { label: '= Closing Balance', value: fmtMoney(cf.closingBalance),  color: pos ? 'emerald' : 'rose' },
+          { label: 'Net Movement',      value: `${pos ? '+' : ''}${fmtMoney(cf.netMovement)}`, color: pos ? 'emerald' : 'rose', bold: true },
+        ],
+      };
+    },
+  },
+};
+
+function openKpiDrilldown(kpiKey) {
+  const config = FINANCE_KPI_CONFIG[kpiKey];
+  if (!config) return;
+
+  const data  = config.getData();
+  const color = data.color || config.color || 'gray';
+  const rows  = data.rows || [];
+
+  const hasClient   = rows.some(r => r.client);
+  const hasProject  = rows.some(r => r.project);
+  const hasCategory = rows.some(r => r.category);
+  const hasRef      = rows.some(r => r.ref);
+  const totalAmt    = rows.reduce((s, r) => s + r.amount, 0);
+  const recCount    = rows.length;
+  const today       = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+
+  // Formula rendered as readable checklist / math rows
+  const formulaHtml = (config.formulaLines || []).map(line => {
+    if (line.startsWith('  · ')) {
+      return `<div class="kpi-fl-check"><span class="kpi-fl-check-icon text-${color}-500">✓</span><span>${escapeHtml(line.slice(4).trim())}</span></div>`;
+    }
+    if (line.startsWith('  ')) {
+      return `<div class="kpi-fl-sub">${escapeHtml(line.trim())}</div>`;
+    }
+    if (line.startsWith('− ')) {
+      return `<div class="kpi-fl-math"><span class="kpi-fl-op kpi-fl-op--minus">−</span><span>${escapeHtml(line.slice(2))}</span></div>`;
+    }
+    if (line.startsWith('+ ')) {
+      return `<div class="kpi-fl-math"><span class="kpi-fl-op kpi-fl-op--plus">+</span><span>${escapeHtml(line.slice(2))}</span></div>`;
+    }
+    if (line.startsWith('= ')) {
+      return `<div class="kpi-fl-result"><span class="kpi-fl-op">=</span><span>${escapeHtml(line.slice(2))}</span></div>`;
+    }
+    if (line === 'SUM(' || line === ')') {
+      return `<div class="kpi-fl-struct">${escapeHtml(line)}</div>`;
+    }
+    return `<div class="kpi-fl-header">${escapeHtml(line)}</div>`;
+  }).join('');
+
+  // Records table with better empty state
+  const rowsHtml = rows.length > 0 ? `
+    <div class="kpi-section">
+      <p class="kpi-section-label">Included Records</p>
+      <div class="kpi-table-wrap">
+        <table class="w-full text-left">
+          <thead class="sticky top-0 bg-white border-b border-gray-100">
+            <tr>
+              <th class="kpi-th whitespace-nowrap">Date</th>
+              <th class="kpi-th whitespace-nowrap">Tx #</th>
+              ${hasClient   ? '<th class="kpi-th">Client</th>'    : ''}
+              ${hasProject  ? '<th class="kpi-th">Project</th>'   : ''}
+              ${hasCategory ? '<th class="kpi-th">Category</th>'  : ''}
+              ${hasRef      ? '<th class="kpi-th font-mono">Ref</th>' : ''}
+              <th class="kpi-th">Description</th>
+              <th class="kpi-th text-right whitespace-nowrap">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map(r => `
+              <tr class="kpi-tr">
+                <td class="kpi-td text-gray-500 whitespace-nowrap">${fmtDate(r.date)}</td>
+                <td class="kpi-td font-mono text-gray-400 text-[11px] whitespace-nowrap">${escapeHtml(r.txNum || '—')}</td>
+                ${hasClient   ? `<td class="kpi-td max-w-[90px] truncate">${escapeHtml(r.client   || '—')}</td>` : ''}
+                ${hasProject  ? `<td class="kpi-td max-w-[90px] truncate">${escapeHtml(r.project  || '—')}</td>` : ''}
+                ${hasCategory ? `<td class="kpi-td max-w-[90px] truncate">${escapeHtml(r.category || '—')}</td>` : ''}
+                ${hasRef      ? `<td class="kpi-td font-mono text-[11px] text-gray-400">${escapeHtml(r.ref || '—')}</td>` : ''}
+                <td class="kpi-td max-w-[150px] truncate text-gray-600">${escapeHtml(r.desc || '—')}</td>
+                <td class="kpi-td text-right font-semibold whitespace-nowrap ${r.positive ? 'text-emerald-600' : 'text-rose-600'}">${r.positive ? '+' : '−'}${fmtMoney(r.amount)}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+      <p class="text-[11px] text-gray-400 text-right mt-1.5 pr-0.5">Total: ${fmtMoney(totalAmt)} · ${recCount} record${recCount !== 1 ? 's' : ''}</p>
+    </div>` : (!data.breakdown ? `
+    <div class="kpi-section">
+      <div class="kpi-empty-state">
+        <i data-lucide="inbox" class="w-8 h-8 text-gray-300 mx-auto mb-2 block"></i>
+        <p class="text-[13px] text-gray-400 text-center">No records match this KPI for the current period.</p>
+      </div>
+    </div>` : '');
+
+  const breakdownHtml = data.breakdown && data.breakdown.length ? `
+    <div class="kpi-section">
+      <p class="kpi-section-label">Breakdown</p>
+      <div class="kpi-breakdown-card">
+        ${data.breakdown.map(b => `
+          <div class="flex items-center justify-between py-3 border-b border-gray-50 last:border-0">
+            <span class="text-[13px] text-gray-600">${escapeHtml(b.label)}</span>
+            <span class="text-[13px] ${b.bold ? 'font-bold text-base' : 'font-semibold'} ${b.color ? `text-${b.color}-600` : 'text-gray-800'}">${escapeHtml(b.value)}</span>
+          </div>`).join('')}
+      </div>
+    </div>` : '';
+
+  // Navigation action button
+  const nav = config.navAction;
+  const navHtml = nav ? `
+    <button class="kpi-nav-btn" data-action="kpi-nav-to" data-tab="${nav.tab}" data-type-filter="${nav.typeFilter || ''}">
+      <i data-lucide="arrow-right" class="w-3.5 h-3.5"></i>
+      View Related Records
+    </button>` : '';
+
+  const dr = getFinanceDateRange();
+  const periodBadgeHtml = config.periodFiltered
+    ? `<span class="finance-period-chip finance-period-chip--${color}">${escapeHtml(dr.label)}</span>`
+    : `<span class="finance-period-chip finance-period-chip--gray">Live — All Time</span>`;
+  const liveNoteHtml = !config.periodFiltered
+    ? `<div class="flex items-center gap-2 px-3 py-2 bg-gray-50 border border-gray-100 rounded-lg text-[12px] text-gray-500 mb-1">
+        <i data-lucide="info" class="w-3.5 h-3.5 shrink-0 text-gray-400"></i>
+        This KPI reflects live all-time data and is not affected by the selected period.
+      </div>` : '';
+
+  const body = $('#kpi-modal-body');
+  if (!body) return;
+
+  body.innerHTML = `
+    <!-- HEADER -->
+    <div class="kpi-modal-header bg-${color}-50 border-b border-${color}-100">
+      <div class="flex items-start gap-4">
+        <div class="w-14 h-14 rounded-2xl bg-white shadow-sm border border-${color}-100 flex items-center justify-center shrink-0">
+          <i data-lucide="${config.icon}" class="w-7 h-7 text-${color}-500"></i>
+        </div>
+        <div class="flex-1 min-w-0">
+          <h3 class="text-xl font-bold text-gray-900 leading-tight">${escapeHtml(config.label)}</h3>
+          <p class="text-[13px] text-gray-500 mt-1 leading-snug">${escapeHtml(config.tooltip)}</p>
+          <div class="mt-2">${periodBadgeHtml}</div>
+        </div>
+        <button data-action="close-modal" class="w-8 h-8 rounded-lg hover:bg-white/70 flex items-center justify-center shrink-0 -mt-0.5 -mr-1">
+          <i data-lucide="x" class="w-4 h-4 text-gray-500"></i>
+        </button>
+      </div>
+    </div>
+
+    <div class="px-6 pt-5 pb-3 space-y-5">
+
+      ${liveNoteHtml}
+
+      <!-- SECTION 1: Current Value -->
+      <div class="kpi-section">
+        <p class="kpi-section-label">Current Value</p>
+        <div class="flex items-end justify-between gap-2">
+          <p class="kpi-value-large text-${color}-600">${data.displayValue || fmtMoney(data.value)}</p>
+          ${recCount > 0 ? `<span class="kpi-record-badge mb-1">${recCount} record${recCount !== 1 ? 's' : ''}</span>` : ''}
+        </div>
+      </div>
+
+      <!-- SECTION 2: 2-col — How Calculated (left) + What is Excluded (right) -->
+      <div class="kpi-calc-grid">
+        <div>
+          <p class="kpi-section-label">How Calculated</p>
+          <div class="kpi-formula-checklist border-l-4 border-${color}-200">
+            ${formulaHtml}
+          </div>
+        </div>
+        ${config.excludedList && config.excludedList.length ? `
+        <div>
+          <p class="kpi-section-label">What is Excluded</p>
+          <div class="flex flex-wrap gap-1.5 mt-1">
+            ${config.excludedList.map(ex => `<span class="kpi-excl-badge"><i data-lucide="x-circle" class="w-3 h-3 shrink-0"></i>${escapeHtml(ex)}</span>`).join('')}
+          </div>
+        </div>` : ''}
+      </div>
+
+      <!-- SECTION 3: Breakdown or Records -->
+      ${breakdownHtml}
+      ${rowsHtml}
+
+      <!-- SECTION 4: Executive Insight -->
+      ${config.insight ? `
+      <div class="kpi-insight-card border-l-4 border-${color}-300 bg-${color}-50">
+        <i data-lucide="sparkles" class="w-4 h-4 text-${color}-500 shrink-0 mt-0.5"></i>
+        <div>
+          <p class="text-[11px] font-semibold text-${color}-700 uppercase tracking-wide mb-1">Executive Insight</p>
+          <p class="text-[13px] text-gray-700 leading-relaxed">${escapeHtml(config.insight)}</p>
+        </div>
+      </div>` : ''}
+
+    </div>
+
+    <!-- FOOTER -->
+    <div class="kpi-modal-footer">
+      <div class="flex flex-col gap-0.5">
+        <span class="text-[11px] text-gray-400">Last Calculated: ${today}</span>
+        ${recCount > 0 ? `<span class="text-[11px] text-gray-400">Records Included: ${recCount}</span>` : ''}
+      </div>
+      <div class="flex items-center gap-2">
+        ${navHtml}
+        <button data-action="close-modal" class="h-8 px-4 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors">Close</button>
+      </div>
+    </div>
+  `;
+
+  refreshIcons();
+  openModal('finance-kpi-modal');
+}
+
+const FINANCE_WIDGET_CONFIG = {
+  'weighted-income':     { title: 'Weighted Expected Income', icon: 'percent',       color: 'indigo',  tooltip: 'Probability-weighted sum of all active income forecasts.',                              periodFiltered: true  },
+  'overdue-forecasts':   { title: 'Overdue Forecasts',        icon: 'alert-circle',  color: 'rose',    tooltip: 'Forecasts past their due date that have not been received or cancelled.',               periodFiltered: false },
+  'cashflow-panel':      { title: 'Cash Flow — Period',       icon: 'activity',      color: 'blue',    tooltip: 'All real cash movements in the selected period across all accounts.',                   periodFiltered: true  },
+  'revenue-vs-expenses': { title: 'Revenue vs Expenses',      icon: 'bar-chart-2',   color: 'emerald', tooltip: 'Comparison of service income vs operating expenses for the selected period.',          periodFiltered: true  },
+  'expense-category':    { title: 'Expenses by Category',     icon: 'pie-chart',     color: 'rose',    tooltip: 'Breakdown of operating expenses by category for the selected period.',                  periodFiltered: true  },
+  'project-revenue':     { title: 'Revenue by Project',       icon: 'briefcase',     color: 'violet',  tooltip: 'Revenue and expenses grouped by project for the selected period.',                     periodFiltered: true  },
+  'account-balances':    { title: 'Account Balances',         icon: 'wallet',        color: 'blue',    tooltip: 'Current computed balance for each active account. Live — not period-filtered.',        periodFiltered: false },
+  'executive-insights':  { title: 'Executive Insights',       icon: 'sparkles',      color: 'amber',   tooltip: 'Automated financial alerts and highlights based on the selected period.',              periodFiltered: true  },
+  'recent-transactions': { title: 'Recent Transactions',      icon: 'clock',         color: 'gray',    tooltip: 'Transactions in the selected period across all accounts and types.',                   periodFiltered: true  },
+  'business-health':     { title: 'Business Health',          icon: 'heart-pulse',   color: 'emerald', tooltip: 'Composite health score — profitability, cash runway, forecast accuracy.',              periodFiltered: false },
+};
+
+function openWidgetDrilldown(widgetKey) {
+  const cfg = FINANCE_WIDGET_CONFIG[widgetKey];
+  if (!cfg) return;
+  const body = $('#widget-modal-body');
+  if (!body) return;
+
+  const color = cfg.color || 'gray';
+  const today = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  const dr = getFinanceDateRange();
+  const periodBadgeHtml = cfg.periodFiltered
+    ? `<span class="finance-period-chip finance-period-chip--${color}">${escapeHtml(dr.label)}</span>`
+    : `<span class="finance-period-chip finance-period-chip--gray">Live — All Time</span>`;
+
+  let contentHtml = '';
+
+  if (widgetKey === 'revenue-vs-expenses') {
+    const ps = getFinancePeriodSummary(dr);
+    const netColor = ps.netProfit >= 0 ? 'emerald' : 'rose';
+    // Build monthly breakdown table for the period
+    const months = [];
+    const { startDate, endDate } = dr;
+    const ms = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
+    const me = new Date(endDate.getFullYear(), endDate.getMonth(), 1);
+    const d = new Date(ms);
+    while (d <= me) {
+      const y = d.getFullYear(), m = d.getMonth();
+      const lbl = d.toLocaleString('default', { month: 'short', year: '2-digit' });
+      const monthTx = state.financeTransactions.filter(t => {
+        if (t.is_archived || t.is_deleted || t.status === 'cancelled') return false;
+        const td = new Date(t.transaction_date + 'T00:00:00');
+        return td.getFullYear() === y && td.getMonth() === m;
+      });
+      const revenue  = monthTx.filter(t => t.transaction_type === 'income').reduce((s, t) => s + Number(t.amount), 0);
+      const expenses = monthTx.filter(t => t.transaction_type === 'expense').reduce((s, t) => s + Number(t.amount), 0);
+      months.push({ label: lbl, revenue, expenses, net: revenue - expenses });
+      d.setMonth(d.getMonth() + 1);
+    }
+    contentHtml = `
+      <div class="grid grid-cols-3 gap-3 mb-5">
+        <div class="bg-emerald-50 rounded-xl p-3 text-center">
+          <p class="text-[11px] text-emerald-600 uppercase tracking-wide font-semibold mb-1">Revenue</p>
+          <p class="text-lg font-bold text-emerald-700">${fmtMoney(ps.realIncome)}</p>
+        </div>
+        <div class="bg-rose-50 rounded-xl p-3 text-center">
+          <p class="text-[11px] text-rose-600 uppercase tracking-wide font-semibold mb-1">Expenses</p>
+          <p class="text-lg font-bold text-rose-700">${fmtMoney(ps.realExpenses)}</p>
+        </div>
+        <div class="bg-${netColor}-50 rounded-xl p-3 text-center">
+          <p class="text-[11px] text-${netColor}-600 uppercase tracking-wide font-semibold mb-1">Net Profit</p>
+          <p class="text-lg font-bold text-${netColor}-700">${ps.netProfit >= 0 ? '+' : ''}${fmtMoney(ps.netProfit)}</p>
+        </div>
+      </div>
+      <p class="kpi-section-label mb-2">Monthly Breakdown — ${escapeHtml(dr.label)}</p>
+      <div class="kpi-table-wrap" style="max-height:260px">
+        <table class="w-full text-left">
+          <thead class="sticky top-0 bg-white border-b border-gray-100">
+            <tr>
+              <th class="kpi-th">Month</th>
+              <th class="kpi-th text-right">Revenue</th>
+              <th class="kpi-th text-right">Expenses</th>
+              <th class="kpi-th text-right">Net</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${months.length > 0 ? months.map(mo => {
+              const c = mo.net >= 0 ? 'text-emerald-600' : 'text-rose-600';
+              return `<tr class="kpi-tr">
+                <td class="kpi-td font-medium">${escapeHtml(mo.label)}</td>
+                <td class="kpi-td text-right text-emerald-600 font-semibold">${fmtMoney(mo.revenue)}</td>
+                <td class="kpi-td text-right text-rose-600 font-semibold">${fmtMoney(mo.expenses)}</td>
+                <td class="kpi-td text-right font-bold ${c}">${mo.net >= 0 ? '+' : ''}${fmtMoney(mo.net)}</td>
+              </tr>`;
+            }).join('') : `<tr><td colspan="4" class="kpi-td text-center text-gray-400 py-4">No data for selected period.</td></tr>`}
+          </tbody>
+        </table>
+      </div>`;
+  }
+
+  else if (widgetKey === 'expense-category') {
+    const catTotals = {};
+    let totalExp = 0;
+    state.financeTransactions
+      .filter(t => !t.is_archived && !t.is_deleted && t.status !== 'cancelled' && t.transaction_type === 'expense' && isInDateRange(t.transaction_date, dr))
+      .forEach(t => {
+        const n = getCategoryName(t.category_id) || 'Uncategorized';
+        catTotals[n] = (catTotals[n] || 0) + Number(t.amount);
+        totalExp += Number(t.amount);
+      });
+    const sorted = Object.entries(catTotals).sort((a, b) => b[1] - a[1]);
+    const top = sorted[0];
+    contentHtml = `
+      <div class="flex items-center gap-3 mb-4">
+        <div class="bg-rose-50 rounded-xl px-4 py-3 flex-1">
+          <p class="text-[11px] text-rose-600 uppercase tracking-wide font-semibold mb-0.5">Total Expenses</p>
+          <p class="text-xl font-bold text-rose-700">${fmtMoney(totalExp)}</p>
+        </div>
+        <div class="bg-gray-50 rounded-xl px-4 py-3">
+          <p class="text-[11px] text-gray-500 uppercase tracking-wide font-semibold mb-0.5">Categories</p>
+          <p class="text-xl font-bold text-gray-800">${sorted.length}</p>
+        </div>
+      </div>
+      ${top ? `
+      <div class="bg-amber-50 border border-amber-100 rounded-xl px-4 py-3 mb-4 flex items-center gap-3">
+        <i data-lucide="trophy" class="w-4 h-4 text-amber-500 shrink-0"></i>
+        <div>
+          <p class="text-[11px] text-amber-600 font-semibold uppercase tracking-wide">Top Category</p>
+          <p class="text-sm font-semibold text-amber-800">${escapeHtml(top[0])} — ${fmtMoney(top[1])} (${totalExp > 0 ? Math.round(top[1] / totalExp * 100) : 0}%)</p>
+        </div>
+      </div>` : ''}
+      <p class="kpi-section-label mb-2">All Categories — ${escapeHtml(dr.label)}</p>
+      ${sorted.length > 0 ? `
+      <div class="kpi-table-wrap" style="max-height:260px">
+        <table class="w-full text-left">
+          <thead class="sticky top-0 bg-white border-b border-gray-100">
+            <tr>
+              <th class="kpi-th" style="width:2rem">#</th>
+              <th class="kpi-th">Category</th>
+              <th class="kpi-th text-right">Amount</th>
+              <th class="kpi-th text-right">% of Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${sorted.map(([cat, amt], idx) => `
+              <tr class="kpi-tr${idx === 0 ? ' bg-amber-50/50' : ''}">
+                <td class="kpi-td text-gray-400 font-mono text-[11px]">${idx + 1}</td>
+                <td class="kpi-td font-medium text-gray-700">${escapeHtml(cat)}</td>
+                <td class="kpi-td text-right font-semibold text-rose-600">${fmtMoney(amt)}</td>
+                <td class="kpi-td text-right text-gray-500">${totalExp > 0 ? Math.round(amt / totalExp * 100) : 0}%</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>` : `<p class="text-sm text-gray-400 text-center py-6">No expense data yet.</p>`}`;
+  }
+
+  else if (widgetKey === 'cashflow-panel') {
+    const cf = getCashFlowForPeriod(dr);
+    const mvColor = cf.netMovement >= 0 ? 'emerald' : 'rose';
+    const periodTx = state.financeTransactions.filter(t => {
+      if (t.is_archived || t.is_deleted || t.status === 'cancelled' || t.transaction_type === 'transfer') return false;
+      return isInDateRange(t.transaction_date, dr);
+    }).sort((a, b) => new Date(a.transaction_date) - new Date(b.transaction_date));
+    contentHtml = `
+      <div class="widget-cf-timeline mb-5">
+        <div class="widget-cf-step">
+          <div class="widget-cf-step-icon bg-gray-100"><i data-lucide="flag" class="w-4 h-4 text-gray-500"></i></div>
+          <div><p class="text-[11px] text-gray-400 uppercase tracking-wide font-semibold">Opening Balance</p><p class="text-base font-bold text-gray-800">${fmtMoney(cf.openingBalance)}</p></div>
+        </div>
+        <div class="widget-cf-connector text-emerald-400">↓</div>
+        <div class="widget-cf-step">
+          <div class="widget-cf-step-icon bg-emerald-100"><i data-lucide="plus-circle" class="w-4 h-4 text-emerald-600"></i></div>
+          <div><p class="text-[11px] text-emerald-600 uppercase tracking-wide font-semibold">Cash In</p><p class="text-base font-bold text-emerald-600">+${fmtMoney(cf.cashIn)}</p><p class="text-[11px] text-gray-400 mt-0.5">Revenue · Capital · Client funds</p></div>
+        </div>
+        <div class="widget-cf-connector text-rose-400">↓</div>
+        <div class="widget-cf-step">
+          <div class="widget-cf-step-icon bg-rose-100"><i data-lucide="minus-circle" class="w-4 h-4 text-rose-600"></i></div>
+          <div><p class="text-[11px] text-rose-600 uppercase tracking-wide font-semibold">Cash Out</p><p class="text-base font-bold text-rose-600">−${fmtMoney(cf.cashOut)}</p><p class="text-[11px] text-gray-400 mt-0.5">Expenses · Client funds spent</p></div>
+        </div>
+        <div class="widget-cf-connector text-gray-300">↓</div>
+        <div class="widget-cf-step">
+          <div class="widget-cf-step-icon bg-${mvColor}-100"><i data-lucide="flag" class="w-4 h-4 text-${mvColor}-600"></i></div>
+          <div>
+            <p class="text-[11px] text-gray-400 uppercase tracking-wide font-semibold">Closing Balance</p>
+            <p class="text-lg font-bold text-${mvColor}-600">${fmtMoney(cf.closingBalance)} <span class="text-sm font-normal text-gray-500">(${cf.netMovement >= 0 ? '+' : ''}${fmtMoney(cf.netMovement)} net)</span></p>
+          </div>
+        </div>
+      </div>
+      <p class="kpi-section-label mb-2">Transactions — ${escapeHtml(dr.label)}</p>
+      ${periodTx.length > 0 ? `
+      <div class="kpi-table-wrap" style="max-height:240px">
+        <table class="w-full text-left">
+          <thead class="sticky top-0 bg-white border-b border-gray-100">
+            <tr>
+              <th class="kpi-th whitespace-nowrap">Date</th>
+              <th class="kpi-th">Type</th>
+              <th class="kpi-th">Description</th>
+              <th class="kpi-th text-right whitespace-nowrap">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${periodTx.map(t => {
+              const isIn = ['income', 'capital_injection', 'pass_through_received'].includes(t.transaction_type);
+              return `<tr class="kpi-tr">
+                <td class="kpi-td text-gray-500 whitespace-nowrap">${fmtDate(t.transaction_date)}</td>
+                <td class="kpi-td">${financeTypeBadge(t.transaction_type)}</td>
+                <td class="kpi-td max-w-[200px] truncate text-gray-600">${escapeHtml(t.description || '—')}</td>
+                <td class="kpi-td text-right font-semibold whitespace-nowrap ${isIn ? 'text-emerald-600' : 'text-rose-600'}">${isIn ? '+' : '−'}${fmtMoney(t.amount)}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>` : `<p class="text-sm text-gray-400 text-center py-6">No transactions in this period.</p>`}`;
+  }
+
+  else if (widgetKey === 'account-balances') {
+    const accounts = state.financeAccounts.filter(a => a.is_active);
+    const txs = state.financeTransactions.filter(t => !t.is_archived && !t.is_deleted && t.status !== 'cancelled');
+    const rows = accounts.map(a => {
+      const openingBal = Number(a.opening_balance) || 0;
+      let totalIn = 0, totalOut = 0;
+      txs.forEach(t => {
+        const amt = Number(t.amount) || 0;
+        const type = t.transaction_type;
+        if (type === 'transfer') {
+          if (Number(t.from_account_id) === Number(a.id)) totalOut += amt;
+          if (Number(t.to_account_id)   === Number(a.id)) totalIn  += amt;
+        } else if (Number(t.account_id) === Number(a.id)) {
+          if (['income', 'capital_injection', 'pass_through_received'].includes(type)) totalIn  += amt;
+          else if (['expense', 'pass_through_spent'].includes(type))                   totalOut += amt;
+        }
+      });
+      return { id: a.id, name: a.account_name, type: FINANCE_ACCT_TYPE_LABELS[a.account_type] || a.account_type, openingBal, totalIn, totalOut, currentBal: openingBal + totalIn - totalOut };
+    });
+    const grandTotal = rows.reduce((s, r) => s + r.currentBal, 0);
+    contentHtml = `
+      <div class="bg-blue-50 rounded-xl px-4 py-3 mb-4">
+        <p class="text-[11px] text-blue-600 uppercase tracking-wide font-semibold mb-0.5">Total Balance — All Accounts</p>
+        <p class="text-2xl font-bold text-blue-700">${fmtMoney(grandTotal)}</p>
+      </div>
+      <p class="kpi-section-label mb-2">Account Details</p>
+      <div class="kpi-table-wrap" style="max-height:320px">
+        <table class="w-full text-left">
+          <thead class="sticky top-0 bg-white border-b border-gray-100">
+            <tr>
+              <th class="kpi-th">Account</th>
+              <th class="kpi-th">Type</th>
+              <th class="kpi-th text-right whitespace-nowrap">Opening</th>
+              <th class="kpi-th text-right whitespace-nowrap">Total In</th>
+              <th class="kpi-th text-right whitespace-nowrap">Total Out</th>
+              <th class="kpi-th text-right whitespace-nowrap">Balance</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map(r => `
+              <tr class="kpi-tr cursor-pointer" data-action="open-account-ledger" data-id="${r.id}">
+                <td class="kpi-td font-medium text-gray-800">${escapeHtml(r.name)}</td>
+                <td class="kpi-td text-gray-500 text-[12px]">${escapeHtml(r.type)}</td>
+                <td class="kpi-td text-right text-gray-500">${fmtMoney(r.openingBal)}</td>
+                <td class="kpi-td text-right text-emerald-600 font-semibold">+${fmtMoney(r.totalIn)}</td>
+                <td class="kpi-td text-right text-rose-600 font-semibold">−${fmtMoney(r.totalOut)}</td>
+                <td class="kpi-td text-right font-bold ${r.currentBal < 0 ? 'text-rose-600' : 'text-gray-900'}">${fmtMoney(r.currentBal)}</td>
+              </tr>`).join('')}
+            <tr class="kpi-tr bg-gray-50">
+              <td class="kpi-td font-bold text-gray-900" colspan="5">Total</td>
+              <td class="kpi-td text-right font-bold text-base ${grandTotal < 0 ? 'text-rose-600' : 'text-gray-900'}">${fmtMoney(grandTotal)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>`;
+  }
+
+  else if (widgetKey === 'weighted-income') {
+    const active = state.financeForecasts.filter(f => !f.is_archived && !f.is_deleted && !['cancelled', 'received'].includes(f.status) && f.forecast_type === 'expected_income' && isInDateRange(f.expected_date, dr));
+    const weightedIncome = active.reduce((s, f) => s + Number(f.amount) * (Number(f.probability) || 100) / 100, 0);
+    contentHtml = `
+      <div class="grid grid-cols-2 gap-3 mb-4">
+        <div class="bg-indigo-50 rounded-xl p-3">
+          <p class="text-[11px] text-indigo-600 uppercase tracking-wide font-semibold mb-0.5">Weighted Income</p>
+          <p class="text-xl font-bold text-indigo-700">${fmtMoney(weightedIncome)}</p>
+        </div>
+        <div class="bg-gray-50 rounded-xl p-3">
+          <p class="text-[11px] text-gray-500 uppercase tracking-wide font-semibold mb-0.5">Forecasts in Period</p>
+          <p class="text-xl font-bold text-gray-800">${active.length}</p>
+        </div>
+      </div>
+      <p class="kpi-section-label mb-2">Income Forecasts — ${escapeHtml(dr.label)}</p>
+      ${active.length > 0 ? `
+      <div class="kpi-table-wrap" style="max-height:280px">
+        <table class="w-full text-left">
+          <thead class="sticky top-0 bg-white border-b border-gray-100">
+            <tr>
+              <th class="kpi-th whitespace-nowrap">Due Date</th>
+              <th class="kpi-th">Description</th>
+              <th class="kpi-th text-right">Amount</th>
+              <th class="kpi-th text-right whitespace-nowrap">Probability</th>
+              <th class="kpi-th text-right whitespace-nowrap">Weighted</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${active.map(f => `
+              <tr class="kpi-tr">
+                <td class="kpi-td text-gray-500 whitespace-nowrap">${fmtDate(f.expected_date)}</td>
+                <td class="kpi-td max-w-[180px] truncate text-gray-600">${escapeHtml(f.description || '—')}</td>
+                <td class="kpi-td text-right font-semibold text-emerald-600">${fmtMoney(f.amount)}</td>
+                <td class="kpi-td text-right text-gray-500">${Number(f.probability) || 0}%</td>
+                <td class="kpi-td text-right font-semibold text-indigo-600">${fmtMoney(Number(f.amount) * Number(f.probability) / 100)}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>` : `<p class="text-sm text-gray-400 text-center py-6">No active income forecasts.</p>`}`;
+  }
+
+  else if (widgetKey === 'overdue-forecasts') {
+    const now = new Date(); now.setHours(0, 0, 0, 0);
+    const overdue = state.financeForecasts.filter(f => !f.is_archived && !f.is_deleted && f.status === 'expected' && new Date(f.expected_date) < now).sort((a, b) => new Date(a.expected_date) - new Date(b.expected_date));
+    const overdueColor = overdue.length > 0 ? 'rose' : 'emerald';
+    contentHtml = `
+      <div class="bg-${overdueColor}-50 rounded-xl px-4 py-3 mb-4">
+        <p class="text-[11px] text-${overdueColor}-600 uppercase tracking-wide font-semibold mb-0.5">Overdue Forecasts</p>
+        <p class="text-2xl font-bold text-${overdueColor}-700">${overdue.length}</p>
+      </div>
+      ${overdue.length > 0 ? `
+      <p class="kpi-section-label mb-2">Overdue Items</p>
+      <div class="kpi-table-wrap" style="max-height:280px">
+        <table class="w-full text-left">
+          <thead class="sticky top-0 bg-white border-b border-gray-100">
+            <tr>
+              <th class="kpi-th whitespace-nowrap">Due Date</th>
+              <th class="kpi-th">Type</th>
+              <th class="kpi-th">Description</th>
+              <th class="kpi-th text-right">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${overdue.map(f => {
+              const daysOver = Math.floor((Date.now() - new Date(f.expected_date).getTime()) / 86400000);
+              const typeLabel = f.forecast_type === 'expected_income' ? 'Income' : 'Expense';
+              const amtColor  = f.forecast_type === 'expected_income' ? 'text-emerald-600' : 'text-rose-600';
+              return `<tr class="kpi-tr">
+                <td class="kpi-td whitespace-nowrap">
+                  <span class="text-rose-600 font-medium">${fmtDate(f.expected_date)}</span>
+                  <span class="block text-[10px] text-rose-400">${daysOver}d overdue</span>
+                </td>
+                <td class="kpi-td text-gray-500">${escapeHtml(typeLabel)}</td>
+                <td class="kpi-td max-w-[200px] truncate text-gray-600">${escapeHtml(f.description || '—')}</td>
+                <td class="kpi-td text-right font-semibold ${amtColor}">${fmtMoney(f.amount)}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>` : `
+      <div class="kpi-empty-state">
+        <i data-lucide="check-circle" class="w-8 h-8 text-emerald-300 mx-auto mb-2 block"></i>
+        <p class="text-[13px] text-gray-400 text-center">No overdue forecasts — everything is on track.</p>
+      </div>`}`;
+  }
+
+  else if (widgetKey === 'executive-insights') {
+    const sum = getFinanceSummary();
+    const cf  = getCashFlowForPeriod(dr);
+    const fc  = getFinanceForecastForPeriod(dr);
+    const insights = getExecutiveInsights(sum, cf, fc, dr);
+    const bgMap   = { warning: 'bg-amber-50',   info: 'bg-blue-50',   positive: 'bg-emerald-50' };
+    const textMap = { warning: 'text-amber-800', info: 'text-blue-800', positive: 'text-emerald-800' };
+    const iconMap = { warning: 'text-amber-500', info: 'text-blue-400', positive: 'text-emerald-500' };
+    contentHtml = `
+      <p class="text-[13px] text-gray-500 mb-4">Automated alerts and highlights calculated from your current transaction data.</p>
+      ${insights.length > 0 ? `
+      <div class="space-y-2.5">
+        ${insights.map(ins => `
+          <div class="flex items-start gap-3 ${bgMap[ins.type] || bgMap.info} rounded-xl px-4 py-3">
+            <i data-lucide="${ins.icon}" class="w-5 h-5 ${iconMap[ins.type] || iconMap.info} mt-0.5 shrink-0"></i>
+            <p class="text-sm ${textMap[ins.type] || textMap.info} leading-relaxed">${ins.html}</p>
+          </div>`).join('')}
+      </div>` : `
+      <div class="kpi-empty-state">
+        <i data-lucide="sparkles" class="w-8 h-8 text-gray-300 mx-auto mb-2 block"></i>
+        <p class="text-[13px] text-gray-400 text-center">No insights available — add transactions to get started.</p>
+      </div>`}`;
+  }
+
+  else if (widgetKey === 'recent-transactions') {
+    const txs = state.financeTransactions.filter(t => !t.is_archived && !t.is_deleted && isInDateRange(t.transaction_date, dr)).slice(0, 20);
+    contentHtml = `
+      <p class="text-[13px] text-gray-500 mb-4">Up to 20 transactions in <strong>${escapeHtml(dr.label)}</strong> across all accounts.</p>
+      ${txs.length > 0 ? `
+      <div class="kpi-table-wrap" style="max-height:380px">
+        <table class="w-full text-left">
+          <thead class="sticky top-0 bg-white border-b border-gray-100">
+            <tr>
+              <th class="kpi-th whitespace-nowrap">Date</th>
+              <th class="kpi-th">Type</th>
+              <th class="kpi-th">Account</th>
+              <th class="kpi-th">Description</th>
+              <th class="kpi-th text-right whitespace-nowrap">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${txs.map(t => {
+              const isTransfer = t.transaction_type === 'transfer';
+              const acct = isTransfer ? `${getAccountName(t.from_account_id)} → ${getAccountName(t.to_account_id)}` : getAccountName(t.account_id);
+              return `<tr class="kpi-tr">
+                <td class="kpi-td text-gray-500 whitespace-nowrap">${fmtDate(t.transaction_date)}</td>
+                <td class="kpi-td">${financeTypeBadge(t.transaction_type)}</td>
+                <td class="kpi-td text-gray-500 max-w-[100px] truncate">${escapeHtml(acct)}</td>
+                <td class="kpi-td max-w-[200px] truncate text-gray-600">${escapeHtml(t.description || '—')}</td>
+                <td class="kpi-td text-right font-semibold whitespace-nowrap ${FINANCE_TX_TYPE_COLORS[t.transaction_type] || ''}">${fmtMoney(t.amount)}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>` : `<p class="text-sm text-gray-400 text-center py-6">No transactions yet.</p>`}`;
+  }
+
+  else if (widgetKey === 'project-revenue') {
+    const sorted = getProjectPnL(dr).filter(p => p.revenue > 0 || p.expenses > 0);
+    contentHtml = `
+      <p class="text-[13px] text-gray-500 mb-4">Revenue and expenses grouped by project for <strong>${escapeHtml(dr.label)}</strong>.</p>
+      ${sorted.length > 0 ? `
+      <div class="kpi-table-wrap" style="max-height:340px">
+        <table class="w-full text-left">
+          <thead class="sticky top-0 bg-white border-b border-gray-100">
+            <tr>
+              <th class="kpi-th">Project</th>
+              <th class="kpi-th text-right">Revenue</th>
+              <th class="kpi-th text-right">Expenses</th>
+              <th class="kpi-th text-right">Net Profit</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${sorted.map(p => {
+              const net = p.revenue - p.expenses;
+              const nc = net >= 0 ? 'text-emerald-700' : 'text-rose-700';
+              return `<tr class="kpi-tr">
+                <td class="kpi-td font-medium text-gray-800 max-w-[200px] truncate">${escapeHtml(p.projectName)}</td>
+                <td class="kpi-td text-right font-semibold text-emerald-600">${fmtMoney(p.revenue)}</td>
+                <td class="kpi-td text-right font-semibold text-rose-600">${fmtMoney(p.expenses)}</td>
+                <td class="kpi-td text-right font-bold ${nc}">${net >= 0 ? '+' : ''}${fmtMoney(net)}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>` : `<p class="text-sm text-gray-400 text-center py-6">No project revenue data yet.</p>`}`;
+  }
+
+  else if (widgetKey === 'business-health') {
+    contentHtml = `
+      <div class="kpi-empty-state py-12">
+        <i data-lucide="heart-pulse" class="w-10 h-10 text-gray-300 mx-auto mb-3 block"></i>
+        <p class="text-base font-semibold text-gray-500 text-center mb-1">Business Health Score</p>
+        <p class="text-[13px] text-gray-400 text-center">Coming in Sprint 4.3 — composite score based on profitability, cash runway, and forecast accuracy.</p>
+      </div>`;
+  }
+
+  // Navigation button
+  const navMap = {
+    'revenue-vs-expenses': { tab: 'transactions', typeFilter: 'all',                  label: 'Open Transactions' },
+    'expense-category':    { tab: 'transactions', typeFilter: 'expense',               label: 'Open Expenses' },
+    'cashflow-panel':      { tab: 'transactions', typeFilter: 'all',                  label: 'Open Transactions' },
+    'account-balances':    { tab: 'accounts',     typeFilter: '',                      label: 'Open Accounts' },
+    'weighted-income':     { tab: 'forecast',     typeFilter: '',                      label: 'Open Forecasts' },
+    'overdue-forecasts':   { tab: 'forecast',     typeFilter: '',                      label: 'Open Forecasts' },
+    'recent-transactions': { tab: 'transactions', typeFilter: 'all',                  label: 'Open Transactions' },
+    'project-revenue':     { tab: 'transactions', typeFilter: 'all',                  label: 'Open Transactions' },
+  };
+  const nav = navMap[widgetKey];
+  const navHtml = nav ? `
+    <button class="kpi-nav-btn" data-action="kpi-nav-to" data-tab="${nav.tab}" data-type-filter="${nav.typeFilter || ''}">
+      <i data-lucide="arrow-right" class="w-3.5 h-3.5"></i>
+      ${escapeHtml(nav.label)}
+    </button>` : '';
+
+  body.innerHTML = `
+    <div class="kpi-modal-header bg-${color}-50 border-b border-${color}-100">
+      <div class="flex items-start gap-4">
+        <div class="w-14 h-14 rounded-2xl bg-white shadow-sm border border-${color}-100 flex items-center justify-center shrink-0">
+          <i data-lucide="${cfg.icon}" class="w-7 h-7 text-${color}-500"></i>
+        </div>
+        <div class="flex-1 min-w-0">
+          <h3 class="text-xl font-bold text-gray-900 leading-tight">${escapeHtml(cfg.title)}</h3>
+          <p class="text-[13px] text-gray-500 mt-1 leading-snug">${escapeHtml(cfg.tooltip)}</p>
+          <div class="mt-2">${periodBadgeHtml}</div>
+        </div>
+        <button data-action="close-modal" class="w-8 h-8 rounded-lg hover:bg-white/70 flex items-center justify-center shrink-0 -mt-0.5 -mr-1">
+          <i data-lucide="x" class="w-4 h-4 text-gray-500"></i>
+        </button>
+      </div>
+    </div>
+    <div class="px-6 pt-5 pb-3">
+      ${contentHtml}
+    </div>
+    <div class="kpi-modal-footer">
+      <span class="text-[11px] text-gray-400">Last Calculated: ${today}</span>
+      <div class="flex items-center gap-2">
+        ${navHtml}
+        <button data-action="close-modal" class="h-8 px-4 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors">Close</button>
+      </div>
+    </div>
+  `;
+
+  refreshIcons();
+  openModal('finance-widget-modal');
 }
 
 function renderFinanceDashboard() {
-  const summary  = getFinanceSummary();
-  const forecast = getFinanceForecastSummary();
+  const dr         = getFinanceDateRange();
+  const summary    = getFinanceSummary();
+  const periodSum  = getFinancePeriodSummary(dr);
+  const forecast   = getFinanceForecastForPeriod(dr);
+  const cashFlow   = getCashFlowForPeriod(dr);
 
-  // Stat cards — actual
+  // === 0. Sync global period bar ===
+  renderFinanceGlobalPeriodBar();
+
+  // === 1. Top stat cards (9) ===
   const statsEl = $('#finance-dashboard-stats');
   if (statsEl) {
-    const netColor = summary.netProfit >= 0 ? 'emerald' : 'rose';
-    const cfColor  = summary.cashFlowThisMonth >= 0 ? 'emerald' : 'rose';
+    const netColor = periodSum.netProfit >= 0 ? 'emerald' : 'rose';
+    const cfColor  = cashFlow.netMovement >= 0 ? 'emerald' : 'rose';
+    const periodChip = `<span class="kpi-period-label">${escapeHtml(dr.label)}</span>`;
+    const liveChip   = `<span class="kpi-period-label kpi-period-label--live">Live</span>`;
     const cards = [
-      { label: 'Total Capital',          value: fmtMoney(summary.totalCapital),          icon: 'landmark',        color: 'indigo' },
-      { label: 'Real Income',            value: fmtMoney(summary.realIncome),            icon: 'trending-up',     color: 'emerald' },
-      { label: 'Real Expenses',          value: fmtMoney(summary.realExpenses),          icon: 'trending-down',   color: 'rose' },
-      { label: 'Net Profit',             value: fmtMoney(summary.netProfit),             icon: 'bar-chart-2',     color: netColor },
-      { label: 'Cash in Accounts',       value: fmtMoney(summary.totalAccountBalances), icon: 'wallet',          color: 'blue' },
-      { label: 'Pass-Through Held',      value: fmtMoney(summary.passThroughHeld),      icon: 'arrow-right-left',color: 'amber' },
-      { label: 'Cash Flow (This Month)', value: fmtMoney(summary.cashFlowThisMonth),    icon: 'calendar',        color: cfColor },
+      { kpiKey: 'totalCapital',      label: 'Total Capital',       value: fmtMoney(summary.totalCapital),                                             icon: 'landmark',        color: 'indigo',  period: liveChip   },
+      { kpiKey: 'realRevenue',       label: 'Real Revenue',        value: fmtMoney(periodSum.realIncome),                                             icon: 'trending-up',     color: 'emerald', period: periodChip },
+      { kpiKey: 'realExpenses',      label: 'Real Expenses',       value: fmtMoney(periodSum.realExpenses),                                           icon: 'trending-down',   color: 'rose',    period: periodChip },
+      { kpiKey: 'netProfit',         label: 'Net Profit',          value: fmtMoney(periodSum.netProfit),                                              icon: 'bar-chart-2',     color: netColor,  period: periodChip },
+      { kpiKey: 'cashInAccounts',    label: 'Cash in Accounts',    value: fmtMoney(summary.totalAccountBalances),                                     icon: 'wallet',          color: 'blue',    period: liveChip   },
+      { kpiKey: 'clientFundsHeld',   label: 'Client Funds Held',   value: fmtMoney(summary.passThroughHeld),                                          icon: 'arrow-right-left',color: 'amber',   period: liveChip   },
+      { kpiKey: 'forecastIncoming',  label: 'Forecast Incoming',   value: fmtMoney(forecast.expectedIncomeThisMonth),                                 icon: 'calendar-check',  color: 'teal',    period: periodChip },
+      { kpiKey: 'forecastOutgoing',  label: 'Forecast Outgoing',   value: fmtMoney(forecast.expectedExpensesThisMonth),                               icon: 'calendar-x',      color: 'orange',  period: periodChip },
+      { kpiKey: 'cashFlowThisMonth', label: 'Cash Flow — Period',  value: `${cashFlow.netMovement >= 0 ? '+' : ''}${fmtMoney(cashFlow.netMovement)}`, icon: 'activity',        color: cfColor,   period: periodChip },
     ];
-    statsEl.innerHTML = cards.map(c => `
-      <div class="stat-card">
-        <div class="stat-card-content">
-          <p class="stat-label">${c.label}</p>
-          <p class="stat-value text-${c.color}-600">${c.value}</p>
+    statsEl.innerHTML = cards.map(c => {
+      const cfg = FINANCE_KPI_CONFIG[c.kpiKey];
+      const tipDesc = cfg ? cfg.tooltip.replace(/"/g, '&quot;') : '';
+      return `
+      <div class="stat-card kpi-card" data-action="open-kpi-drilldown" data-kpi-key="${c.kpiKey}">
+        <div class="kpi-card-top">
+          <div class="kpi-card-icon-wrap bg-${c.color}-50">
+            <i data-lucide="${c.icon}" class="w-4 h-4 text-${c.color}-500"></i>
+          </div>
+          <div class="kpi-card-top-right">
+            <span class="kpi-info-circle" data-tooltip-title="${escapeHtml(c.label)}" data-tooltip-desc="${tipDesc}">
+              <i data-lucide="info" class="w-3 h-3"></i>
+            </span>
+            <span class="kpi-trend-placeholder" aria-hidden="true"></span>
+          </div>
         </div>
-        <div class="stat-card-icon bg-${c.color}-50">
-          <i data-lucide="${c.icon}" class="w-5 h-5 text-${c.color}-500"></i>
-        </div>
-      </div>`).join('');
+        <p class="kpi-card-label">${escapeHtml(c.label)}</p>
+        <p class="kpi-card-value text-${c.color}-600">${c.value}</p>
+        <div class="kpi-card-footer">${c.period}</div>
+      </div>`;
+    }).join('');
   }
 
-  // Forecast cards
+  // === 2. Forecast pipeline cards (2) ===
   const forecastEl = $('#finance-forecast-cards');
   if (forecastEl) {
-    const netFcColor = forecast.expectedNetCashflow >= 0 ? 'emerald' : 'rose';
     const fcCards = [
-      { label: 'Expected Income (Month)',   value: fmtMoney(forecast.expectedIncomeThisMonth),   icon: 'calendar-check', color: 'emerald' },
-      { label: 'Expected Expenses (Month)', value: fmtMoney(forecast.expectedExpensesThisMonth), icon: 'calendar-x',     color: 'rose' },
-      { label: 'Expected Net Cashflow',     value: fmtMoney(forecast.expectedNetCashflow),        icon: 'activity',       color: netFcColor },
-      { label: 'Weighted Expected Income',  value: fmtMoney(forecast.weightedIncome),             icon: 'percent',        color: 'indigo' },
-      { label: 'Overdue Forecasts',         value: String(forecast.overdueCount),                 icon: 'alert-circle',   color: forecast.overdueCount > 0 ? 'rose' : 'gray' },
+      { label: 'Weighted Expected Income', value: fmtMoney(forecast.weightedIncome),   icon: 'percent',      color: 'indigo', widget: 'weighted-income', tooltip: `Probability-weighted sum of income forecasts due in ${dr.label}.` },
+      { label: 'Overdue Forecasts',        value: String(forecast.overdueCount),        icon: 'alert-circle', color: forecast.overdueCount > 0 ? 'rose' : 'gray', widget: 'overdue-forecasts', tooltip: 'Forecasts past their due date that have not been received or cancelled.' },
     ];
     forecastEl.innerHTML = fcCards.map(c => `
-      <div class="stat-card">
-        <div class="stat-card-content">
-          <p class="stat-label">${c.label}</p>
-          <p class="stat-value text-${c.color}-600">${c.value}</p>
-        </div>
-        <div class="stat-card-icon bg-${c.color}-50">
-          <i data-lucide="${c.icon}" class="w-5 h-5 text-${c.color}-500"></i>
+      <div class="stat-card cursor-pointer" data-action="open-widget-drilldown" data-widget="${c.widget}">
+        <div class="flex items-start justify-between gap-2">
+          <div class="stat-card-content flex-1 min-w-0">
+            <p class="stat-label">${c.label}</p>
+            <p class="stat-value text-${c.color}-600">${c.value}</p>
+          </div>
+          <div class="flex flex-col items-end gap-1.5 shrink-0">
+            <span class="widget-info-icon" data-tooltip-title="${escapeHtml(c.label)}" data-tooltip-desc="${escapeHtml(c.tooltip)}">
+              <i data-lucide="info" class="w-4 h-4"></i>
+            </span>
+            <div class="stat-card-icon bg-${c.color}-50">
+              <i data-lucide="${c.icon}" class="w-5 h-5 text-${c.color}-500"></i>
+            </div>
+          </div>
         </div>
       </div>`).join('');
   }
 
-  // Trash counters
+  // === 3. Trash counters ===
   const txInTrash = state.financeTransactions.filter(t => t.is_deleted).length;
   const fcInTrash = state.financeForecasts.filter(f => f.is_deleted).length;
   const trashEl = $('#finance-trash-summary');
@@ -5921,7 +7178,52 @@ function renderFinanceDashboard() {
     }
   }
 
-  // Account balances list
+  // === 4. Cash Flow Panel ===
+  const cfPanelEl = $('#finance-cashflow-panel');
+  if (cfPanelEl) {
+    const mvColor = cashFlow.netMovement >= 0 ? 'emerald' : 'rose';
+    cfPanelEl.innerHTML = `
+      <div class="shadow-card rounded-2xl bg-white p-5 cursor-pointer" data-action="open-widget-drilldown" data-widget="cashflow-panel">
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <h3 class="text-sm font-semibold text-gray-800">Cash Flow — ${escapeHtml(dr.label)}</h3>
+          </div>
+          <span class="widget-info-icon" data-tooltip-title="Cash Flow — Period" data-tooltip-desc="All real cash movements in ${escapeHtml(dr.label)} across all accounts.">
+            <i data-lucide="info" class="w-4 h-4"></i>
+          </span>
+        </div>
+        <div class="grid grid-cols-2 sm:grid-cols-5 gap-3 items-center">
+          <div class="bg-gray-50 rounded-xl p-3">
+            <p class="text-xs text-gray-400 mb-1">Opening Balance</p>
+            <p class="text-base font-semibold text-gray-800">${fmtMoney(cashFlow.openingBalance)}</p>
+          </div>
+          <div class="hidden sm:flex items-center justify-center text-2xl font-light text-emerald-300">+</div>
+          <div class="bg-emerald-50 rounded-xl p-3">
+            <p class="text-xs text-gray-400 mb-1">Cash In</p>
+            <p class="text-base font-semibold text-emerald-600">+${fmtMoney(cashFlow.cashIn)}</p>
+            <p class="text-[10px] text-gray-400 mt-0.5">Revenue · Capital · Client funds</p>
+          </div>
+          <div class="hidden sm:flex items-center justify-center text-2xl font-light text-rose-300">−</div>
+          <div class="bg-rose-50 rounded-xl p-3">
+            <p class="text-xs text-gray-400 mb-1">Cash Out</p>
+            <p class="text-base font-semibold text-rose-600">−${fmtMoney(cashFlow.cashOut)}</p>
+            <p class="text-[10px] text-gray-400 mt-0.5">Expenses · Client funds spent</p>
+          </div>
+          <div class="col-span-2 sm:col-span-5 mt-1 pt-3 border-t border-gray-100 flex items-center justify-between">
+            <div>
+              <p class="text-xs text-gray-400 mb-0.5">Closing Balance</p>
+              <p class="text-xl font-bold text-gray-900">${fmtMoney(cashFlow.closingBalance)}</p>
+            </div>
+            <div class="text-right">
+              <p class="text-xs text-gray-400 mb-0.5">Net Movement</p>
+              <p class="text-base font-semibold text-${mvColor}-600">${cashFlow.netMovement >= 0 ? '+' : ''}${fmtMoney(cashFlow.netMovement)}</p>
+            </div>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  // === 5. Account Balances ===
   const balancesEl = $('#finance-account-balances');
   if (balancesEl) {
     const accounts = state.financeAccounts.filter(a => a.is_active);
@@ -5942,10 +7244,39 @@ function renderFinanceDashboard() {
       : '<p class="text-sm text-gray-400 py-3">No accounts.</p>';
   }
 
-  // Recent transactions table
+  // === 6. Executive Insights ===
+  const insightsEl = $('#finance-insights-panel');
+  if (insightsEl) {
+    const insights = getExecutiveInsights(summary, cashFlow, forecast, dr);
+    if (!insights.length) {
+      insightsEl.innerHTML = '';
+    } else {
+      const bgMap   = { warning: 'bg-amber-50',   info: 'bg-blue-50',   positive: 'bg-emerald-50' };
+      const textMap = { warning: 'text-amber-800', info: 'text-blue-800', positive: 'text-emerald-800' };
+      const iconMap = { warning: 'text-amber-500', info: 'text-blue-400', positive: 'text-emerald-500' };
+      insightsEl.innerHTML = `
+        <div class="shadow-card rounded-2xl bg-white p-5 cursor-pointer" data-action="open-widget-drilldown" data-widget="executive-insights">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="text-sm font-semibold text-gray-800">Executive Insights</h3>
+            <span class="widget-info-icon" data-tooltip-title="Executive Insights" data-tooltip-desc="Automated financial alerts and highlights based on current data.">
+              <i data-lucide="info" class="w-4 h-4"></i>
+            </span>
+          </div>
+          <div class="space-y-2">
+            ${insights.map(ins => `
+              <div class="flex items-start gap-3 ${bgMap[ins.type] || bgMap.info} rounded-lg px-3 py-2.5">
+                <i data-lucide="${ins.icon}" class="w-4 h-4 ${iconMap[ins.type] || iconMap.info} mt-0.5 shrink-0"></i>
+                <p class="text-sm ${textMap[ins.type] || textMap.info}">${ins.html}</p>
+              </div>`).join('')}
+          </div>
+        </div>`;
+    }
+  }
+
+  // === 7. Recent Transactions ===
   const recentEl = $('#finance-recent-transactions');
   if (recentEl) {
-    const recent = state.financeTransactions.filter(t => !t.is_archived && !t.is_deleted).slice(0, 8);
+    const recent = state.financeTransactions.filter(t => !t.is_archived && !t.is_deleted && isInDateRange(t.transaction_date, dr)).slice(0, 8);
     recentEl.innerHTML = recent.length
       ? recent.map(t => {
           const isTransfer = t.transaction_type === 'transfer';
@@ -6118,11 +7449,15 @@ function openAccountLedgerModal(accountId) {
     totalOutflow  += outAmt;
     const runSnap  = runBal;
 
+    const clientOrProject = t.project_name || t.client_name || getCrmClientName(t.client_id) || '—';
+    const category        = getCategoryName(t.category_id) || '—';
     return `<tr class="hover:bg-gray-50 border-b border-gray-50 ${t.is_archived ? 'opacity-60' : ''}">
       <td class="px-4 py-2 text-sm text-gray-600 whitespace-nowrap">${fmtDate(t.transaction_date)}</td>
       <td class="px-4 py-2 text-xs text-gray-400 font-mono whitespace-nowrap">${t.transaction_number ? escapeHtml(t.transaction_number) : '—'}</td>
       <td class="px-4 py-2 text-sm">${financeTypeBadge(type)}</td>
-      <td class="px-4 py-2 text-sm text-gray-600 max-w-[200px] truncate">${escapeHtml(t.description || '—')}</td>
+      <td class="px-4 py-2 text-xs text-gray-500 max-w-[120px] truncate">${escapeHtml(clientOrProject)}</td>
+      <td class="px-4 py-2 text-xs text-gray-400 max-w-[100px] truncate">${escapeHtml(category)}</td>
+      <td class="px-4 py-2 text-sm text-gray-600 max-w-[160px] truncate">${escapeHtml(t.description || '—')}</td>
       <td class="px-4 py-2 text-sm text-right text-emerald-600 font-medium whitespace-nowrap">${inAmt > 0 ? fmtMoney(inAmt) : ''}</td>
       <td class="px-4 py-2 text-sm text-right text-rose-600 font-medium whitespace-nowrap">${outAmt > 0 ? fmtMoney(outAmt) : ''}</td>
       <td class="px-4 py-2 text-sm text-right font-semibold whitespace-nowrap ${runSnap < 0 ? 'text-rose-600' : 'text-gray-800'}">${fmtMoney(runSnap)}</td>
@@ -6146,7 +7481,7 @@ function openAccountLedgerModal(accountId) {
   if (body) {
     body.innerHTML = rows.length
       ? rows.join('')
-      : '<tr><td colspan="7" class="px-4 py-10 text-center text-gray-400 text-sm">No transactions for this account yet.</td></tr>';
+      : '<tr><td colspan="9" class="px-4 py-10 text-center text-gray-400 text-sm">No transactions for this account yet.</td></tr>';
   }
 
   refreshIcons();
@@ -6219,6 +7554,197 @@ function renderFinanceForecast() {
   refreshIcons();
 }
 
+function renderFinanceReports() {
+  const dr          = getFinanceDateRange();
+  const clientData  = getClientBalanceSummary(dr);
+  const projectData = getProjectPnL(dr);
+
+  // Update period labels in report headers
+  const rptPeriodEls = document.querySelectorAll('.finance-report-period-label');
+  rptPeriodEls.forEach(el => { el.textContent = dr.label; });
+
+  // Client Balance table
+  const clientBody = $('#finance-client-balance-body');
+  if (clientBody) {
+    clientBody.innerHTML = clientData.length
+      ? clientData.map(c => `<tr class="hover:bg-gray-50 border-b border-gray-50">
+          <td class="px-4 py-2.5 text-sm font-medium text-gray-800">${escapeHtml(c.clientName)}</td>
+          <td class="px-4 py-2.5 text-sm text-right text-emerald-600 font-medium">${fmtMoney(c.revenue)}</td>
+          <td class="px-4 py-2.5 text-sm text-right text-gray-500">${fmtMoney(c.ptReceived)}</td>
+          <td class="px-4 py-2.5 text-sm text-right text-gray-400">${fmtMoney(c.ptSpent)}</td>
+          <td class="px-4 py-2.5 text-sm text-right font-medium ${c.ptRemaining > 0 ? 'text-amber-600' : 'text-gray-400'}">${fmtMoney(c.ptRemaining)}</td>
+          <td class="px-4 py-2.5 text-sm text-right text-rose-500">${fmtMoney(c.expenses)}</td>
+          <td class="px-4 py-2.5 text-sm text-right font-semibold ${c.profitEstimate >= 0 ? 'text-emerald-600' : 'text-rose-600'}">${fmtMoney(c.profitEstimate)}</td>
+        </tr>`).join('')
+      : `<tr><td colspan="7" class="px-4 py-10 text-center text-gray-400 text-sm">No client transactions yet.</td></tr>`;
+  }
+
+  // Project P&L table
+  const projBody = $('#finance-project-pnl-body');
+  if (projBody) {
+    projBody.innerHTML = projectData.length
+      ? projectData.map(p => `<tr class="hover:bg-gray-50 border-b border-gray-50">
+          <td class="px-4 py-2.5 text-sm font-medium text-gray-800">${escapeHtml(p.projectName)}</td>
+          <td class="px-4 py-2.5 text-sm text-right text-emerald-600 font-medium">${fmtMoney(p.revenue)}</td>
+          <td class="px-4 py-2.5 text-sm text-right text-rose-500">${fmtMoney(p.expenses)}</td>
+          <td class="px-4 py-2.5 text-sm text-right text-gray-500">${fmtMoney(p.ptReceived)}</td>
+          <td class="px-4 py-2.5 text-sm text-right ${p.ptRemaining > 0 ? 'text-amber-600' : 'text-gray-400'}">${fmtMoney(p.ptRemaining)}</td>
+          <td class="px-4 py-2.5 text-sm text-right font-semibold ${p.profit >= 0 ? 'text-emerald-600' : 'text-rose-600'}">${fmtMoney(p.profit)}</td>
+          <td class="px-4 py-2.5 text-sm text-right ${p.margin === null ? 'text-gray-300' : p.margin >= 0 ? 'text-emerald-600' : 'text-rose-600'}">${p.margin !== null ? p.margin.toFixed(1) + '%' : '—'}</td>
+        </tr>`).join('')
+      : `<tr><td colspan="7" class="px-4 py-10 text-center text-gray-400 text-sm">No project transactions yet.</td></tr>`;
+  }
+
+  // Forecast vs Actual
+  const fvaEl = $('#finance-forecast-vs-actual');
+  if (fvaEl) {
+    const activeTx     = state.financeTransactions.filter(t => !t.is_archived && !t.is_deleted && t.status !== 'cancelled' && isInDateRange(t.transaction_date, dr));
+    const actualIncome = activeTx.filter(t => t.transaction_type === 'income').reduce((s, t) => s + Number(t.amount), 0);
+    const actualExp    = activeTx.filter(t => t.transaction_type === 'expense').reduce((s, t) => s + Number(t.amount), 0);
+    const allFc        = state.financeForecasts.filter(f => !f.is_archived && !f.is_deleted && isInDateRange(f.expected_date, dr));
+    const fcIncome     = allFc.filter(f => f.forecast_type === 'expected_income').reduce((s, f) => s + Number(f.amount), 0);
+    const fcExp        = allFc.filter(f => f.forecast_type === 'expected_expense').reduce((s, f) => s + Number(f.amount), 0);
+    const inPct  = fcIncome > 0 ? ((actualIncome / fcIncome) * 100).toFixed(0) + '% collected' : '—';
+    const expPct = fcExp    > 0 ? ((actualExp    / fcExp)    * 100).toFixed(0) + '% spent'     : '—';
+    fvaEl.innerHTML = `
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div class="bg-emerald-50 rounded-xl p-3">
+          <p class="text-xs text-gray-400 mb-1">Actual Revenue</p>
+          <p class="text-base font-semibold text-emerald-600">${fmtMoney(actualIncome)}</p>
+        </div>
+        <div class="bg-gray-50 rounded-xl p-3">
+          <p class="text-xs text-gray-400 mb-1">Forecasted Revenue</p>
+          <p class="text-base font-semibold text-gray-800">${fmtMoney(fcIncome)}</p>
+          <p class="text-[10px] text-gray-400 mt-0.5">${inPct}</p>
+        </div>
+        <div class="bg-rose-50 rounded-xl p-3">
+          <p class="text-xs text-gray-400 mb-1">Actual Expenses</p>
+          <p class="text-base font-semibold text-rose-600">${fmtMoney(actualExp)}</p>
+        </div>
+        <div class="bg-gray-50 rounded-xl p-3">
+          <p class="text-xs text-gray-400 mb-1">Forecasted Expenses</p>
+          <p class="text-base font-semibold text-gray-800">${fmtMoney(fcExp)}</p>
+          <p class="text-[10px] text-gray-400 mt-0.5">${expPct}</p>
+        </div>
+      </div>`;
+  }
+}
+
+// ─── Finance Validation ──────────────────────────────────────────────────────
+// Call validateFinanceTotals() from the browser console to run reconciliation.
+// Note: getFinanceSummary() and getClientBalanceSummary()/getProjectPnL() are all-time.
+// Period filters (getFinanceDateRange()) affect dashboard display but NOT these reconciliation checks.
+function validateFinanceTotals() {
+  const s   = getFinanceSummary();
+  const cf  = getCashFlowThisMonth();
+  const cb  = getClientBalanceSummary();
+  const pnl = getProjectPnL();
+
+  const base = state.financeTransactions.filter(t => !t.is_archived && !t.is_deleted && t.status !== 'cancelled');
+  const ptIn  = base.filter(t => t.transaction_type === 'pass_through_received').reduce((acc, t) => acc + Number(t.amount), 0);
+  const ptOut = base.filter(t => t.transaction_type === 'pass_through_spent').reduce((acc, t) => acc + Number(t.amount), 0);
+
+  const checks = [
+    {
+      check: 'Cash in Accounts = Sum of account balances',
+      expected: s.totalAccountBalances,
+      actual:   state.financeAccounts.filter(a => a.is_active).reduce((sum, a) => sum + getAccountBalance(a.id), 0),
+    },
+    {
+      check: 'Net Profit = Real Revenue − Real Expenses',
+      expected: s.realIncome - s.realExpenses,
+      actual:   s.netProfit,
+    },
+    {
+      check: 'Client Funds Held = PT Received − PT Spent',
+      expected: ptIn - ptOut,
+      actual:   s.passThroughHeld,
+    },
+    {
+      check: 'Cash Flow: Closing = Opening + In − Out',
+      expected: cf.openingBalance + cf.cashIn - cf.cashOut,
+      actual:   cf.closingBalance,
+    },
+    {
+      check: 'Client Balance revenue ≤ Real Revenue (some income may have no client)',
+      expected: `≤ ${fmtMoney(s.realIncome)}`,
+      actual:   cb.reduce((acc, c) => acc + c.revenue, 0),
+      pass:     cb.reduce((acc, c) => acc + c.revenue, 0) <= s.realIncome + 0.01,
+    },
+    {
+      check: 'Project P&L revenue ≤ Real Revenue (some income may have no project)',
+      expected: `≤ ${fmtMoney(s.realIncome)}`,
+      actual:   pnl.filter(p => p.projectName !== 'Unassigned').reduce((acc, p) => acc + p.revenue, 0),
+      pass:     pnl.filter(p => p.projectName !== 'Unassigned').reduce((acc, p) => acc + p.revenue, 0) <= s.realIncome + 0.01,
+    },
+  ].map(c => ({
+    ...c,
+    pass: c.pass !== undefined ? c.pass : Math.abs(Number(c.expected) - Number(c.actual)) < 0.01,
+  }));
+
+  const allPass = checks.every(c => c.pass);
+  console.group(`%cFinance Reconciliation — ${allPass ? '✅ ALL PASS' : '❌ ISSUES FOUND'}`, allPass ? 'color:green' : 'color:red');
+  checks.forEach(c => console.log(`${c.pass ? '✅' : '❌'} ${c.check}\n   Expected: ${c.expected}  Actual: ${c.actual}`));
+  console.groupEnd();
+  return { checks, allPass };
+}
+// ─── Business Health (Sprint 4.3) ────────────────────────────────────────────
+// Planned: getBusinessHealthScore(), renderBusinessHealthWidget()
+
+// ─── Finance Global Period Bar ────────────────────────────────────────────────
+
+function renderFinanceGlobalPeriodBar() {
+  const dr = getFinanceDateRange();
+
+  // Sync selector value
+  const selectEl = $('#finance-date-range');
+  if (selectEl) selectEl.value = state.financeDateRange || 'this_month';
+
+  // Update period label chip
+  const labelEl = $('#finance-period-label');
+  if (labelEl) labelEl.textContent = dr.label;
+
+  // Show/hide custom date inputs
+  const customEl = $('#finance-custom-range-inputs');
+  if (customEl) {
+    customEl.classList.toggle('hidden', state.financeDateRange !== 'custom');
+    if (state.financeDateRange === 'custom') {
+      const csEl = $('#finance-custom-start');
+      const ceEl = $('#finance-custom-end');
+      if (csEl && state.financeCustomStart) csEl.value = state.financeCustomStart;
+      if (ceEl && state.financeCustomEnd)   ceEl.value = state.financeCustomEnd;
+    }
+  }
+
+  // Dynamic chart titles
+  const rvseTitle = $('#finance-chart-title-rvse');
+  if (rvseTitle) rvseTitle.textContent = `Revenue vs Expenses — ${dr.label}`;
+  const catTitle = $('#finance-chart-title-cat');
+  if (catTitle) catTitle.textContent = `Expenses by Category — ${dr.label}`;
+  const projTitle = $('#finance-chart-title-proj');
+  if (projTitle) projTitle.textContent = `Revenue by Project — ${dr.label}`;
+
+  // Tab period banners (Transactions, Forecast)
+  const chipHtml = `<span class="finance-period-chip finance-period-chip--indigo">${escapeHtml(dr.label)}</span>`;
+  const txBanner = $('#finance-tx-period-banner');
+  if (txBanner) txBanner.innerHTML = `<span class="finance-tab-period-viewing">Viewing</span>${chipHtml}`;
+  const fcBanner = $('#finance-fc-period-banner');
+  if (fcBanner) fcBanner.innerHTML = `<span class="finance-tab-period-viewing">Viewing</span>${chipHtml}`;
+
+  // Reports banner
+  const rptPeriod = $('#finance-reports-banner-period');
+  if (rptPeriod) rptPeriod.textContent = dr.label;
+  const rptDate = $('#finance-reports-banner-date');
+  if (rptDate) rptDate.textContent = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+
+  // Report section period badges
+  document.querySelectorAll('.finance-report-period-label').forEach(el => { el.textContent = dr.label; });
+
+  refreshIcons();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 function setFinanceTab(tab) {
   state.financeTab = tab;
   ['dashboard', 'transactions', 'forecast', 'accounts', 'reports'].forEach(t => {
@@ -6233,6 +7759,7 @@ function setFinanceTab(tab) {
       btn.classList.toggle('text-gray-500', !active);
     }
   });
+  renderFinanceGlobalPeriodBar();
 }
 
 function renderFinanceView() {
@@ -6242,6 +7769,7 @@ function renderFinanceView() {
   renderFinanceTransactions();
   renderFinanceForecast();
   renderFinanceAccounts();
+  renderFinanceReports();
 }
 
 // --- Finance Modal Helpers ---
@@ -6435,9 +7963,7 @@ async function handleFinanceTransactionSubmit(e) {
   const clientId = Number(form.elements['client_id']?.value) || null;
   const txNumRaw = form.elements['transaction_number']?.value.trim() || '';
   const now2 = new Date();
-  const autoTxNum = txNumRaw || (!id
-    ? `TXN-${now2.getFullYear()}${String(now2.getMonth()+1).padStart(2,'0')}${String(now2.getDate()).padStart(2,'0')}-${String(Math.floor(Math.random()*9000)+1000)}`
-    : undefined);
+  const autoTxNum = txNumRaw || (!id ? generateFinanceTxNumber() : undefined);
   const payload = {
     transaction_date:    form.elements['transaction_date'].value,
     transaction_type:    type,
@@ -6950,6 +8476,12 @@ function setView(view) {
   $$('.nav-item').forEach((el) => {
     el.classList.toggle('active', el.dataset.view === view);
   });
+
+if (view === 'dashboard') {
+  renderMyPerformance();
+  renderTeamLeaderboard();
+  renderMyPerformanceTrend();
+}
 
 if (view === 'team') {
   const tbody = $('#team-table-body');
@@ -10645,6 +12177,34 @@ if (action === 'open-split-receipt-modal') {
   openSplitReceiptModal();
   return;
 }
+if (action === 'open-kpi-drilldown') {
+  if (e.target.closest('.kpi-info-circle')) return;
+  const kpiKey = trigger.closest('[data-kpi-key]')?.dataset.kpiKey || trigger.dataset.kpiKey;
+  if (kpiKey) openKpiDrilldown(kpiKey);
+  return;
+}
+if (action === 'open-widget-drilldown') {
+  if (e.target.closest('.widget-info-icon')) return;
+  const widgetKey = trigger.closest('[data-widget]')?.dataset.widget || trigger.dataset.widget;
+  if (widgetKey) openWidgetDrilldown(widgetKey);
+  return;
+}
+if (action === 'kpi-nav-to') {
+  const tab = trigger.dataset.tab;
+  const typeFilter = trigger.dataset.typeFilter;
+  if (tab) {
+    if (tab === 'transactions' && typeFilter !== undefined) {
+      const newType = typeFilter || 'all';
+      state.filters.financeTransactions.type = newType;
+      const typeEl = $('#finance-tx-type-filter');
+      if (typeEl) typeEl.value = newType;
+      renderFinanceTransactions();
+    }
+    setFinanceTab(tab);
+  }
+  closeModal();
+  return;
+}
 if (action === 'open-account-ledger') {
   openAccountLedgerModal(Number(trigger.dataset.id));
   return;
@@ -10861,6 +12421,27 @@ if (action === 'convert-forecast-to-tx') {
   $('#finance-forecast-archived-filter')?.addEventListener('change', (e) => {
     state.filters.financeForecasts.archived = e.target.value;
     renderFinanceForecast();
+  });
+
+  // Finance Date Range selector
+  $('#finance-date-range')?.addEventListener('change', (e) => {
+    state.financeDateRange = e.target.value;
+    localStorage.setItem('tgora_finance_date_range', e.target.value);
+    renderFinanceGlobalPeriodBar();
+    if (e.target.value !== 'custom' || (state.financeCustomStart && state.financeCustomEnd)) {
+      renderFinanceDashboard();
+      renderFinanceReports();
+    }
+  });
+  $('#finance-custom-start')?.addEventListener('change', (e) => {
+    state.financeCustomStart = e.target.value;
+    localStorage.setItem('tgora_finance_custom_start', e.target.value);
+    if (state.financeCustomEnd) { renderFinanceDashboard(); renderFinanceReports(); renderFinanceGlobalPeriodBar(); }
+  });
+  $('#finance-custom-end')?.addEventListener('change', (e) => {
+    state.financeCustomEnd = e.target.value;
+    localStorage.setItem('tgora_finance_custom_end', e.target.value);
+    if (state.financeCustomStart) { renderFinanceDashboard(); renderFinanceReports(); renderFinanceGlobalPeriodBar(); }
   });
 
   // Split receipt: auto-compute pass-through amount
@@ -11519,6 +13100,36 @@ subscribeToRealtimeChanges();
   // Run monthly archive check after role is set and initial render is done.
   await runMonthlyTaskArchiveIfNeeded();
 }
+
+// KPI / widget info icon tooltip (delegated hover)
+document.addEventListener('mouseover', (e) => {
+  const circle = e.target.closest('.kpi-info-circle, .widget-info-icon');
+  if (!circle) return;
+  let tip = document.getElementById('kpi-tooltip-popup');
+  if (!tip) {
+    tip = document.createElement('div');
+    tip.id = 'kpi-tooltip-popup';
+    tip.className = 'kpi-tooltip-popup';
+    document.body.appendChild(tip);
+  }
+  const title = circle.dataset.tooltipTitle || '';
+  const desc  = circle.dataset.tooltipDesc  || '';
+  tip.innerHTML = `${title ? `<p class="kpi-tt-title">${escapeHtml(title)}</p>` : ''}${desc ? `<p class="kpi-tt-desc">${escapeHtml(desc)}</p>` : ''}`;
+  const rect = circle.getBoundingClientRect();
+  const W = 220;
+  let left = rect.right - W + window.scrollX;
+  if (left < 8) left = 8;
+  tip.style.left = `${left}px`;
+  tip.style.top  = `${rect.bottom + 6 + window.scrollY}px`;
+  tip.classList.remove('hidden');
+});
+document.addEventListener('mouseout', (e) => {
+  const circle = e.target.closest('.kpi-info-circle, .widget-info-icon');
+  if (!circle) return;
+  if (e.relatedTarget && circle.contains(e.relatedTarget)) return;
+  const tip = document.getElementById('kpi-tooltip-popup');
+  if (tip) tip.classList.add('hidden');
+});
 
 document.addEventListener('DOMContentLoaded', async () => {
   const loginForm = $('#login-form');

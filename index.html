@@ -1984,74 +1984,135 @@
     </div>
   </div>
 
-  <!-- Tab bar -->
-  <div class="inline-flex items-center gap-1 bg-gray-100 p-1 rounded-xl mb-6 flex-wrap">
-    <button data-finance-tab="dashboard"    class="view-mode-btn h-8 px-4 rounded-lg text-sm font-medium transition-colors bg-white text-gray-900 shadow-sm">Dashboard</button>
-    <button data-finance-tab="transactions" class="view-mode-btn h-8 px-4 rounded-lg text-sm font-medium transition-colors text-gray-500">Transactions</button>
-    <button data-finance-tab="forecast"     class="view-mode-btn h-8 px-4 rounded-lg text-sm font-medium transition-colors text-gray-500">Forecast</button>
-    <button data-finance-tab="accounts"     class="view-mode-btn h-8 px-4 rounded-lg text-sm font-medium transition-colors text-gray-500">Accounts</button>
-    <button data-finance-tab="reports"      class="view-mode-btn h-8 px-4 rounded-lg text-sm font-medium transition-colors text-gray-500">Reports</button>
+  <!-- Tab bar + Global Period Selector -->
+  <div class="flex flex-col sm:flex-row sm:items-center gap-3 mb-5">
+    <div class="inline-flex items-center gap-1 bg-gray-100 p-1 rounded-xl flex-wrap">
+      <button data-finance-tab="dashboard"    class="view-mode-btn h-8 px-4 rounded-lg text-sm font-medium transition-colors bg-white text-gray-900 shadow-sm">Dashboard</button>
+      <button data-finance-tab="transactions" class="view-mode-btn h-8 px-4 rounded-lg text-sm font-medium transition-colors text-gray-500">Transactions</button>
+      <button data-finance-tab="forecast"     class="view-mode-btn h-8 px-4 rounded-lg text-sm font-medium transition-colors text-gray-500">Forecast</button>
+      <button data-finance-tab="accounts"     class="view-mode-btn h-8 px-4 rounded-lg text-sm font-medium transition-colors text-gray-500">Accounts</button>
+      <button data-finance-tab="reports"      class="view-mode-btn h-8 px-4 rounded-lg text-sm font-medium transition-colors text-gray-500">Reports</button>
+    </div>
+
+    <!-- Global Period Selector (persists across all Finance tabs) -->
+    <div class="finance-period-bar flex-1 min-w-0">
+      <div class="finance-period-bar-left">
+        <i data-lucide="calendar-range" class="w-3.5 h-3.5 text-gray-400 shrink-0"></i>
+        <span id="finance-period-label" class="text-[11px] font-semibold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-100 whitespace-nowrap"></span>
+      </div>
+      <div class="finance-period-bar-right">
+        <select id="finance-date-range" class="form-input h-8 text-sm py-0 pl-3 pr-8 min-w-[150px]">
+          <option value="this_month">This Month</option>
+          <option value="last_month">Last Month</option>
+          <option value="last_3_months">Last 3 Months</option>
+          <option value="last_6_months">Last 6 Months</option>
+          <option value="this_year">This Year</option>
+          <option value="last_year">Last Year</option>
+          <option value="last_2_years">Last 2 Years</option>
+          <option value="all_time">All Time</option>
+          <option value="custom">Custom Range</option>
+        </select>
+        <div id="finance-custom-range-inputs" class="hidden flex items-center gap-1.5">
+          <input type="date" id="finance-custom-start" class="form-input h-8 text-sm py-0 px-2" />
+          <span class="text-xs text-gray-400 shrink-0">–</span>
+          <input type="date" id="finance-custom-end" class="form-input h-8 text-sm py-0 px-2" />
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- Dashboard Tab -->
   <div id="finance-section-dashboard">
-    <!-- Actual stat cards -->
-    <div id="finance-dashboard-stats" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-4 mb-4"></div>
 
-    <!-- Forecast stat cards -->
-    <p class="text-xs font-medium text-gray-400 uppercase tracking-wider mb-2 mt-2">Forecast (not included in balances)</p>
-    <div id="finance-forecast-cards" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 mb-3"></div>
+    <!-- Top stat cards (9) -->
+    <div id="finance-dashboard-stats" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 mb-4"></div>
+
+    <!-- Forecast pipeline (2 cards) -->
+    <p class="text-xs font-medium text-gray-400 uppercase tracking-wider mb-2 mt-2">Forecast Pipeline</p>
+    <div id="finance-forecast-cards" class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-3"></div>
 
     <!-- Trash summary (hidden when empty) -->
-    <div id="finance-trash-summary" class="mb-5"></div>
+    <div id="finance-trash-summary" class="mb-4"></div>
 
-    <!-- Charts + Account Balances row -->
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
-      <!-- Income vs Expenses bar chart -->
-      <div class="lg:col-span-2 shadow-card rounded-2xl bg-white p-5">
-        <h3 class="text-sm font-semibold text-gray-800 mb-4">Income vs Expenses (6 months)</h3>
-        <div class="h-56">
-          <canvas id="finance-income-expense-chart"></canvas>
+    <!-- Cash Flow Panel -->
+    <div id="finance-cashflow-panel" class="mb-5"></div>
+
+    <!-- Revenue vs Expenses + Expense by Category -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+      <div class="lg:col-span-2 shadow-card rounded-2xl bg-white p-5 cursor-pointer" data-action="open-widget-drilldown" data-widget="revenue-vs-expenses">
+        <div class="flex items-center justify-between mb-4">
+          <h3 id="finance-chart-title-rvse" class="text-sm font-semibold text-gray-800">Revenue vs Expenses</h3>
+          <span class="widget-info-icon" data-tooltip-title="Revenue vs Expenses" data-tooltip-desc="Comparison of service income vs operating expenses for the selected period.">
+            <i data-lucide="info" class="w-4 h-4"></i>
+          </span>
         </div>
+        <div class="h-56"><canvas id="finance-income-expense-chart"></canvas></div>
       </div>
-      <!-- Account balances -->
+      <div class="shadow-card rounded-2xl bg-white p-5 cursor-pointer" data-action="open-widget-drilldown" data-widget="expense-category">
+        <div class="flex items-center justify-between mb-4">
+          <h3 id="finance-chart-title-cat" class="text-sm font-semibold text-gray-800">Expenses by Category</h3>
+          <span class="widget-info-icon" data-tooltip-title="Expenses by Category" data-tooltip-desc="Breakdown of operating expenses by category for the selected period.">
+            <i data-lucide="info" class="w-4 h-4"></i>
+          </span>
+        </div>
+        <div class="h-56"><canvas id="finance-expense-category-chart"></canvas></div>
+      </div>
+    </div>
+
+    <!-- Revenue & Expenses by Project + Account Balances -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+      <div class="lg:col-span-2 shadow-card rounded-2xl bg-white p-5 cursor-pointer" data-action="open-widget-drilldown" data-widget="project-revenue">
+        <div class="flex items-center justify-between mb-4">
+          <h3 id="finance-chart-title-proj" class="text-sm font-semibold text-gray-800">Revenue by Project</h3>
+          <span class="widget-info-icon" data-tooltip-title="Revenue by Project" data-tooltip-desc="Revenue and expenses grouped by project for the selected period.">
+            <i data-lucide="info" class="w-4 h-4"></i>
+          </span>
+        </div>
+        <div class="h-56"><canvas id="finance-project-revenue-chart"></canvas></div>
+      </div>
       <div class="shadow-card rounded-2xl bg-white p-5">
-        <h3 class="text-sm font-semibold text-gray-800 mb-3">Account Balances</h3>
+        <div class="flex items-center justify-between mb-3 cursor-pointer" data-action="open-widget-drilldown" data-widget="account-balances">
+          <h3 class="text-sm font-semibold text-gray-800">Account Balances</h3>
+          <span class="widget-info-icon" data-tooltip-title="Account Balances" data-tooltip-desc="Current computed balance for each active account based on all non-cancelled transactions.">
+            <i data-lucide="info" class="w-4 h-4"></i>
+          </span>
+        </div>
         <div id="finance-account-balances"></div>
       </div>
     </div>
 
-    <!-- Expense category doughnut + Recent transactions row -->
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
-      <div class="shadow-card rounded-2xl bg-white p-5">
-        <h3 class="text-sm font-semibold text-gray-800 mb-4">Expenses by Category</h3>
-        <div class="h-56">
-          <canvas id="finance-expense-category-chart"></canvas>
-        </div>
+    <!-- Executive Insights -->
+    <div id="finance-insights-panel" class="mb-4"></div>
+
+    <!-- Recent Transactions -->
+    <div class="shadow-card rounded-2xl bg-white p-5 cursor-pointer" data-action="open-widget-drilldown" data-widget="recent-transactions">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="text-sm font-semibold text-gray-800">Recent Transactions</h3>
+        <span class="widget-info-icon" data-tooltip-title="Recent Transactions" data-tooltip-desc="The most recently added transactions across all accounts and types.">
+          <i data-lucide="info" class="w-4 h-4"></i>
+        </span>
       </div>
-      <!-- Recent transactions -->
-      <div class="lg:col-span-2 shadow-card rounded-2xl bg-white p-5">
-        <h3 class="text-sm font-semibold text-gray-800 mb-3">Recent Transactions</h3>
-        <div class="table-scroll-container">
-          <table class="w-full text-left">
-            <thead>
-              <tr class="border-b border-gray-100">
-                <th class="px-4 py-2 text-xs font-medium text-gray-400 uppercase">Date</th>
-                <th class="px-4 py-2 text-xs font-medium text-gray-400 uppercase">Type</th>
-                <th class="px-4 py-2 text-xs font-medium text-gray-400 uppercase">Account</th>
-                <th class="px-4 py-2 text-xs font-medium text-gray-400 uppercase">Description</th>
-                <th class="px-4 py-2 text-xs font-medium text-gray-400 uppercase text-right">Amount</th>
-              </tr>
-            </thead>
-            <tbody id="finance-recent-transactions"></tbody>
-          </table>
-        </div>
+      <div class="table-scroll-container">
+        <table class="w-full text-left">
+          <thead>
+            <tr class="border-b border-gray-100">
+              <th class="px-4 py-2 text-xs font-medium text-gray-400 uppercase">Date</th>
+              <th class="px-4 py-2 text-xs font-medium text-gray-400 uppercase">Type</th>
+              <th class="px-4 py-2 text-xs font-medium text-gray-400 uppercase">Account</th>
+              <th class="px-4 py-2 text-xs font-medium text-gray-400 uppercase">Description</th>
+              <th class="px-4 py-2 text-xs font-medium text-gray-400 uppercase text-right">Amount</th>
+            </tr>
+          </thead>
+          <tbody id="finance-recent-transactions"></tbody>
+        </table>
       </div>
     </div>
   </div>
 
   <!-- Transactions Tab -->
   <div id="finance-section-transactions" class="hidden">
+    <!-- Period awareness banner -->
+    <div id="finance-tx-period-banner" class="finance-tab-period-banner mb-3"></div>
     <!-- Toolbar -->
     <div class="flex flex-wrap items-center gap-3 mb-4">
       <input id="finance-tx-search" type="text" placeholder="Search transactions…" class="form-input h-9 w-48 text-sm" />
@@ -2135,6 +2196,8 @@
 
   <!-- Forecast Tab -->
   <div id="finance-section-forecast" class="hidden">
+    <!-- Period awareness banner -->
+    <div id="finance-fc-period-banner" class="finance-tab-period-banner mb-3"></div>
     <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
       <div class="flex flex-wrap items-center gap-2">
         <input id="finance-forecast-search" type="text" placeholder="Search forecasts…" class="form-input h-9 w-44 text-sm" />
@@ -2190,34 +2253,100 @@
     </div>
   </div>
 
-  <!-- Reports Tab (placeholders) -->
-  <div id="finance-section-reports" class="hidden">
-    <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-      <div class="shadow-card rounded-2xl bg-white p-6 flex flex-col items-center justify-center text-center min-h-[180px]">
-        <i data-lucide="folder-kanban" class="w-8 h-8 text-gray-300 mb-3"></i>
-        <h4 class="text-sm font-semibold text-gray-800">Profit by Project</h4>
-        <span class="sidebar-badge-soon mt-2">Soon</span>
+  <!-- Reports Tab -->
+  <div id="finance-section-reports" class="hidden space-y-5">
+
+    <!-- Executive Reports Banner -->
+    <div class="finance-reports-banner">
+      <div class="finance-reports-banner-left">
+        <div class="finance-reports-banner-icon">
+          <i data-lucide="bar-chart-2" class="w-5 h-5 text-indigo-500"></i>
+        </div>
+        <div>
+          <p class="text-[10px] font-semibold text-indigo-400 uppercase tracking-wider mb-0.5">Finance</p>
+          <h3 class="text-base font-bold text-gray-900 leading-tight">Reports</h3>
+        </div>
       </div>
-      <div class="shadow-card rounded-2xl bg-white p-6 flex flex-col items-center justify-center text-center min-h-[180px]">
-        <i data-lucide="users" class="w-8 h-8 text-gray-300 mb-3"></i>
-        <h4 class="text-sm font-semibold text-gray-800">Client Funds</h4>
-        <span class="sidebar-badge-soon mt-2">Soon</span>
+      <div class="finance-reports-banner-right">
+        <div class="text-right">
+          <p class="text-[10px] text-gray-400 uppercase tracking-wide font-semibold mb-0.5">Viewing</p>
+          <span id="finance-reports-banner-period" class="finance-period-chip finance-period-chip--indigo"></span>
+        </div>
+        <div class="text-right">
+          <p class="text-[10px] text-gray-400 uppercase tracking-wide font-semibold mb-0.5">Last Updated</p>
+          <span id="finance-reports-banner-date" class="text-[12px] font-semibold text-gray-700"></span>
+        </div>
       </div>
-      <div class="shadow-card rounded-2xl bg-white p-6 flex flex-col items-center justify-center text-center min-h-[180px]">
-        <i data-lucide="git-compare-arrows" class="w-8 h-8 text-gray-300 mb-3"></i>
-        <h4 class="text-sm font-semibold text-gray-800">Forecast vs Actual</h4>
-        <span class="sidebar-badge-soon mt-2">Soon</span>
+    </div>
+
+    <!-- Client Balance -->
+    <div class="shadow-card rounded-2xl bg-white p-5">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-sm font-semibold text-gray-800 flex items-center gap-2">
+          <i data-lucide="users" class="w-4 h-4 text-indigo-400"></i> Client Balance
+        </h3>
+        <span class="finance-report-period-label finance-period-chip finance-period-chip--gray text-[11px]"></span>
       </div>
-      <div class="shadow-card rounded-2xl bg-white p-6 flex flex-col items-center justify-center text-center min-h-[180px]">
-        <i data-lucide="waves" class="w-8 h-8 text-gray-300 mb-3"></i>
-        <h4 class="text-sm font-semibold text-gray-800">Cash Flow</h4>
-        <span class="sidebar-badge-soon mt-2">Soon</span>
+      <div class="table-scroll-container">
+        <table class="w-full text-left">
+          <thead>
+            <tr class="border-b border-gray-100">
+              <th class="px-4 py-2.5 text-xs font-medium text-gray-400 uppercase">Client</th>
+              <th class="px-4 py-2.5 text-xs font-medium text-gray-400 uppercase text-right">Revenue</th>
+              <th class="px-4 py-2.5 text-xs font-medium text-gray-400 uppercase text-right">Funds In</th>
+              <th class="px-4 py-2.5 text-xs font-medium text-gray-400 uppercase text-right">Funds Out</th>
+              <th class="px-4 py-2.5 text-xs font-medium text-gray-400 uppercase text-right">Funds Held</th>
+              <th class="px-4 py-2.5 text-xs font-medium text-gray-400 uppercase text-right">Expenses</th>
+              <th class="px-4 py-2.5 text-xs font-medium text-gray-400 uppercase text-right">Est. Profit</th>
+            </tr>
+          </thead>
+          <tbody id="finance-client-balance-body"></tbody>
+        </table>
       </div>
-      <div class="shadow-card rounded-2xl bg-white p-6 flex flex-col items-center justify-center text-center min-h-[180px]">
-        <i data-lucide="pie-chart" class="w-8 h-8 text-gray-300 mb-3"></i>
-        <h4 class="text-sm font-semibold text-gray-800">Category Breakdown</h4>
-        <span class="sidebar-badge-soon mt-2">Soon</span>
+    </div>
+
+    <!-- Project P&L -->
+    <div class="shadow-card rounded-2xl bg-white p-5">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-sm font-semibold text-gray-800 flex items-center gap-2">
+          <i data-lucide="folder-kanban" class="w-4 h-4 text-indigo-400"></i> Project P&amp;L
+        </h3>
+        <span class="finance-report-period-label finance-period-chip finance-period-chip--gray text-[11px]"></span>
       </div>
+      <div class="table-scroll-container">
+        <table class="w-full text-left">
+          <thead>
+            <tr class="border-b border-gray-100">
+              <th class="px-4 py-2.5 text-xs font-medium text-gray-400 uppercase">Project</th>
+              <th class="px-4 py-2.5 text-xs font-medium text-gray-400 uppercase text-right">Revenue</th>
+              <th class="px-4 py-2.5 text-xs font-medium text-gray-400 uppercase text-right">Expenses</th>
+              <th class="px-4 py-2.5 text-xs font-medium text-gray-400 uppercase text-right">Funds In</th>
+              <th class="px-4 py-2.5 text-xs font-medium text-gray-400 uppercase text-right">Funds Held</th>
+              <th class="px-4 py-2.5 text-xs font-medium text-gray-400 uppercase text-right">Profit</th>
+              <th class="px-4 py-2.5 text-xs font-medium text-gray-400 uppercase text-right">Margin</th>
+            </tr>
+          </thead>
+          <tbody id="finance-project-pnl-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Forecast vs Actual -->
+    <div class="shadow-card rounded-2xl bg-white p-5">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-sm font-semibold text-gray-800 flex items-center gap-2">
+          <i data-lucide="git-compare-arrows" class="w-4 h-4 text-indigo-400"></i> Forecast vs Actual
+        </h3>
+        <span class="finance-report-period-label finance-period-chip finance-period-chip--gray text-[11px]"></span>
+      </div>
+      <div id="finance-forecast-vs-actual"></div>
+    </div>
+
+    <!-- Category Breakdown (placeholder) -->
+    <div class="shadow-card rounded-2xl bg-white p-6 flex flex-col items-center justify-center text-center min-h-[140px]">
+      <i data-lucide="pie-chart" class="w-8 h-8 text-gray-300 mb-3"></i>
+      <h4 class="text-sm font-semibold text-gray-800">Category Breakdown</h4>
+      <span class="sidebar-badge-soon mt-2">Soon</span>
     </div>
   </div>
 </section>
@@ -3616,6 +3745,8 @@
               <th class="px-4 py-2.5 text-xs font-medium text-gray-400 uppercase whitespace-nowrap">Date</th>
               <th class="px-4 py-2.5 text-xs font-medium text-gray-400 uppercase whitespace-nowrap">Tx #</th>
               <th class="px-4 py-2.5 text-xs font-medium text-gray-400 uppercase">Type</th>
+              <th class="px-4 py-2.5 text-xs font-medium text-gray-400 uppercase">Client / Project</th>
+              <th class="px-4 py-2.5 text-xs font-medium text-gray-400 uppercase">Category</th>
               <th class="px-4 py-2.5 text-xs font-medium text-gray-400 uppercase">Description</th>
               <th class="px-4 py-2.5 text-xs font-medium text-gray-400 uppercase text-right whitespace-nowrap">In</th>
               <th class="px-4 py-2.5 text-xs font-medium text-gray-400 uppercase text-right whitespace-nowrap">Out</th>
@@ -3730,6 +3861,21 @@
           </button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- ===== Finance KPI Drilldown Modal ===== -->
+  <div id="finance-kpi-modal" class="modal hidden">
+    <div class="modal-overlay" data-action="close-modal"></div>
+    <div class="modal-panel kpi-modal-panel" style="max-width: 46rem">
+      <div id="kpi-modal-body" class="overflow-y-auto" style="max-height: 88vh"></div>
+    </div>
+  </div>
+
+  <div id="finance-widget-modal" class="modal hidden">
+    <div class="modal-overlay" data-action="close-modal"></div>
+    <div class="modal-panel kpi-modal-panel" style="max-width: 52rem">
+      <div id="widget-modal-body" class="overflow-y-auto" style="max-height: 88vh"></div>
     </div>
   </div>
 
