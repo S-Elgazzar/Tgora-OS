@@ -6214,6 +6214,77 @@ function getCashFlowThisMonth() {
   return { openingBalance, cashIn, cashOut, closingBalance: openingBalance + cashIn - cashOut, netMovement: cashIn - cashOut };
 }
 
+// ---------- Finance Engine ----------
+// Sprint 4.1D: a single build step that gathers the core Finance metrics
+// widgets need, so those widgets read one object instead of each calling
+// getFinanceSummary/getFinancePeriodSummary/getCashFlowForPeriod/
+// getFinanceForecastForPeriod/getBusinessHealthMetrics separately (and
+// risking the callers drifting out of sync with each other over time).
+//
+// This is a thin orchestration layer, not a rewrite: it still delegates to
+// the existing calculators below for the actual arithmetic (no formula
+// changes), it just computes each one once per build and reuses the pieces
+// (e.g. the same fixedCostTotal feeds both engine.targets and
+// engine.businessHealth, instead of being computed twice).
+//
+// Pure: reads only the inputs given to it (or safe state/helper defaults),
+// never mutates state, never touches the DOM, never fetches data.
+//
+// NOTE: getFinanceSummary/getCashFlowForPeriod/getFinanceForecastForPeriod
+// always read live state.financeTransactions/financeAccounts/financeForecasts
+// internally — they don't yet accept override arrays. Passing custom
+// transactions/accounts/forecasts here is intentionally not wired this
+// sprint (see Architect Notes on why); dateRange/fixedCosts/config are fully
+// functional overrides since the underlying calculators already accept them.
+function buildFinanceEngine(options = {}) {
+  const dr  = options.dateRange || getFinanceDateRange();
+  const cfg = options.config || getBusinessHealthConfig();
+  const fixedCosts = options.fixedCosts || getFinanceFixedCosts();
+  const fixedCostTotal = fixedCosts.reduce((s, c) => s + (Number(c.amount) || 0), 0);
+
+  const rawSummary    = getFinanceSummary();
+  const periodSummary = getFinancePeriodSummary(dr);
+  const cashFlow       = getCashFlowForPeriod(dr);
+  const forecast         = getFinanceForecastForPeriod(dr);
+
+  const summary = {
+    totalCapital:           rawSummary.totalCapital,
+    realRevenue:            periodSummary.realIncome,
+    realExpenses:           periodSummary.realExpenses,
+    netProfit:              periodSummary.netProfit,
+    cashInAccounts:         rawSummary.totalAccountBalances,
+    clientFundsHeld:        rawSummary.passThroughHeld,
+    forecastIncoming:       forecast.expectedIncomeThisMonth,
+    forecastOutgoing:       forecast.expectedExpensesThisMonth,
+    cashFlowPeriod:         cashFlow.netMovement,
+    weightedExpectedIncome: forecast.weightedIncome,
+    overdueForecasts:       forecast.overdueCount,
+  };
+
+  const breakEvenTarget = fixedCostTotal;
+  const safeTarget       = fixedCostTotal * cfg.targetMultipliers.safe;
+  const stretchTarget    = fixedCostTotal * cfg.targetMultipliers.stretch;
+
+  const burnRate          = fixedCostTotal;
+  const cashRunwayMonths  = burnRate > 0 ? summary.cashInAccounts / burnRate : Infinity;
+
+  // Reuses the dr/cfg/summary/periodSummary/forecast/fixedCostTotal already computed
+  // above instead of recalculating them inside getBusinessHealthMetrics.
+  const businessHealth = getBusinessHealthMetrics({
+    dr, cfg, fixedCostTotal,
+    summary: rawSummary, periodSum: periodSummary, forecast,
+  });
+
+  return {
+    dateRange: dr,
+    summary,
+    cashFlow,
+    targets: { fixedCostTotal, breakEvenTarget, safeTarget, stretchTarget },
+    runway: { burnRate, cashRunwayMonths },
+    businessHealth,
+  };
+}
+
 function getClientBalanceSummary(dr) {
   const txs = state.financeTransactions.filter(t => !t.is_archived && !t.is_deleted && t.status !== 'cancelled' && (!dr || isInDateRange(t.transaction_date, dr)));
   const map = {};
@@ -7442,11 +7513,10 @@ function openWidgetDrilldown(widgetKey) {
 }
 
 function renderFinanceDashboard() {
-  const dr         = getFinanceDateRange();
-  const summary    = getFinanceSummary();
-  const periodSum  = getFinancePeriodSummary(dr);
-  const forecast   = getFinanceForecastForPeriod(dr);
-  const cashFlow   = getCashFlowForPeriod(dr);
+  const engine     = buildFinanceEngine();
+  const dr         = engine.dateRange;
+  const summary    = engine.summary;
+  const cashFlow   = engine.cashFlow;
 
   // === 0. Sync global period bar ===
   renderFinanceGlobalPeriodBar();
@@ -7454,19 +7524,19 @@ function renderFinanceDashboard() {
   // === 1. Top stat cards (9) ===
   const statsEl = $('#finance-dashboard-stats');
   if (statsEl) {
-    const netColor = periodSum.netProfit >= 0 ? 'emerald' : 'rose';
+    const netColor = summary.netProfit >= 0 ? 'emerald' : 'rose';
     const cfColor  = cashFlow.netMovement >= 0 ? 'emerald' : 'rose';
     const periodChip = `<span class="kpi-period-label">${escapeHtml(dr.label)}</span>`;
     const liveChip   = `<span class="kpi-period-label kpi-period-label--live">Live</span>`;
     const cards = [
       { kpiKey: 'totalCapital',      label: 'Total Capital',       value: fmtMoney(summary.totalCapital),                                             icon: 'landmark',        color: 'indigo',  period: liveChip   },
-      { kpiKey: 'realRevenue',       label: 'Real Revenue',        value: fmtMoney(periodSum.realIncome),                                             icon: 'trending-up',     color: 'emerald', period: periodChip },
-      { kpiKey: 'realExpenses',      label: 'Real Expenses',       value: fmtMoney(periodSum.realExpenses),                                           icon: 'trending-down',   color: 'rose',    period: periodChip },
-      { kpiKey: 'netProfit',         label: 'Net Profit',          value: fmtMoney(periodSum.netProfit),                                              icon: 'bar-chart-2',     color: netColor,  period: periodChip },
-      { kpiKey: 'cashInAccounts',    label: 'Cash in Accounts',    value: fmtMoney(summary.totalAccountBalances),                                     icon: 'wallet',          color: 'blue',    period: liveChip   },
-      { kpiKey: 'clientFundsHeld',   label: 'Client Funds Held',   value: fmtMoney(summary.passThroughHeld),                                          icon: 'arrow-right-left',color: 'amber',   period: liveChip   },
-      { kpiKey: 'forecastIncoming',  label: 'Forecast Incoming',   value: fmtMoney(forecast.expectedIncomeThisMonth),                                 icon: 'calendar-check',  color: 'teal',    period: periodChip },
-      { kpiKey: 'forecastOutgoing',  label: 'Forecast Outgoing',   value: fmtMoney(forecast.expectedExpensesThisMonth),                               icon: 'calendar-x',      color: 'orange',  period: periodChip },
+      { kpiKey: 'realRevenue',       label: 'Real Revenue',        value: fmtMoney(summary.realRevenue),                                              icon: 'trending-up',     color: 'emerald', period: periodChip },
+      { kpiKey: 'realExpenses',      label: 'Real Expenses',       value: fmtMoney(summary.realExpenses),                                             icon: 'trending-down',   color: 'rose',    period: periodChip },
+      { kpiKey: 'netProfit',         label: 'Net Profit',          value: fmtMoney(summary.netProfit),                                                icon: 'bar-chart-2',     color: netColor,  period: periodChip },
+      { kpiKey: 'cashInAccounts',    label: 'Cash in Accounts',    value: fmtMoney(summary.cashInAccounts),                                           icon: 'wallet',          color: 'blue',    period: liveChip   },
+      { kpiKey: 'clientFundsHeld',   label: 'Client Funds Held',   value: fmtMoney(summary.clientFundsHeld),                                          icon: 'arrow-right-left',color: 'amber',   period: liveChip   },
+      { kpiKey: 'forecastIncoming',  label: 'Forecast Incoming',   value: fmtMoney(summary.forecastIncoming),                                         icon: 'calendar-check',  color: 'teal',    period: periodChip },
+      { kpiKey: 'forecastOutgoing',  label: 'Forecast Outgoing',   value: fmtMoney(summary.forecastOutgoing),                                         icon: 'calendar-x',      color: 'orange',  period: periodChip },
       { kpiKey: 'cashFlowThisMonth', label: 'Cash Flow — Period',  value: `${cashFlow.netMovement >= 0 ? '+' : ''}${fmtMoney(cashFlow.netMovement)}`, icon: 'activity',        color: cfColor,   period: periodChip },
     ];
     statsEl.innerHTML = cards.map(c => {
@@ -7496,8 +7566,8 @@ function renderFinanceDashboard() {
   const forecastEl = $('#finance-forecast-cards');
   if (forecastEl) {
     const fcCards = [
-      { label: 'Weighted Expected Income', value: fmtMoney(forecast.weightedIncome),   icon: 'percent',      color: 'indigo', widget: 'weighted-income', tooltip: `Probability-weighted sum of income forecasts due in ${dr.label}.` },
-      { label: 'Overdue Forecasts',        value: String(forecast.overdueCount),        icon: 'alert-circle', color: forecast.overdueCount > 0 ? 'rose' : 'gray', widget: 'overdue-forecasts', tooltip: 'Forecasts past their due date that have not been received or cancelled.' },
+      { label: 'Weighted Expected Income', value: fmtMoney(summary.weightedExpectedIncome), icon: 'percent',      color: 'indigo', widget: 'weighted-income', tooltip: `Probability-weighted sum of income forecasts due in ${dr.label}.` },
+      { label: 'Overdue Forecasts',        value: String(summary.overdueForecasts),          icon: 'alert-circle', color: summary.overdueForecasts > 0 ? 'rose' : 'gray', widget: 'overdue-forecasts', tooltip: 'Forecasts past their due date that have not been received or cancelled.' },
     ];
     forecastEl.innerHTML = fcCards.map(c => `
       <div class="stat-card cursor-pointer" data-action="open-widget-drilldown" data-widget="${c.widget}">
@@ -7602,7 +7672,15 @@ function renderFinanceDashboard() {
   // === 6. Executive Insights ===
   const insightsEl = $('#finance-insights-panel');
   if (insightsEl) {
-    const insights = getExecutiveInsights(summary, cashFlow, forecast, dr);
+    // getExecutiveInsights() still expects the legacy getFinanceSummary()/
+    // getFinanceForecastForPeriod() field names — adapt from the already-built
+    // engine instead of recalculating those getters a second time.
+    const insights = getExecutiveInsights(
+      { totalAccountBalances: summary.cashInAccounts, passThroughHeld: summary.clientFundsHeld },
+      cashFlow,
+      { expectedNetCashflow: summary.forecastIncoming - summary.forecastOutgoing },
+      dr
+    );
     if (!insights.length) {
       insightsEl.innerHTML = '';
     } else {
@@ -7629,7 +7707,7 @@ function renderFinanceDashboard() {
   }
 
   // === 6.5. Business Health ===
-  renderBusinessHealthWidget(getBusinessHealthMetrics());
+  renderBusinessHealthWidget(engine.businessHealth);
 
   // === 7. Recent Transactions ===
   const recentEl = $('#finance-recent-transactions');
@@ -8151,14 +8229,20 @@ function getBusinessHealthRecommendations({ breakEven, safeTarget, currentRevenu
   return recs;
 }
 
-function getBusinessHealthMetrics() {
-  const cfg       = getBusinessHealthConfig();
-  const dr        = getFinanceDateRange();
-  const summary   = getFinanceSummary();
-  const periodSum = getFinancePeriodSummary(dr);
-  const forecast  = getFinanceForecastForPeriod(dr);
+// Accepts optional precomputed pieces (dr/cfg/summary/periodSum/forecast/fixedCostTotal) so
+// buildFinanceEngine() can reuse values it already computed instead of recalculating them —
+// every piece still defaults to the exact same lookups this function always used, so calling
+// it with no args (as every existing widget/modal does) is 100% unchanged.
+function getBusinessHealthMetrics(options = {}) {
+  const cfg       = options.cfg || getBusinessHealthConfig();
+  const dr        = options.dr || getFinanceDateRange();
+  const summary   = options.summary || getFinanceSummary();
+  const periodSum = options.periodSum || getFinancePeriodSummary(dr);
+  const forecast  = options.forecast || getFinanceForecastForPeriod(dr);
 
-  const fixedCostTotal = getFinanceFixedCosts().reduce((s, c) => s + (Number(c.amount) || 0), 0);
+  const fixedCostTotal = options.fixedCostTotal !== undefined
+    ? options.fixedCostTotal
+    : getFinanceFixedCosts().reduce((s, c) => s + (Number(c.amount) || 0), 0);
   const breakEven      = fixedCostTotal;
   const safeTarget      = fixedCostTotal * cfg.targetMultipliers.safe;
   const stretchTarget   = fixedCostTotal * cfg.targetMultipliers.stretch;
