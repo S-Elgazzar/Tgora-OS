@@ -2752,6 +2752,28 @@ let financeIncomeExpenseChartInstance = null;
 let financeExpenseCategoryChartInstance = null;
 let financeProjectRevenueChartInstance = null;
 
+// Draws the task count at the end of each Team Workload bar. Chart.js core
+// has no built-in data-label support, so this is a minimal custom plugin
+// rather than pulling in chartjs-plugin-datalabels.
+const teamWorkloadValueLabelPlugin = {
+  id: 'teamWorkloadValueLabel',
+  afterDatasetsDraw(chart) {
+    const meta = chart.getDatasetMeta(0);
+    if (!meta) return;
+    const values = chart.data.datasets[0].data;
+    const { ctx } = chart;
+    ctx.save();
+    ctx.fillStyle = '#374151';
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    meta.data.forEach((bar, i) => {
+      ctx.fillText(String(values[i]), bar.x + 6, bar.y);
+    });
+    ctx.restore();
+  }
+};
+
 function renderCharts() {
 
   const memberView = isMember();
@@ -2850,6 +2872,10 @@ function renderCharts() {
     (t) => (t.status || '').toLowerCase() === 'review'
   ).length;
 
+  const onHoldTasks = visibleTasks.filter(
+    (t) => (t.status || '').toLowerCase() === 'on_hold'
+  ).length;
+
   const completedTasks = visibleTasks.filter(
     (t) => (t.status || '').toLowerCase() === 'completed'
   ).length;
@@ -2870,6 +2896,7 @@ function renderCharts() {
           'To Do',
           'In Progress',
           'Review',
+          'On Hold',
           'Completed'
         ],
         datasets: [
@@ -2878,12 +2905,14 @@ function renderCharts() {
               todoTasks,
               inProgressTasks,
               reviewTasks,
+              onHoldTasks,
               completedTasks
             ],
             backgroundColor: [
               '#CBD5E1',
               '#F59E0B',
               '#8B5CF6',
+              '#FB923C',
               '#10B981'
             ],
             borderRadius: 10
@@ -2926,24 +2955,39 @@ if (memberView) {
 } else {
   if (teamCard) teamCard.classList.remove('hidden');
 
+  // Team roster is the source of truth for who appears — same "not inactive"
+  // rule used by populateTeamMembers()/populateLeadOwnerSelect() elsewhere —
+  // so members with zero current workload still show up with a 0 bar.
+  const activeMembers = state.teamMembers.filter(
+    (m) => (m.status || '').toLowerCase() !== 'inactive'
+  );
+
   const workloadMap = {};
 
   // Same active/non-archived source as Tasks Overview / Upcoming Tasks —
   // keeps archived (monthly-cycle) tasks out of the workload counts.
   getVisibleTasks()
-    .filter((task) => (task.status || '').toLowerCase() !== 'completed')
+    .filter((task) => !['completed', 'cancelled'].includes((task.status || '').toLowerCase()))
     .forEach((task) => {
-      const member = task.assigned_to || 'Unassigned';
-
-      if (!workloadMap[member]) {
-        workloadMap[member] = 0;
-      }
-
-      workloadMap[member]++;
+      const key = (task.assigned_to || '').toLowerCase().trim();
+      if (!key) return;
+      workloadMap[key] = (workloadMap[key] || 0) + 1;
     });
 
-  const memberLabels = Object.keys(workloadMap);
-  const workloadData = Object.values(workloadMap);
+  const memberWorkload = activeMembers.map((m) => ({
+    name: m.name || 'Unnamed',
+    count: workloadMap[(m.name || '').toLowerCase().trim()] || 0
+  }));
+
+  // Highest workload first, 0-task members sink to the bottom, ties broken
+  // alphabetically.
+  memberWorkload.sort((a, b) => {
+    if (b.count !== a.count) return b.count - a.count;
+    return a.name.localeCompare(b.name);
+  });
+
+  const memberLabels = memberWorkload.map((m) => m.name);
+  const workloadData = memberWorkload.map((m) => m.count);
 
   const teamCtx = document
     .getElementById('teamChart')
@@ -2955,7 +2999,7 @@ if (memberView) {
 
   if (teamCtx) {
     teamChartInstance = new Chart(teamCtx, {
-      type: 'polarArea',
+      type: 'bar',
 
       data: {
         labels: memberLabels,
@@ -2963,34 +3007,34 @@ if (memberView) {
         datasets: [
           {
             data: workloadData,
-
-            backgroundColor: [
-              '#6366F1',
-              '#10B981',
-              '#F59E0B',
-              '#EC4899',
-              '#8B5CF6',
-              '#06B6D4',
-              '#EF4444'
-            ]
+            backgroundColor: '#6366F1',
+            borderRadius: 6,
+            maxBarThickness: 22
           }
         ]
       },
 
       options: {
+        indexAxis: 'y',
         responsive: true,
         maintainAspectRatio: false,
-        // Bottom padding + wrapped legend keep member labels from being
-        // clipped under the chart when there are several team members.
-        layout: { padding: { top: 0, right: 0, bottom: 8, left: 0 } },
+        // Right padding leaves room for the value label drawn past the bar end.
+        layout: { padding: { top: 4, right: 28, bottom: 4, left: 0 } },
         plugins: {
-          legend: {
-            position: 'bottom',
-            align: 'center',
-            labels: { boxWidth: 10, font: { size: 11 }, padding: 12 }
+          legend: { display: false }
+        },
+        scales: {
+          x: {
+            beginAtZero: true,
+            ticks: { precision: 0, font: { size: 10 } }
+          },
+          y: {
+            ticks: { autoSkip: false, font: { size: 11 } }
           }
         }
-      }
+      },
+
+      plugins: [teamWorkloadValueLabelPlugin]
     });
   }
 }
@@ -3153,11 +3197,36 @@ function renderRecentProjects() {
   refreshIcons();
 }
 
+// Bucket rank for Upcoming Tasks ordering: overdue, then due today, then
+// everything else (future deadline or no deadline).
+function upcomingTaskBucketRank(task, today) {
+  if (!task.deadline) return 2;
+  const d = new Date(task.deadline);
+  d.setHours(0, 0, 0, 0);
+  if (d < today) return 0;
+  if (d.getTime() === today.getTime()) return 1;
+  return 2;
+}
+
+const UPCOMING_TASK_PRIORITY_RANK = { urgent: 0, high: 1, medium: 2, low: 3 };
+
 function renderRecentTasks() {
   const container = $('#recent-tasks-list');
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
   const upcoming = [...getVisibleTasks()]
-    .filter((t) => (t.status || '').toLowerCase() !== 'completed')
+    .filter((t) => !['completed', 'cancelled'].includes((t.status || '').toLowerCase()))
     .sort((a, b) => {
+      const bucketA = upcomingTaskBucketRank(a, today);
+      const bucketB = upcomingTaskBucketRank(b, today);
+      if (bucketA !== bucketB) return bucketA - bucketB;
+
+      const priorityA = UPCOMING_TASK_PRIORITY_RANK[(a.priority || 'medium').toLowerCase()] ?? 2;
+      const priorityB = UPCOMING_TASK_PRIORITY_RANK[(b.priority || 'medium').toLowerCase()] ?? 2;
+      if (priorityA !== priorityB) return priorityA - priorityB;
+
       const da = a.deadline ? new Date(a.deadline) : new Date(8640000000000000);
       const db = b.deadline ? new Date(b.deadline) : new Date(8640000000000000);
       return da - db;
