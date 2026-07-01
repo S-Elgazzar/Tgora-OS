@@ -5696,6 +5696,17 @@ function forecastStatusBadge(status) {
   return `<span class="inline-flex px-2 py-0.5 text-xs font-medium rounded-full ${bg} ${color}">${escapeHtml(label)}</span>`;
 }
 
+// ─── Business Health: Fixed Costs (Sprint 4.3) ────────────────────────────────
+// No DB table yet — edit this list directly to update monthly fixed costs.
+const FINANCE_FIXED_COSTS = [
+  { label: 'Salaries', amount: 52000 },
+  { label: 'Adobe', amount: 1600 },
+  { label: 'Google Workspace', amount: 1100 },
+  { label: 'ChatGPT', amount: 1400 },
+  { label: 'Internet / Utilities', amount: 1200 },
+  { label: 'Miscellaneous', amount: 3000 },
+];
+
 function getCrmClientName(id) {
   if (!id) return '';
   return state.crmClients.find(c => Number(c.id) === Number(id))?.client_name || '';
@@ -6600,7 +6611,7 @@ const FINANCE_WIDGET_CONFIG = {
   'account-balances':    { title: 'Account Balances',         icon: 'wallet',        color: 'blue',    tooltip: 'Current computed balance for each active account. Live — not period-filtered.',        periodFiltered: false },
   'executive-insights':  { title: 'Executive Insights',       icon: 'sparkles',      color: 'amber',   tooltip: 'Automated financial alerts and highlights based on the selected period.',              periodFiltered: true  },
   'recent-transactions': { title: 'Recent Transactions',      icon: 'clock',         color: 'gray',    tooltip: 'Transactions in the selected period across all accounts and types.',                   periodFiltered: true  },
-  'business-health':     { title: 'Business Health',          icon: 'heart-pulse',   color: 'emerald', tooltip: 'Composite health score — profitability, cash runway, forecast accuracy.',              periodFiltered: false },
+  'business-health':     { title: 'Business Health',          icon: 'heart-pulse',   color: 'emerald', tooltip: 'Composite health score — profitability, cash runway, forecast accuracy.',              periodFiltered: true  },
 };
 
 function openWidgetDrilldown(widgetKey) {
@@ -7028,12 +7039,111 @@ function openWidgetDrilldown(widgetKey) {
   }
 
   else if (widgetKey === 'business-health') {
+    const m = getBusinessHealthMetrics();
+    const bhc = m.statusColor;
+    const summaryLines = getBusinessHealthSummaryLines(m);
+    const breakEvenPctModal = m.breakEven > 0 ? Math.min(100, Math.round((m.currentRevenue / m.breakEven) * 100)) : 0;
+    const safePctModal      = m.revenueProgressPct;
+    const stretchPctModal   = m.stretchTarget > 0 ? Math.min(100, Math.round((m.currentRevenue / m.stretchTarget) * 100)) : 0;
+
     contentHtml = `
-      <div class="kpi-empty-state py-12">
-        <i data-lucide="heart-pulse" class="w-10 h-10 text-gray-300 mx-auto mb-3 block"></i>
-        <p class="text-base font-semibold text-gray-500 text-center mb-1">Business Health Score</p>
-        <p class="text-[13px] text-gray-400 text-center">Coming in Sprint 4.3 — composite score based on profitability, cash runway, and forecast accuracy.</p>
-      </div>`;
+      <p class="kpi-section-label">Executive Summary</p>
+      <div class="bg-gray-50 rounded-xl p-4 mb-5">
+        ${summaryLines.map((line, i) => `<p class="text-[13px] text-gray-600 leading-relaxed${i < summaryLines.length - 1 ? ' mb-2.5' : ''}">${line}</p>`).join('')}
+      </div>
+
+      <p class="kpi-section-label">Health Score</p>
+      <div class="flex items-center gap-4 mb-5">
+        ${renderHealthRing(m.score, bhc, 84)}
+        <div>
+          <span class="inline-flex px-2.5 py-0.5 text-xs font-semibold rounded-full bg-${bhc}-50 text-${bhc}-700 border border-${bhc}-200 mb-1">${m.status}</span>
+          <p class="text-[12px] text-gray-500">Composite score for ${escapeHtml(m.dr.label)}.</p>
+        </div>
+      </div>
+
+      <p class="kpi-section-label">Revenue Progress</p>
+      <div class="bg-gray-50 rounded-xl p-4 mb-5">
+        <div class="space-y-4">
+          ${renderBusinessHealthRevenueRow('Break-even', m.currentRevenue, m.breakEven, breakEvenPctModal, 'gray')}
+          ${renderBusinessHealthRevenueRow('Safe Target', m.currentRevenue, m.safeTarget, safePctModal, 'blue')}
+          ${renderBusinessHealthRevenueRow('Stretch Target', m.currentRevenue, m.stretchTarget, stretchPctModal, 'emerald')}
+        </div>
+      </div>
+
+      <p class="kpi-section-label">Cash Runway</p>
+      <div class="bg-gray-50 rounded-xl p-4 mb-5">
+        <p class="text-2xl font-bold text-gray-800 mb-2">${fmtRunway(m.runwayMonths)}</p>
+        ${renderRunwayMeter(m.runwayMonths)}
+        <div class="mt-4 text-[12px] text-gray-600 space-y-1">
+          <div class="flex justify-between"><span>Cash in Accounts</span><span class="font-semibold">${fmtMoney(m.cashInAccounts)}</span></div>
+          <div class="flex justify-between"><span>÷ Burn Rate (Fixed Cost)</span><span class="font-semibold">${fmtMoney(m.burnRate)}</span></div>
+          <div class="flex justify-between border-t border-gray-200 pt-1"><span>= Cash Runway</span><span class="font-bold">${fmtRunway(m.runwayMonths)}</span></div>
+        </div>
+      </div>
+
+      <p class="kpi-section-label">Recommended Actions</p>
+      <div class="space-y-2 mb-5">
+        ${m.recommendations.map(r => {
+          const st = BUSINESS_HEALTH_PRIORITY_STYLES[r.priority];
+          return `
+          <div class="flex items-start gap-2.5 ${st.bg} border-l-4 ${st.border} rounded-lg px-3 py-2.5">
+            <i data-lucide="${r.icon}" class="w-3.5 h-3.5 ${st.icon} mt-0.5 shrink-0"></i>
+            <div class="min-w-0">
+              <span class="inline-block px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider rounded-full ${st.badge} mb-1">${r.priority}</span>
+              <p class="text-[12px] ${st.text}">${escapeHtml(r.text)}</p>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+
+      <p class="kpi-section-label">Target Calculation</p>
+      <div class="grid grid-cols-3 gap-3 mb-5">
+        <div class="bg-gray-50 rounded-xl p-3"><p class="text-[11px] text-gray-500 mb-0.5">Break-Even</p><p class="text-sm font-bold text-gray-800">${fmtMoney(m.breakEven)}</p></div>
+        <div class="bg-blue-50 rounded-xl p-3"><p class="text-[11px] text-blue-600 mb-0.5">Safe Target ×1.5</p><p class="text-sm font-bold text-blue-700">${fmtMoney(m.safeTarget)}</p></div>
+        <div class="bg-emerald-50 rounded-xl p-3"><p class="text-[11px] text-emerald-600 mb-0.5">Stretch Target ×2.25</p><p class="text-sm font-bold text-emerald-700">${fmtMoney(m.stretchTarget)}</p></div>
+      </div>
+
+      <p class="kpi-section-label">Score Formula</p>
+      <div class="mb-5">
+        ${renderBusinessHealthScoreChecklist(m.scoreBreakdown)}
+        <div class="flex items-center justify-between px-3 py-2.5 mt-2 bg-gray-100 rounded-xl">
+          <span class="text-[13px] font-bold text-gray-800">Total Score</span>
+          <span class="text-[13px] font-bold text-gray-900">${m.score} / 100</span>
+        </div>
+      </div>
+
+      <p class="kpi-section-label">Fixed Cost Breakdown</p>
+      <div class="bg-gray-50 rounded-xl px-4 py-3 mb-3 flex items-center justify-between">
+        <span class="text-[12px] text-gray-500 uppercase font-semibold tracking-wide">Monthly Fixed Cost</span>
+        <span class="text-xl font-extrabold text-gray-900">${fmtMoney(m.fixedCostTotal)}</span>
+      </div>
+      <div class="kpi-table-wrap mb-5" style="max-height:200px">
+        <table class="w-full text-left">
+          <tbody>
+            ${FINANCE_FIXED_COSTS.map(c => `<tr class="kpi-tr"><td class="kpi-td">${escapeHtml(c.label)}</td><td class="kpi-td text-right font-semibold">${fmtMoney(c.amount)}</td></tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+
+      <p class="kpi-section-label">Related Metrics</p>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div class="bg-gray-50 rounded-xl px-4 py-3"><p class="text-[11px] text-gray-400 uppercase font-semibold tracking-wide mb-1">Current Period Revenue</p><p class="text-base font-bold text-gray-800">${fmtMoney(m.currentRevenue)}</p></div>
+        <div class="bg-gray-50 rounded-xl px-4 py-3"><p class="text-[11px] text-gray-400 uppercase font-semibold tracking-wide mb-1">Net Profit</p><p class="text-base font-bold text-gray-800">${fmtMoney(m.netProfit)}</p></div>
+        <div class="bg-gray-50 rounded-xl px-4 py-3"><p class="text-[11px] text-gray-400 uppercase font-semibold tracking-wide mb-1">Forecasted Revenue</p><p class="text-base font-bold text-gray-800">${fmtMoney(m.forecastedRevenue)}</p></div>
+        <div class="bg-gray-50 rounded-xl px-4 py-3"><p class="text-[11px] text-gray-400 uppercase font-semibold tracking-wide mb-1">Projected Revenue</p><p class="text-base font-bold text-gray-800">${fmtMoney(m.projectedRevenue)}</p></div>
+        <div class="bg-gray-50 rounded-xl px-4 py-3"><p class="text-[11px] text-gray-400 uppercase font-semibold tracking-wide mb-1">Target Gap</p><p class="text-base font-bold text-gray-800">${fmtMoney(m.projectedGap)}</p></div>
+        <div class="bg-gray-50 rounded-xl px-4 py-3"><p class="text-[11px] text-gray-400 uppercase font-semibold tracking-wide mb-1">Client Funds Held</p><p class="text-base font-bold text-gray-800">${fmtMoney(m.clientFundsHeld)}</p></div>
+        <div class="bg-gray-50 rounded-xl px-4 py-3"><p class="text-[11px] text-gray-400 uppercase font-semibold tracking-wide mb-1">Days Remaining in Period</p><p class="text-base font-bold text-gray-800">${m.daysRemaining === null ? '—' : m.daysRemaining}</p></div>
+      </div>
+      ${!m.isMonthlyPeriod ? `
+      <div class="flex items-start gap-2.5 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2.5 mt-4">
+        <i data-lucide="calendar-clock" class="w-4 h-4 text-amber-500 mt-0.5 shrink-0"></i>
+        <div>
+          <p class="text-[12px] font-semibold text-amber-800">Monthly Benchmark</p>
+          <p class="text-[12px] text-amber-700">These targets represent one operating month even when viewing a longer period.</p>
+        </div>
+      </div>` : ''}
+    `;
   }
 
   // Navigation button
@@ -7272,6 +7382,9 @@ function renderFinanceDashboard() {
         </div>`;
     }
   }
+
+  // === 6.5. Business Health ===
+  renderBusinessHealthWidget(getBusinessHealthMetrics());
 
   // === 7. Recent Transactions ===
   const recentEl = $('#finance-recent-transactions');
@@ -7689,7 +7802,430 @@ function validateFinanceTotals() {
   return { checks, allPass };
 }
 // ─── Business Health (Sprint 4.3) ────────────────────────────────────────────
-// Planned: getBusinessHealthScore(), renderBusinessHealthWidget()
+
+function getBusinessHealthDaysRemaining(dr) {
+  const startOfDay = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; };
+  const now = startOfDay(new Date());
+  if (dr.range === 'this_month') {
+    return Math.floor((startOfDay(dr.endDate) - now) / 86400000) + 1;
+  }
+  if (dr.range === 'custom') {
+    const start = startOfDay(dr.startDate);
+    const end   = startOfDay(dr.endDate);
+    if (now >= start && now <= end) return Math.floor((end - now) / 86400000) + 1;
+    return null; // outside range — "—"
+  }
+  return 0; // historical / multi-period ranges
+}
+
+function getBusinessHealthScore({ breakEven, safeTarget, currentRevenue, netProfit, runwayMonths, clientFundsHeld }) {
+  const breakEvenPts  = breakEven  > 0 ? Math.min(1, currentRevenue / breakEven)  * 35 : 35;
+  const safeTargetPts = safeTarget > 0 ? Math.min(1, currentRevenue / safeTarget) * 25 : 25;
+  const netProfitPts  = netProfit > 0 ? 15 : 0;
+  const runwayPts     = Math.min(1, (isFinite(runwayMonths) ? runwayMonths : 6) / 6) * 15;
+  const clientFundsPts = clientFundsHeld >= 0 ? 10 : 0;
+
+  const score = Math.max(0, Math.min(100, Math.round(breakEvenPts + safeTargetPts + netProfitPts + runwayPts + clientFundsPts)));
+  let status;
+  if (score >= 90) status = 'Excellent';
+  else if (score >= 75) status = 'Healthy';
+  else if (score >= 55) status = 'Attention';
+  else status = 'Risk';
+  const statusColor = { Excellent: 'emerald', Healthy: 'blue', Attention: 'amber', Risk: 'rose' }[status];
+
+  return {
+    score, status, statusColor,
+    breakdown: [
+      { label: 'Progress to Break-Even',      points: Math.round(breakEvenPts * 10) / 10,  max: 35 },
+      { label: 'Progress to Safe Target',      points: Math.round(safeTargetPts * 10) / 10, max: 25 },
+      { label: 'Positive Net Profit',          points: netProfitPts,                         max: 15 },
+      { label: 'Cash Runway ≥ 6 Months',       points: Math.round(runwayPts * 10) / 10,      max: 15 },
+      { label: 'Client Funds Not Negative',    points: clientFundsPts,                       max: 10 },
+    ],
+  };
+}
+
+function getBusinessHealthRecommendations({ breakEven, safeTarget, currentRevenue, projectedRevenue, runwayMonths, clientFundsHeld, realIncome, realExpenses }) {
+  const recs = [];
+  if (currentRevenue < breakEven) {
+    recs.push({ type: 'warning', priority: 'Critical', icon: 'target', text: `Close ${fmtMoney(breakEven - currentRevenue)} more revenue to reach break-even.` });
+  }
+  if (projectedRevenue >= safeTarget) {
+    recs.push({ type: 'positive', priority: 'Good', icon: 'check-circle', text: 'Forecast pipeline is enough to hit the safe target if collected.' });
+  }
+  if (runwayMonths < 3) {
+    recs.push({ type: 'warning', priority: 'Critical', icon: 'alert-triangle', text: 'Cash runway is below 3 months. Reduce burn or increase collections.' });
+  }
+  if (clientFundsHeld > 0) {
+    recs.push({ type: 'info', priority: 'Important', icon: 'arrow-right-left', text: `${fmtMoney(clientFundsHeld)} in client funds is still held and should be tracked separately.` });
+  }
+  if (realExpenses > realIncome) {
+    recs.push({ type: 'warning', priority: 'Critical', icon: 'trending-down', text: 'Expenses exceed revenue for this period.' });
+  }
+  if (!recs.length) {
+    recs.push({ type: 'positive', priority: 'Good', icon: 'check-circle', text: 'No immediate actions needed — all Business Health checks are on track.' });
+  }
+  return recs;
+}
+
+function getBusinessHealthMetrics() {
+  const dr        = getFinanceDateRange();
+  const summary   = getFinanceSummary();
+  const periodSum = getFinancePeriodSummary(dr);
+  const forecast  = getFinanceForecastForPeriod(dr);
+
+  const fixedCostTotal = FINANCE_FIXED_COSTS.reduce((s, c) => s + c.amount, 0);
+  const breakEven      = fixedCostTotal;
+  const safeTarget      = fixedCostTotal * 1.5;
+  const stretchTarget   = fixedCostTotal * 2.25;
+
+  const currentRevenue  = periodSum.realIncome;
+  const netProfit       = periodSum.netProfit;
+  const cashInAccounts  = summary.totalAccountBalances;
+  const clientFundsHeld = summary.passThroughHeld;
+
+  const burnRate     = fixedCostTotal;
+  const runwayMonths = burnRate > 0 ? cashInAccounts / burnRate : Infinity;
+
+  const dayspan         = (dr.endDate - dr.startDate) / 86400000;
+  const isMonthlyPeriod = dayspan <= 31;
+
+  const daysRemaining = getBusinessHealthDaysRemaining(dr);
+  const revenueProgressPct   = safeTarget > 0 ? Math.min(100, Math.round((currentRevenue / safeTarget) * 100)) : 0;
+  const remainingToSafeTarget = Math.max(0, safeTarget - currentRevenue);
+  let dailyNeeded;
+  if (daysRemaining === null) dailyNeeded = null;
+  else if (daysRemaining <= 0) dailyNeeded = 'closed';
+  else dailyNeeded = remainingToSafeTarget / daysRemaining;
+
+  const forecastedRevenue = forecast.expectedIncomeThisMonth;
+  const projectedRevenue  = currentRevenue + forecastedRevenue;
+  const projectedGap      = safeTarget - projectedRevenue;
+
+  const scoreInfo = getBusinessHealthScore({ breakEven, safeTarget, currentRevenue, netProfit, runwayMonths, clientFundsHeld });
+  const recommendations = getBusinessHealthRecommendations({
+    breakEven, safeTarget, currentRevenue, projectedRevenue, runwayMonths, clientFundsHeld,
+    realIncome: periodSum.realIncome, realExpenses: periodSum.realExpenses,
+  });
+
+  return {
+    dr, fixedCostTotal, breakEven, safeTarget, stretchTarget,
+    currentRevenue, netProfit, cashInAccounts, clientFundsHeld,
+    burnRate, runwayMonths, isMonthlyPeriod,
+    daysRemaining, revenueProgressPct, remainingToSafeTarget, dailyNeeded,
+    forecastedRevenue, projectedRevenue, projectedGap,
+    score: scoreInfo.score, status: scoreInfo.status, statusColor: scoreInfo.statusColor, scoreBreakdown: scoreInfo.breakdown,
+    recommendations,
+    realIncome: periodSum.realIncome, realExpenses: periodSum.realExpenses,
+  };
+}
+
+function fmtRunway(months) {
+  if (!isFinite(months)) return '∞';
+  return `${months.toFixed(1)} Months`;
+}
+
+const BUSINESS_HEALTH_RING_HEX = { emerald: '#10b981', blue: '#3b82f6', amber: '#f59e0b', rose: '#f43f5e' };
+
+// Exact tints per Sprint 4.3A.2 spec — subtle status backgrounds for the Hero and quick-stat cards.
+const BUSINESS_HEALTH_STATUS_TINT = {
+  Risk:      { bg: '#FFF5F5', border: '#FECACA' },
+  Attention: { bg: '#FFF8EB', border: '#FDE68A' },
+  Healthy:   { bg: '#EFF6FF', border: '#BFDBFE' },
+  Excellent: { bg: '#F0FDF4', border: '#BBF7D0' },
+};
+
+const BUSINESS_HEALTH_PRIORITY_STYLES = {
+  Critical:  { bg: 'bg-rose-50',    border: 'border-rose-400',    text: 'text-rose-800',    icon: 'text-rose-500',    badge: 'bg-rose-600 text-white' },
+  Important: { bg: 'bg-amber-50',   border: 'border-amber-400',   text: 'text-amber-800',   icon: 'text-amber-500',   badge: 'bg-amber-500 text-white' },
+  Good:      { bg: 'bg-emerald-50', border: 'border-emerald-400', text: 'text-emerald-800', icon: 'text-emerald-500', badge: 'bg-emerald-600 text-white' },
+};
+
+function getRunwayMeterColor(months) {
+  if (!isFinite(months)) return 'emerald';
+  if (months < 2) return 'rose';
+  if (months < 4) return 'amber';
+  if (months < 6) return 'blue';
+  return 'emerald';
+}
+
+function renderRunwayMeter(months) {
+  const pct = isFinite(months) ? Math.max(0, Math.min(100, (months / 12) * 100)) : 100;
+  const zones = [
+    { color: '#FCA5A5', width: 100 / 6 },  // <2 mo — red
+    { color: '#FDE68A', width: 100 / 6 },  // 2–4 mo — amber
+    { color: '#93C5FD', width: 100 / 6 },  // 4–6 mo — blue
+    { color: '#86EFAC', width: 50 },       // 6–12 mo — green
+  ];
+  const segHtml = zones.map((z, i) => `<div class="h-full" style="width:${z.width}%;background:${z.color};${i < zones.length - 1 ? 'border-right:2px solid #fff;' : ''}"></div>`).join('');
+  return `
+    <div class="relative pt-2">
+      <div class="w-full h-2.5 rounded-full overflow-hidden flex bg-gray-100">${segHtml}</div>
+      <div class="absolute top-0" style="left:calc(${pct}% - 5px)">
+        <div class="w-[10px] h-[10px] rounded-full bg-white border-2 border-gray-700 shadow-sm"></div>
+      </div>
+    </div>`;
+}
+
+function renderBusinessHealthProgressBar(pct, color) {
+  return `
+    <div class="w-full bg-gray-100 rounded-full h-2.5 overflow-hidden">
+      <div class="h-2.5 rounded-full bg-${color}-500" style="width:${Math.max(0, Math.min(100, pct))}%"></div>
+    </div>`;
+}
+
+function renderBusinessHealthRevenueRow(label, current, target, pct, color) {
+  return `
+    <div>
+      <div class="mb-1.5">
+        <span class="text-[12px] font-medium text-gray-700">${label}</span>
+      </div>
+      ${renderBusinessHealthProgressBar(pct, color)}
+      <div class="flex items-center justify-between mt-1.5">
+        <span class="text-[11px] text-gray-400 tabular-nums">${fmtMoney(current)} / ${fmtMoney(target)}</span>
+        <span class="text-[12px] font-bold text-gray-800 tabular-nums">${pct}%</span>
+      </div>
+    </div>`;
+}
+
+// Returns the 3 executive-summary sentences as separate HTML strings (same computed
+// values/highlights as before — only the sentence boundaries changed for layout purposes).
+function getBusinessHealthSummaryLines(m) {
+  const hi = (text, cls) => `<span class="font-semibold ${cls}">${text}</span>`;
+  const hiStrong = (text, cls) => `<span class="font-extrabold ${cls}">${text}</span>`;
+  const breakEvenPct = m.breakEven > 0 ? Math.round((m.currentRevenue / m.breakEven) * 100) : 0;
+  const runwayLabel = !isFinite(m.runwayMonths) ? 'unlimited'
+    : m.runwayMonths < 2 ? 'critical'
+    : m.runwayMonths < 4 ? 'tight'
+    : m.runwayMonths < 6 ? 'stable'
+    : 'healthy';
+  const runwayText = isFinite(m.runwayMonths) ? `${m.runwayMonths.toFixed(1)} Months` : 'an indefinite period';
+  const gapAbs = Math.abs(m.projectedGap);
+  const gapIsShortfall = m.projectedGap > 0;
+
+  const pctHtml    = hi(`${breakEvenPct}%`, 'text-blue-600');
+  const runwayHtml = hi(runwayText, 'text-emerald-600');
+  const gapHtml    = hiStrong(fmtMoney(gapAbs), gapIsShortfall ? 'text-rose-600' : 'text-emerald-600');
+  const targetHtml = hi(fmtMoney(m.safeTarget), 'text-brand-600');
+
+  const gapClause = gapIsShortfall
+    ? `Including forecasts, you are still ${gapHtml} below the ${targetHtml} safe operating target.`
+    : `Including forecasts, you have exceeded the ${targetHtml} safe operating target by ${gapHtml}.`;
+
+  return [
+    `Revenue currently covers ${pctHtml} of monthly break-even.`,
+    `Cash runway is ${runwayLabel} for ${runwayHtml}.`,
+    gapClause,
+  ];
+}
+
+function getBusinessHealthSummaryText(m) {
+  return getBusinessHealthSummaryLines(m).join(' ');
+}
+
+function renderHealthRing(score, colorName, size = 124) {
+  const stroke = 11;
+  const radius = (size - stroke) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference * (1 - Math.max(0, Math.min(100, score)) / 100);
+  const hex = BUSINESS_HEALTH_RING_HEX[colorName] || '#9ca3af';
+  return `
+    <div class="relative shrink-0" style="width:${size}px;height:${size}px">
+      <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" class="-rotate-90">
+        <circle cx="${size / 2}" cy="${size / 2}" r="${radius}" fill="none" stroke="#f1f5f9" stroke-width="${stroke}"></circle>
+        <circle cx="${size / 2}" cy="${size / 2}" r="${radius}" fill="none" stroke="${hex}" stroke-width="${stroke}"
+          stroke-linecap="round" stroke-dasharray="${circumference}" stroke-dashoffset="${offset}"
+          style="transition:stroke-dashoffset .4s ease"></circle>
+      </svg>
+      <div class="absolute inset-0 flex flex-col items-center justify-center">
+        <span class="text-3xl font-extrabold text-gray-900 leading-none">${score}</span>
+        <span class="text-[10px] text-gray-400 font-semibold uppercase tracking-wide mt-0.5">/ 100</span>
+      </div>
+    </div>`;
+}
+
+// Presentation-only reformat of m.scoreBreakdown (unchanged values) into an executive
+// checklist — no scoring math happens here, just label/points/max already computed.
+function renderBusinessHealthScoreChecklist(scoreBreakdown) {
+  return `
+    <div class="bg-gray-50 rounded-xl divide-y divide-gray-200/70">
+      ${scoreBreakdown.map(b => {
+        const ratioPct = b.max > 0 ? Math.round((b.points / b.max) * 100) : 0;
+        return `
+        <div class="flex items-center justify-between gap-3 px-3 py-2.5">
+          <div class="flex items-center gap-2 min-w-0">
+            <i data-lucide="check-circle" class="w-4 h-4 text-emerald-500 shrink-0"></i>
+            <span class="text-[13px] font-medium text-gray-700 truncate">${escapeHtml(b.label)}</span>
+          </div>
+          <div class="flex items-center gap-3 shrink-0">
+            <span class="text-[11px] text-gray-400 tabular-nums">${ratioPct}%</span>
+            <span class="text-[13px] font-bold text-gray-800 tabular-nums whitespace-nowrap">${b.points} / ${b.max} pts</span>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`;
+}
+
+function renderBusinessHealthWidget(m) {
+  const el = $('#finance-business-health-panel');
+  if (!el) return;
+
+  const sc = m.statusColor;
+  const dailyNeededHtml = m.dailyNeeded === null
+    ? '—'
+    : m.dailyNeeded === 'closed'
+      ? 'Period closed'
+      : fmtMoney(m.dailyNeeded);
+  const daysRemainingHtml = m.daysRemaining === null ? '—' : String(Math.max(0, m.daysRemaining));
+  const monthlyNote = !m.isMonthlyPeriod
+    ? `<div class="flex items-start gap-2.5 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2.5 mt-4">
+        <i data-lucide="calendar-clock" class="w-4 h-4 text-amber-500 mt-0.5 shrink-0"></i>
+        <div>
+          <p class="text-[12px] font-semibold text-amber-800">Monthly Benchmark</p>
+          <p class="text-[12px] text-amber-700">These targets represent one operating month even when viewing a longer period.</p>
+        </div>
+      </div>`
+    : '';
+
+  const breakEvenPct = m.breakEven > 0 ? Math.min(100, Math.round((m.currentRevenue / m.breakEven) * 100)) : 0;
+  const safePct       = m.revenueProgressPct;
+  const stretchPct    = m.stretchTarget > 0 ? Math.min(100, Math.round((m.currentRevenue / m.stretchTarget) * 100)) : 0;
+
+  const revenueNeededToBreakEven = Math.max(0, m.breakEven - m.currentRevenue);
+
+  const gapPositive = m.projectedGap > 0;
+  const gapColor = gapPositive ? 'rose' : 'emerald';
+  const gapDisplay = gapPositive ? fmtMoney(m.projectedGap) : `+${fmtMoney(Math.abs(m.projectedGap))}`;
+
+  const tint = BUSINESS_HEALTH_STATUS_TINT[m.status] || BUSINESS_HEALTH_STATUS_TINT.Attention;
+  const summaryLines = getBusinessHealthSummaryLines(m);
+
+  el.innerHTML = `
+    <div class="shadow-card rounded-2xl bg-white p-5 cursor-pointer" data-action="open-widget-drilldown" data-widget="business-health">
+      <div class="flex items-center justify-between mb-1">
+        <h3 class="text-sm font-semibold text-gray-800">Business Health</h3>
+        <div class="flex items-center gap-2">
+          ${getFinancePeriodBadge(sc)}
+          <span class="widget-info-icon" data-tooltip-title="Business Health" data-tooltip-desc="Based on current period, fixed costs, revenue target, cash runway, and forecast.">
+            <i data-lucide="info" class="w-4 h-4"></i>
+          </span>
+        </div>
+      </div>
+      <p class="text-[12px] text-gray-400 mb-4">Based on current period, fixed costs, revenue target, cash runway, and forecast.</p>
+
+      <!-- Executive Hero: 3 columns — Ring | Executive Summary | KPI Stack -->
+      <div class="flex flex-col lg:flex-row lg:items-center gap-5 rounded-xl p-4 mb-8" style="background:${tint.bg};border:1px solid ${tint.border}">
+        <div class="flex flex-col items-center justify-center shrink-0 gap-2">
+          ${renderHealthRing(m.score, sc)}
+          <span class="inline-flex px-2.5 py-0.5 text-xs font-semibold rounded-full bg-${sc}-50 text-${sc}-700 border border-${sc}-200">${m.status}</span>
+        </div>
+
+        <div class="flex-1 min-w-0">
+          ${summaryLines.map((line, i) => `<p class="text-[13px] text-gray-600 leading-relaxed${i < summaryLines.length - 1 ? ' mb-2.5' : ''}">${line}</p>`).join('')}
+        </div>
+
+        <div class="shrink-0 lg:w-48 flex flex-col divide-y divide-gray-200/70 lg:pl-5 lg:border-l lg:border-gray-200/70">
+          <div class="pb-2 lg:pb-2.5">
+            <p class="text-[10px] text-gray-400 uppercase font-semibold tracking-wide mb-0.5">Revenue Needed</p>
+            <p class="text-base font-bold ${revenueNeededToBreakEven > 0 ? 'text-rose-600' : 'text-emerald-600'}">${revenueNeededToBreakEven > 0 ? fmtMoney(revenueNeededToBreakEven) : 'Covered'}</p>
+            ${revenueNeededToBreakEven > 0 ? `<p class="text-[10px] text-gray-400 mt-0.5">to Break-even</p>` : ''}
+          </div>
+          <div class="py-2 lg:py-2.5">
+            <p class="text-[10px] text-gray-400 uppercase font-semibold tracking-wide mb-0.5">Cash Runway</p>
+            <p class="text-base font-bold text-gray-800">${fmtRunway(m.runwayMonths)}</p>
+          </div>
+          <div class="pt-2 lg:pt-2.5">
+            <p class="text-[10px] text-gray-400 uppercase font-semibold tracking-wide mb-0.5">Monthly Safe Target</p>
+            <p class="text-base font-bold text-gray-800">${fmtMoney(m.safeTarget)}</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Revenue Progress + Runway Meter -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-8">
+        <div class="bg-gray-50 rounded-xl p-4">
+          <p class="kpi-section-label">Revenue Target Progress</p>
+          <div class="space-y-4">
+            ${renderBusinessHealthRevenueRow('Break-even', m.currentRevenue, m.breakEven, breakEvenPct, 'gray')}
+            ${renderBusinessHealthRevenueRow('Safe Target', m.currentRevenue, m.safeTarget, safePct, 'blue')}
+            ${renderBusinessHealthRevenueRow('Stretch Target', m.currentRevenue, m.stretchTarget, stretchPct, 'emerald')}
+          </div>
+        </div>
+
+        <div class="bg-gray-50 rounded-xl p-4">
+          <p class="kpi-section-label">Cash Runway</p>
+          <div class="flex items-end justify-between mb-2">
+            <p class="text-2xl font-bold text-gray-800">${fmtRunway(m.runwayMonths)}</p>
+          </div>
+          ${renderRunwayMeter(m.runwayMonths)}
+          <div class="mt-4 space-y-1.5">
+            <div class="flex justify-between text-[12px] text-gray-500 py-1 border-t border-gray-100">
+              <span>Burn Rate</span><span class="font-semibold text-gray-700">${fmtMoney(m.burnRate)} / mo</span>
+            </div>
+            <div class="flex justify-between text-[12px] text-gray-500 py-1 border-t border-gray-100">
+              <span>Cash in Accounts</span><span class="font-semibold text-gray-700">${fmtMoney(m.cashInAccounts)}</span>
+            </div>
+            <div class="flex justify-between text-[12px] text-gray-500 py-1 border-t border-gray-100">
+              <span>Days Remaining</span><span class="font-semibold text-gray-700">${daysRemainingHtml}</span>
+            </div>
+            <div class="flex justify-between text-[12px] text-gray-500 py-1 border-t border-gray-100">
+              <span>Daily Revenue Needed</span><span class="font-semibold text-gray-700">${dailyNeededHtml}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      ${monthlyNote}
+
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-8">
+        <div class="bg-gray-50 rounded-xl p-4">
+          <p class="kpi-section-label">Forecast Impact</p>
+          <div class="flex flex-wrap items-center gap-3">
+            <div class="bg-white border border-gray-100 rounded-lg px-3 py-2.5 text-center flex-1 min-w-[92px]">
+              <p class="text-[10px] text-gray-400 uppercase font-semibold">Current</p>
+              <p class="text-sm font-bold text-gray-800">${fmtMoney(m.currentRevenue)}</p>
+            </div>
+            <span class="text-lg text-gray-400 font-semibold shrink-0 px-0.5">+</span>
+            <div class="bg-teal-50 rounded-lg px-3 py-2.5 text-center flex-1 min-w-[92px]">
+              <p class="text-[10px] text-teal-600 uppercase font-semibold">Forecast</p>
+              <p class="text-sm font-bold text-teal-700">${fmtMoney(m.forecastedRevenue)}</p>
+            </div>
+            <span class="text-lg text-gray-400 font-semibold shrink-0 px-0.5">=</span>
+            <div class="bg-gray-800 rounded-lg px-3 py-2.5 text-center flex-1 min-w-[92px]">
+              <p class="text-[10px] text-gray-300 uppercase font-semibold">Projected</p>
+              <p class="text-sm font-bold text-white">${fmtMoney(m.projectedRevenue)}</p>
+            </div>
+            <span class="text-lg text-gray-400 font-semibold shrink-0 px-0.5">→</span>
+            <div class="bg-blue-50 rounded-lg px-3 py-2.5 text-center flex-1 min-w-[92px]">
+              <p class="text-[10px] text-blue-600 uppercase font-semibold">Safe Target</p>
+              <p class="text-sm font-bold text-blue-700">${fmtMoney(m.safeTarget)}</p>
+            </div>
+            <span class="text-lg text-gray-400 font-semibold shrink-0 px-0.5">→</span>
+            <div class="bg-${gapColor}-50 border-2 border-${gapColor}-200 rounded-lg px-3 py-3 text-center flex-1 min-w-[92px]">
+              <p class="text-[10px] text-${gapColor}-600 uppercase font-bold">Gap</p>
+              <p class="text-base font-extrabold text-${gapColor}-700">${gapDisplay}</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="bg-gray-50 rounded-xl p-4">
+          <p class="kpi-section-label">Recommended Actions</p>
+          <div class="space-y-2">
+            ${m.recommendations.map(r => {
+              const st = BUSINESS_HEALTH_PRIORITY_STYLES[r.priority];
+              return `
+              <div class="flex items-start gap-2.5 ${st.bg} border-l-4 ${st.border} rounded-lg px-3 py-2.5">
+                <i data-lucide="${r.icon}" class="w-3.5 h-3.5 ${st.icon} mt-0.5 shrink-0"></i>
+                <div class="min-w-0">
+                  <span class="inline-block px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider rounded-full ${st.badge} mb-1">${r.priority}</span>
+                  <p class="text-[12px] ${st.text}">${escapeHtml(r.text)}</p>
+                </div>
+              </div>`;
+            }).join('')}
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
 
 // ─── Finance Global Period Bar ────────────────────────────────────────────────
 
