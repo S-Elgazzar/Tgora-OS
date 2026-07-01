@@ -7318,7 +7318,7 @@ function openWidgetDrilldown(widgetKey) {
       <p class="kpi-section-label">Cash Runway</p>
       <div class="bg-gray-50 rounded-xl p-4 mb-5">
         <p class="text-2xl font-bold text-gray-800 mb-2">${fmtRunway(m.runwayMonths)}</p>
-        ${renderRunwayMeter(m.runwayMonths)}
+        ${renderRunwayMeter(m.runwayMonths, m.config)}
         <div class="mt-4 text-[12px] text-gray-600 space-y-1">
           <div class="flex justify-between"><span>Cash in Accounts</span><span class="font-semibold">${fmtMoney(m.cashInAccounts)}</span></div>
           <div class="flex justify-between"><span>÷ Burn Rate (Fixed Cost)</span><span class="font-semibold">${fmtMoney(m.burnRate)}</span></div>
@@ -7344,8 +7344,8 @@ function openWidgetDrilldown(widgetKey) {
       <p class="kpi-section-label">Target Calculation</p>
       <div class="grid grid-cols-3 gap-3 mb-5">
         <div class="bg-gray-50 rounded-xl p-3"><p class="text-[11px] text-gray-500 mb-0.5">Break-Even</p><p class="text-sm font-bold text-gray-800">${fmtMoney(m.breakEven)}</p></div>
-        <div class="bg-blue-50 rounded-xl p-3"><p class="text-[11px] text-blue-600 mb-0.5">Safe Target ×1.5</p><p class="text-sm font-bold text-blue-700">${fmtMoney(m.safeTarget)}</p></div>
-        <div class="bg-emerald-50 rounded-xl p-3"><p class="text-[11px] text-emerald-600 mb-0.5">Stretch Target ×2.25</p><p class="text-sm font-bold text-emerald-700">${fmtMoney(m.stretchTarget)}</p></div>
+        <div class="bg-blue-50 rounded-xl p-3"><p class="text-[11px] text-blue-600 mb-0.5">Safe Target ×${m.config.targetMultipliers.safe}</p><p class="text-sm font-bold text-blue-700">${fmtMoney(m.safeTarget)}</p></div>
+        <div class="bg-emerald-50 rounded-xl p-3"><p class="text-[11px] text-emerald-600 mb-0.5">Stretch Target ×${m.config.targetMultipliers.stretch}</p><p class="text-sm font-bold text-emerald-700">${fmtMoney(m.stretchTarget)}</p></div>
       </div>
 
       <p class="kpi-section-label">Score Formula</p>
@@ -8048,6 +8048,41 @@ function validateFinanceTotals() {
 }
 // ─── Business Health (Sprint 4.3) ────────────────────────────────────────────
 
+// ─── Business Health: Settings Config (Sprint 4.1C) ──────────────────────────
+// Defaults mirror the values Business Health has always used (Sprint 4.3) so
+// scoring/targets/thresholds are unchanged unless finance_settings overrides
+// them. This is the ONLY place Business Health values are hardcoded now —
+// getBusinessHealthConfig() is the single source every calculation reads from.
+const BUSINESS_HEALTH_CONFIG_DEFAULT = {
+  targetMultipliers: { safe: 1.5, stretch: 2.25 },
+  runwayThresholds: { critical: 2, warning: 4, healthy: 6 },
+  scoreWeights: { breakEven: 35, safeTarget: 25, netProfit: 15, cashRunway: 15, clientFunds: 10 },
+  recommendationThresholds: { runwayCriticalMonths: 3, clientFundsWarningAmount: 0 },
+};
+// Reads 'business_health_config' from finance_settings and deep-merges it onto
+// BUSINESS_HEALTH_CONFIG_DEFAULT, so a setting row that only overrides one nested
+// value (e.g. targetMultipliers.safe) doesn't drop the rest of the defaults.
+// Never throws — a missing table, missing row, or malformed value all just fall
+// back to the hardcoded defaults above.
+function getBusinessHealthConfig() {
+  const raw = getFinanceObjectSetting('business_health_config', {});
+  const mergeLevel = (defaults, override) => {
+    if (!override || typeof override !== 'object' || Array.isArray(override)) return { ...defaults };
+    const out = { ...defaults };
+    Object.keys(defaults).forEach(key => {
+      const defaultVal = defaults[key];
+      const overrideVal = override[key];
+      if (typeof defaultVal === 'number') {
+        out[key] = (typeof overrideVal === 'number' && !isNaN(overrideVal)) ? overrideVal : defaultVal;
+      } else {
+        out[key] = mergeLevel(defaultVal, overrideVal);
+      }
+    });
+    return out;
+  };
+  return mergeLevel(BUSINESS_HEALTH_CONFIG_DEFAULT, raw);
+}
+
 function getBusinessHealthDaysRemaining(dr) {
   const startOfDay = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; };
   const now = startOfDay(new Date());
@@ -8063,12 +8098,14 @@ function getBusinessHealthDaysRemaining(dr) {
   return 0; // historical / multi-period ranges
 }
 
-function getBusinessHealthScore({ breakEven, safeTarget, currentRevenue, netProfit, runwayMonths, clientFundsHeld }) {
-  const breakEvenPts  = breakEven  > 0 ? Math.min(1, currentRevenue / breakEven)  * 35 : 35;
-  const safeTargetPts = safeTarget > 0 ? Math.min(1, currentRevenue / safeTarget) * 25 : 25;
-  const netProfitPts  = netProfit > 0 ? 15 : 0;
-  const runwayPts     = Math.min(1, (isFinite(runwayMonths) ? runwayMonths : 6) / 6) * 15;
-  const clientFundsPts = clientFundsHeld >= 0 ? 10 : 0;
+function getBusinessHealthScore({ breakEven, safeTarget, currentRevenue, netProfit, runwayMonths, clientFundsHeld }, cfg) {
+  const w = cfg.scoreWeights;
+  const healthyRunway = cfg.runwayThresholds.healthy;
+  const breakEvenPts  = breakEven  > 0 ? Math.min(1, currentRevenue / breakEven)  * w.breakEven  : w.breakEven;
+  const safeTargetPts = safeTarget > 0 ? Math.min(1, currentRevenue / safeTarget) * w.safeTarget : w.safeTarget;
+  const netProfitPts  = netProfit > 0 ? w.netProfit : 0;
+  const runwayPts     = Math.min(1, (isFinite(runwayMonths) ? runwayMonths : healthyRunway) / healthyRunway) * w.cashRunway;
+  const clientFundsPts = clientFundsHeld >= 0 ? w.clientFunds : 0;
 
   const score = Math.max(0, Math.min(100, Math.round(breakEvenPts + safeTargetPts + netProfitPts + runwayPts + clientFundsPts)));
   let status;
@@ -8081,16 +8118,17 @@ function getBusinessHealthScore({ breakEven, safeTarget, currentRevenue, netProf
   return {
     score, status, statusColor,
     breakdown: [
-      { label: 'Progress to Break-Even',      points: Math.round(breakEvenPts * 10) / 10,  max: 35 },
-      { label: 'Progress to Safe Target',      points: Math.round(safeTargetPts * 10) / 10, max: 25 },
-      { label: 'Positive Net Profit',          points: netProfitPts,                         max: 15 },
-      { label: 'Cash Runway ≥ 6 Months',       points: Math.round(runwayPts * 10) / 10,      max: 15 },
-      { label: 'Client Funds Not Negative',    points: clientFundsPts,                       max: 10 },
+      { label: 'Progress to Break-Even',              points: Math.round(breakEvenPts * 10) / 10,  max: w.breakEven },
+      { label: 'Progress to Safe Target',              points: Math.round(safeTargetPts * 10) / 10, max: w.safeTarget },
+      { label: 'Positive Net Profit',                  points: netProfitPts,                         max: w.netProfit },
+      { label: `Cash Runway ≥ ${healthyRunway} Months`, points: Math.round(runwayPts * 10) / 10,      max: w.cashRunway },
+      { label: 'Client Funds Not Negative',            points: clientFundsPts,                       max: w.clientFunds },
     ],
   };
 }
 
-function getBusinessHealthRecommendations({ breakEven, safeTarget, currentRevenue, projectedRevenue, runwayMonths, clientFundsHeld, realIncome, realExpenses }) {
+function getBusinessHealthRecommendations({ breakEven, safeTarget, currentRevenue, projectedRevenue, runwayMonths, clientFundsHeld, realIncome, realExpenses }, cfg) {
+  const rt = cfg.recommendationThresholds;
   const recs = [];
   if (currentRevenue < breakEven) {
     recs.push({ type: 'warning', priority: 'Critical', icon: 'target', text: `Close ${fmtMoney(breakEven - currentRevenue)} more revenue to reach break-even.` });
@@ -8098,10 +8136,10 @@ function getBusinessHealthRecommendations({ breakEven, safeTarget, currentRevenu
   if (projectedRevenue >= safeTarget) {
     recs.push({ type: 'positive', priority: 'Good', icon: 'check-circle', text: 'Forecast pipeline is enough to hit the safe target if collected.' });
   }
-  if (runwayMonths < 3) {
-    recs.push({ type: 'warning', priority: 'Critical', icon: 'alert-triangle', text: 'Cash runway is below 3 months. Reduce burn or increase collections.' });
+  if (runwayMonths < rt.runwayCriticalMonths) {
+    recs.push({ type: 'warning', priority: 'Critical', icon: 'alert-triangle', text: `Cash runway is below ${rt.runwayCriticalMonths} months. Reduce burn or increase collections.` });
   }
-  if (clientFundsHeld > 0) {
+  if (clientFundsHeld > rt.clientFundsWarningAmount) {
     recs.push({ type: 'info', priority: 'Important', icon: 'arrow-right-left', text: `${fmtMoney(clientFundsHeld)} in client funds is still held and should be tracked separately.` });
   }
   if (realExpenses > realIncome) {
@@ -8114,6 +8152,7 @@ function getBusinessHealthRecommendations({ breakEven, safeTarget, currentRevenu
 }
 
 function getBusinessHealthMetrics() {
+  const cfg       = getBusinessHealthConfig();
   const dr        = getFinanceDateRange();
   const summary   = getFinanceSummary();
   const periodSum = getFinancePeriodSummary(dr);
@@ -8121,8 +8160,8 @@ function getBusinessHealthMetrics() {
 
   const fixedCostTotal = getFinanceFixedCosts().reduce((s, c) => s + (Number(c.amount) || 0), 0);
   const breakEven      = fixedCostTotal;
-  const safeTarget      = fixedCostTotal * 1.5;
-  const stretchTarget   = fixedCostTotal * 2.25;
+  const safeTarget      = fixedCostTotal * cfg.targetMultipliers.safe;
+  const stretchTarget   = fixedCostTotal * cfg.targetMultipliers.stretch;
 
   const currentRevenue  = periodSum.realIncome;
   const netProfit       = periodSum.netProfit;
@@ -8147,11 +8186,11 @@ function getBusinessHealthMetrics() {
   const projectedRevenue  = currentRevenue + forecastedRevenue;
   const projectedGap      = safeTarget - projectedRevenue;
 
-  const scoreInfo = getBusinessHealthScore({ breakEven, safeTarget, currentRevenue, netProfit, runwayMonths, clientFundsHeld });
+  const scoreInfo = getBusinessHealthScore({ breakEven, safeTarget, currentRevenue, netProfit, runwayMonths, clientFundsHeld }, cfg);
   const recommendations = getBusinessHealthRecommendations({
     breakEven, safeTarget, currentRevenue, projectedRevenue, runwayMonths, clientFundsHeld,
     realIncome: periodSum.realIncome, realExpenses: periodSum.realExpenses,
-  });
+  }, cfg);
 
   return {
     dr, fixedCostTotal, breakEven, safeTarget, stretchTarget,
@@ -8160,7 +8199,7 @@ function getBusinessHealthMetrics() {
     daysRemaining, revenueProgressPct, remainingToSafeTarget, dailyNeeded,
     forecastedRevenue, projectedRevenue, projectedGap,
     score: scoreInfo.score, status: scoreInfo.status, statusColor: scoreInfo.statusColor, scoreBreakdown: scoreInfo.breakdown,
-    recommendations,
+    recommendations, config: cfg,
     realIncome: periodSum.realIncome, realExpenses: periodSum.realExpenses,
   };
 }
@@ -8186,21 +8225,26 @@ const BUSINESS_HEALTH_PRIORITY_STYLES = {
   Good:      { bg: 'bg-emerald-50', border: 'border-emerald-400', text: 'text-emerald-800', icon: 'text-emerald-500', badge: 'bg-emerald-600 text-white' },
 };
 
-function getRunwayMeterColor(months) {
+function getRunwayMeterColor(months, cfg = getBusinessHealthConfig()) {
+  const rt = cfg.runwayThresholds;
   if (!isFinite(months)) return 'emerald';
-  if (months < 2) return 'rose';
-  if (months < 4) return 'amber';
-  if (months < 6) return 'blue';
+  if (months < rt.critical) return 'rose';
+  if (months < rt.warning) return 'amber';
+  if (months < rt.healthy) return 'blue';
   return 'emerald';
 }
 
-function renderRunwayMeter(months) {
-  const pct = isFinite(months) ? Math.max(0, Math.min(100, (months / 12) * 100)) : 100;
+// meterMax is the fixed visual scale of the meter (12 months), not a business
+// threshold — the four zone boundaries within it come from cfg.runwayThresholds.
+function renderRunwayMeter(months, cfg = getBusinessHealthConfig()) {
+  const rt = cfg.runwayThresholds;
+  const meterMax = 12;
+  const pct = isFinite(months) ? Math.max(0, Math.min(100, (months / meterMax) * 100)) : 100;
   const zones = [
-    { color: '#FCA5A5', width: 100 / 6 },  // <2 mo — red
-    { color: '#FDE68A', width: 100 / 6 },  // 2–4 mo — amber
-    { color: '#93C5FD', width: 100 / 6 },  // 4–6 mo — blue
-    { color: '#86EFAC', width: 50 },       // 6–12 mo — green
+    { color: '#FCA5A5', width: (rt.critical / meterMax) * 100 },                 // < critical — red
+    { color: '#FDE68A', width: ((rt.warning - rt.critical) / meterMax) * 100 },  // critical–warning — amber
+    { color: '#93C5FD', width: ((rt.healthy - rt.warning) / meterMax) * 100 },   // warning–healthy — blue
+    { color: '#86EFAC', width: Math.max(0, ((meterMax - rt.healthy) / meterMax) * 100) }, // healthy–max — green
   ];
   const segHtml = zones.map((z, i) => `<div class="h-full" style="width:${z.width}%;background:${z.color};${i < zones.length - 1 ? 'border-right:2px solid #fff;' : ''}"></div>`).join('');
   return `
@@ -8239,10 +8283,11 @@ function getBusinessHealthSummaryLines(m) {
   const hi = (text, cls) => `<span class="font-semibold ${cls}">${text}</span>`;
   const hiStrong = (text, cls) => `<span class="font-extrabold ${cls}">${text}</span>`;
   const breakEvenPct = m.breakEven > 0 ? Math.round((m.currentRevenue / m.breakEven) * 100) : 0;
+  const rt = m.config.runwayThresholds;
   const runwayLabel = !isFinite(m.runwayMonths) ? 'unlimited'
-    : m.runwayMonths < 2 ? 'critical'
-    : m.runwayMonths < 4 ? 'tight'
-    : m.runwayMonths < 6 ? 'stable'
+    : m.runwayMonths < rt.critical ? 'critical'
+    : m.runwayMonths < rt.warning ? 'tight'
+    : m.runwayMonths < rt.healthy ? 'stable'
     : 'healthy';
   const runwayText = isFinite(m.runwayMonths) ? `${m.runwayMonths.toFixed(1)} Months` : 'an indefinite period';
   const gapAbs = Math.abs(m.projectedGap);
@@ -8402,7 +8447,7 @@ function renderBusinessHealthWidget(m) {
           <div class="flex items-end justify-between mb-2">
             <p class="text-2xl font-bold text-gray-800">${fmtRunway(m.runwayMonths)}</p>
           </div>
-          ${renderRunwayMeter(m.runwayMonths)}
+          ${renderRunwayMeter(m.runwayMonths, m.config)}
           <div class="mt-4 space-y-1.5">
             <div class="flex justify-between text-[12px] text-gray-500 py-1 border-t border-gray-100">
               <span>Burn Rate</span><span class="font-semibold text-gray-700">${fmtMoney(m.burnRate)} / mo</span>
