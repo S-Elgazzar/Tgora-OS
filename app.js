@@ -105,6 +105,7 @@ const state = {
   financeCategories: [],
   financeTransactions: [],
   financeForecasts: [],
+  financeSettings: [],
   financeTab: 'dashboard',
   financeDateRange:   localStorage.getItem('tgora_finance_date_range')   || 'this_month',
   financeCustomStart: localStorage.getItem('tgora_finance_custom_start') || '',
@@ -1415,6 +1416,19 @@ async function permanentDeleteFinanceTransaction(id) {
   const { error } = await supabaseClient.from('finance_transactions').delete().eq('id', id);
   if (error) { console.error('permanentDeleteFinanceTransaction', error); toast(error.message || 'Failed to permanently delete transaction', 'error'); return false; }
   return true;
+}
+
+async function fetchFinanceSettings() {
+  if (!isAdmin()) return [];
+  const { data, error } = await supabaseClient
+    .from('finance_settings').select('*').eq('is_active', true);
+  if (error) {
+    // Table may not exist yet during development/rollout — do not break the app,
+    // just fall back to whatever defaults the callers already use.
+    console.warn('fetchFinanceSettings: falling back to defaults', error);
+    return [];
+  }
+  return data || [];
 }
 
 async function fetchFinanceForecasts() {
@@ -5706,6 +5720,7 @@ async function refreshDataAndRender() {
     financeCategories,
     financeTransactions,
     financeForecasts,
+    financeSettings,
   ] = await Promise.all([
     fetchProjects(),
     fetchTasks(),
@@ -5722,6 +5737,7 @@ async function refreshDataAndRender() {
     fetchFinanceCategories(),
     fetchFinanceTransactions(),
     fetchFinanceForecasts(),
+    fetchFinanceSettings(),
   ]);
 
   const prevRole = state.currentRole;
@@ -5740,6 +5756,7 @@ async function refreshDataAndRender() {
   state.financeCategories   = financeCategories;
   state.financeTransactions = financeTransactions;
   state.financeForecasts    = financeForecasts;
+  state.financeSettings     = financeSettings;
 
   // Re-derive role from the freshly-fetched team members so that external
   // role changes are reflected without a full page reload.
@@ -5871,9 +5888,35 @@ function forecastStatusBadge(status) {
   return `<span class="inline-flex px-2 py-0.5 text-xs font-medium rounded-full ${bg} ${color}">${escapeHtml(label)}</span>`;
 }
 
+// ─── Finance Settings Helpers (Sprint 4.1A) ──────────────────────────────────
+// Settings-driven Finance values, backed by state.financeSettings (loaded from
+// the finance_settings table). Every helper falls back to the value supplied
+// by the caller if the setting is missing, inactive, or the table isn't
+// available yet — never throws, never breaks the UI.
+function getFinanceSetting(key, fallback = null) {
+  const row = (state.financeSettings || []).find(s => s.setting_key === key && s.is_active !== false);
+  if (!row || row.setting_value === undefined || row.setting_value === null) return fallback;
+  return row.setting_value;
+}
+function getFinanceNumberSetting(key, fallback = 0) {
+  const v = getFinanceSetting(key, undefined);
+  const n = Number(v);
+  return v !== undefined && !isNaN(n) ? n : fallback;
+}
+function getFinanceArraySetting(key, fallback = []) {
+  const v = getFinanceSetting(key, undefined);
+  return Array.isArray(v) ? v : fallback;
+}
+function getFinanceObjectSetting(key, fallback = {}) {
+  const v = getFinanceSetting(key, undefined);
+  return (v && typeof v === 'object' && !Array.isArray(v)) ? v : fallback;
+}
+
 // ─── Business Health: Fixed Costs (Sprint 4.3) ────────────────────────────────
-// No DB table yet — edit this list directly to update monthly fixed costs.
-const FINANCE_FIXED_COSTS = [
+// Default list used until/unless the 'fixed_costs' row in finance_settings
+// overrides it. Kept as the fallback so behavior is unchanged if the table
+// is empty or not yet migrated.
+const FINANCE_FIXED_COSTS_DEFAULT = [
   { label: 'Salaries', amount: 52000 },
   { label: 'Adobe', amount: 1600 },
   { label: 'Google Workspace', amount: 1100 },
@@ -5881,6 +5924,9 @@ const FINANCE_FIXED_COSTS = [
   { label: 'Internet / Utilities', amount: 1200 },
   { label: 'Miscellaneous', amount: 3000 },
 ];
+function getFinanceFixedCosts() {
+  return getFinanceArraySetting('fixed_costs', FINANCE_FIXED_COSTS_DEFAULT);
+}
 
 function getCrmClientName(id) {
   if (!id) return '';
@@ -6195,7 +6241,7 @@ function getProjectPnL(dr) {
 
 function getExecutiveInsights(summary, cashFlow, forecast, dr) {
   const insights = [];
-  const CASH_THRESHOLD = 100000;
+  const CASH_THRESHOLD = getFinanceNumberSetting('cash_safety_threshold', 100000);
   const activeTx = state.financeTransactions.filter(t => !t.is_archived && !t.is_deleted && t.status !== 'cancelled');
   const periodDr = dr || getFinanceDateRange();
   const periodTx = activeTx.filter(t => isInDateRange(t.transaction_date, periodDr));
@@ -7295,7 +7341,7 @@ function openWidgetDrilldown(widgetKey) {
       <div class="kpi-table-wrap mb-5" style="max-height:200px">
         <table class="w-full text-left">
           <tbody>
-            ${FINANCE_FIXED_COSTS.map(c => `<tr class="kpi-tr"><td class="kpi-td">${escapeHtml(c.label)}</td><td class="kpi-td text-right font-semibold">${fmtMoney(c.amount)}</td></tr>`).join('')}
+            ${getFinanceFixedCosts().map(c => `<tr class="kpi-tr"><td class="kpi-td">${escapeHtml(c.label)}</td><td class="kpi-td text-right font-semibold">${fmtMoney(c.amount)}</td></tr>`).join('')}
           </tbody>
         </table>
       </div>
@@ -8049,7 +8095,7 @@ function getBusinessHealthMetrics() {
   const periodSum = getFinancePeriodSummary(dr);
   const forecast  = getFinanceForecastForPeriod(dr);
 
-  const fixedCostTotal = FINANCE_FIXED_COSTS.reduce((s, c) => s + c.amount, 0);
+  const fixedCostTotal = getFinanceFixedCosts().reduce((s, c) => s + (Number(c.amount) || 0), 0);
   const breakEven      = fixedCostTotal;
   const safeTarget      = fixedCostTotal * 1.5;
   const stretchTarget   = fixedCostTotal * 2.25;
@@ -13964,18 +14010,20 @@ renderStaticButtonMounts();
     }
 
     await cleanupOldNotifications();
-    const [notifications, financeAccounts, financeCategories, financeTransactions, financeForecasts] = await Promise.all([
+    const [notifications, financeAccounts, financeCategories, financeTransactions, financeForecasts, financeSettings] = await Promise.all([
       fetchNotifications(),
       fetchFinanceAccounts(),
       fetchFinanceCategories(),
       fetchFinanceTransactions(),
       fetchFinanceForecasts(),
+      fetchFinanceSettings(),
     ]);
     state.notifications       = notifications;
     state.financeAccounts     = financeAccounts;
     state.financeCategories   = financeCategories;
     state.financeTransactions = financeTransactions;
     state.financeForecasts    = financeForecasts;
+    state.financeSettings     = financeSettings;
 
   } catch (err) {
     console.error(err);
