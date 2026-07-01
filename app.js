@@ -32,6 +32,7 @@ const state = {
       priority: 'all',
       client: null,
       deadline: null,
+      archiveView: 'active', // 'active' | 'archived' | 'all'
     },
     tasks: {
       status: 'all',
@@ -275,13 +276,26 @@ const renderTaskLinkIcons = (task) => {
 // or canFullyEditTask() || canLimitedEditTask(task)) — this helper deliberately
 // does not contain role logic. canEdit defaults to true so existing call sites
 // that never gated the Edit button keep their current behavior unchanged.
+// canRestore defaults to false so the two existing call sites that don't pass
+// it (project details, member tasks) are unaffected — Sprint 3.1C.2 only
+// wires it up from the main Tasks table's Archived view.
 const renderTaskActionsCell = (task, options = {}) => {
-  const { canDelete = false, canEdit = true } = options;
+  const { canDelete = false, canEdit = true, canRestore = false } = options;
 
   return `
     <td class="px-5 py-3.5 text-right">
       <div class="inline-flex items-center gap-1">
         ${renderTaskLinkIcons(task)}
+
+        ${
+          canRestore
+            ? `
+              <button class="icon-btn" data-action="restore-task" data-id="${task.id}" title="Restore to Active">
+                <i data-lucide="rotate-ccw" class="w-4 h-4"></i>
+              </button>
+            `
+            : ''
+        }
 
         ${
           canEdit
@@ -2294,13 +2308,45 @@ async function updateTask(id, payload) {
   if (payload.status !== undefined && oldTask) {
     const oldStatus = (oldTask.status || '').toLowerCase();
     const newStatus = (payload.status || '').toLowerCase();
+    const wasTerminal = isTerminalTaskStatus(oldStatus);
+    const nowTerminal = isTerminalTaskStatus(newStatus);
 
-    if (newStatus === 'completed' && oldStatus !== 'completed') {
+    // Sprint 3.1C.2: completed_at doubles as a general terminal-time signal
+    // for both completed AND cancelled (there's no dedicated cancelled_at/
+    // terminal_at column — see Architect Notes). Stamped the moment a task
+    // first enters either terminal status, instead of only 'completed'.
+    // Sprint 3.1C.3: this is now a LOW-priority fallback for
+    // resolveTaskOperationalDate() — deadline/start_date/created_at all
+    // outrank it, so archiving is driven by which month the task
+    // operationally belongs to, not by when it happened to become terminal.
+    if (nowTerminal && !wasTerminal) {
       if (!oldTask.completed_at) {
         payload.completed_at = new Date().toISOString();
       }
-    } else if (oldStatus === 'completed' && newStatus !== 'completed') {
+    } else if (wasTerminal && !nowTerminal) {
       payload.completed_at = null;
+    }
+
+    // Sprint 3.1C.2: an archived task edited back to a non-terminal status
+    // must return to Active automatically, without a separate manual step.
+    if (oldTask.is_archived && !nowTerminal) {
+      payload.is_archived = false;
+      payload.archived_at = null;
+    } else if (!oldTask.is_archived && nowTerminal) {
+      // Sprint 3.1C.4: keep the Active/Archived split in sync immediately on
+      // save — don't make an admin/manager wait for the next monthly sweep
+      // (or a full page reload) to see a task leave Active once it's both
+      // terminal AND its operational month is already closed. Reuses the
+      // exact same eligibility check the monthly job runs, against an
+      // "effective" task that reflects this save's own field changes
+      // (deadline, status, etc.), so this can never diverge from that rule
+      // — a current-month terminal task correctly stays untouched here too.
+      const effectiveTask = { ...oldTask, ...payload };
+      const { end: closedMonthEnd } = getLastClosedMonthRange();
+      if (shouldMonthlyArchiveTask(effectiveTask, closedMonthEnd)) {
+        payload.is_archived = true;
+        payload.archived_at = new Date().toISOString();
+      }
     }
   }
 
@@ -2392,6 +2438,26 @@ async function updateTask(id, payload) {
       entityType: 'task',
       entityId: data.id,
     });
+  }
+
+  return data;
+}
+
+// Sprint 3.1C.2: manual restore for Admin/Manager from the Archived Tasks
+// view. Deliberately narrow — only flips the archive flags, never touches
+// status or any other field, and never deletes anything.
+async function restoreTask(id) {
+  const { data, error } = await supabaseClient
+    .from('tasks')
+    .update({ is_archived: false, archived_at: null })
+    .eq('id', id)
+    .select()
+    .single();
+
+  if (error) {
+    console.error('restoreTask', error);
+    toast(error.message || 'Failed to restore task', 'error');
+    return null;
   }
 
   return data;
@@ -2554,10 +2620,18 @@ function renderStats() {
     (p) => (p.priority || '').toLowerCase() === 'urgent'
   ).length;
 
+  const cancelledProjects = visibleProjects.filter(
+    (p) => (p.status || '').toLowerCase() === 'cancelled'
+  ).length;
+
   const totalTasks = visibleTasks.length;
 
   const completedTasks = visibleTasks.filter(
     (t) => (t.status || '').toLowerCase() === 'completed'
+  ).length;
+
+  const cancelledTasks = visibleTasks.filter(
+    (t) => (t.status || '').toLowerCase() === 'cancelled'
   ).length;
 
   const inProgress = visibleTasks.filter(
@@ -2569,7 +2643,7 @@ function renderStats() {
 
   const overdue = visibleTasks.filter((t) => {
     if (!t.deadline) return false;
-    if ((t.status || '').toLowerCase() === 'completed') return false;
+    if (['completed', 'cancelled'].includes((t.status || '').toLowerCase())) return false;
 
     const d = new Date(t.deadline);
     d.setHours(0, 0, 0, 0);
@@ -2581,11 +2655,13 @@ function renderStats() {
   $('#stat-active-projects').textContent = activeProjects;
   $('#stat-onhold-projects').textContent = onHoldProjects;
   $('#stat-urgent-projects').textContent = urgentProjects;
+  $('#stat-cancelled-projects').textContent = cancelledProjects;
 
   $('#stat-total-tasks').textContent = totalTasks;
   $('#stat-completed-tasks').textContent = completedTasks;
   $('#stat-in-progress').textContent = inProgress;
   $('#stat-overdue').textContent = overdue;
+  $('#stat-cancelled-tasks').textContent = cancelledTasks;
 
   $('#nav-projects-count').textContent = state.projects.length;
   $('#nav-tasks-count').textContent = totalTasks;
@@ -3132,7 +3208,7 @@ function matchesDeadlineFilter(deadline, status, bucket, today) {
   d.setHours(0, 0, 0, 0);
 
   if (bucket === 'overdue') {
-    return d < today && (status || '').toLowerCase() !== 'completed';
+    return d < today && !['completed', 'cancelled'].includes((status || '').toLowerCase());
   }
 
   if (bucket === 'due_today') {
@@ -3149,7 +3225,9 @@ function matchesDeadlineFilter(deadline, status, bucket, today) {
 }
 
 function getFilteredProjects() {
-  let data = [...state.projects];
+  // getProjectViewBase() applies the archiveView filter (active/archived/all).
+  // Other filter predicates are applied on top.
+  let data = [...getProjectViewBase()];
 
   if (state.filters.projects.search) {
     const q = state.filters.projects.search.toLowerCase();
@@ -3261,9 +3339,14 @@ function renderProjects() {
   const empty = $('#projects-empty');
   const data = getFilteredProjects();
 
+  // Archive toggle active state
+  $$('#projects-archive-toggle .archive-toggle-btn').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.archiveView === (state.filters.projects.archiveView || 'active'));
+  });
+
   const summaryEl = $('#projects-results-summary');
   if (summaryEl) {
-    const total = state.projects.length;
+    const total = getProjectViewBase().length;
     const filtered = data.length;
 
     summaryEl.textContent =
@@ -3291,7 +3374,7 @@ function renderProjects() {
     tbody.innerHTML = '';
     empty.classList.remove('hidden');
 
-    const isFilteredEmpty = state.projects.length > 0;
+    const isFilteredEmpty = getProjectViewBase().length > 0;
 
     const titleEl = $('#projects-empty-title');
     const messageEl = $('#projects-empty-message');
@@ -3489,6 +3572,7 @@ const HEADER_FILTER_MODULES = {
       client: null,
       deadline: null,
       search: '',
+      archiveView: 'active',
     },
     getChips: () => getProjectActiveFilterChips(),
     renderHeaderFilters: () => renderProjectsHeaderFilters(),
@@ -4197,6 +4281,7 @@ function renderTasksTable(data) {
           ${renderTaskActionsCell(t, {
             canDelete: canDeleteTask(t),
             canEdit: canFullyEditTask() || canLimitedEditTask(t),
+            canRestore: !!t.is_archived && canFullyEditTask(),
           })}
         </tr>`;
     })
@@ -4212,6 +4297,7 @@ const KANBAN_COLUMNS = [
   { status: 'review',      label: 'In Review' },
   { status: 'completed',   label: 'Completed' },
   { status: 'on_hold',     label: 'On Hold' },
+  { status: 'cancelled',   label: 'Cancelled' },
 ];
 
 // Pure function — returns HTML string for one kanban card.
@@ -8857,6 +8943,27 @@ function getVisibleProjects() {
   return state.projects.filter((p) => visibleProjectIds.has(Number(p.id)));
 }
 
+// A project status that permanently ends the engagement — used to decide
+// archival. Kept distinct from the "on_hold"/"planning" statuses, which are
+// non-terminal and never auto-archive.
+function isTerminalProjectStatus(status) {
+  const s = (status || '').toLowerCase();
+  return s === 'completed' || s === 'cancelled';
+}
+
+function shouldArchiveProject(project) {
+  return isTerminalProjectStatus(project?.status);
+}
+
+// Base for the Projects view: honours the archiveView filter
+// (active/archived/all), mirroring getTaskViewBase().
+function getProjectViewBase() {
+  const av = state.filters.projects.archiveView || 'active';
+  if (av === 'archived') return state.projects.filter((p) => p.is_archived);
+  if (av === 'all') return state.projects;
+  return state.projects.filter((p) => !p.is_archived); // 'active' — excludes archived
+}
+
 function updateSidebarUserCard() {
   try {
     const currentMember = getCurrentMember();
@@ -10014,6 +10121,7 @@ async function handleProjectSubmit(e) {
   refreshIcons();
 
   const payload = normalizePayload(new FormData(form));
+  payload.is_archived = shouldArchiveProject(payload);
 
   if (!isEditing) {
     payload.project_code = generateProjectCode();
@@ -12526,6 +12634,18 @@ if (action === 'delete-task') {
   return;
 }
 
+if (action === 'restore-task') {
+  const id = Number(trigger.dataset.id);
+  (async () => {
+    const result = await restoreTask(id);
+    if (result) {
+      toast('Task restored to Active.', 'success');
+      await refreshDataAndRender();
+    }
+  })();
+  return;
+}
+
 if (action === 'edit-member') {
   const id = Number(trigger.dataset.id);
   openEditMemberModal(id);
@@ -13264,6 +13384,16 @@ $('#tasks-archive-toggle')?.addEventListener('click', (e) => {
   renderTasks();
 });
 
+// Projects archive visibility toggle (Active / Archived / All)
+$('#projects-archive-toggle')?.addEventListener('click', (e) => {
+  const btn = e.target.closest('.archive-toggle-btn');
+  if (!btn) return;
+  const view = btn.dataset.archiveView;
+  if (!view) return;
+  state.filters.projects.archiveView = view;
+  renderProjects();
+});
+
 // Tasks view mode switcher (Table / Kanban)
 $('#tasks-view-switcher')?.addEventListener('click', (e) => {
   const btn = e.target.closest('.view-mode-btn');
@@ -13490,59 +13620,190 @@ function subscribeToRealtimeChanges() {
 }
 
 // ---------- Monthly Task Archive (client-side scheduler substitute) ----------
-// Runs on app init for Admin only. Archives completed tasks at end of month ONLY.
-// Replace with a backend cron job once infrastructure is available.
+// Two entry points share the eligibility logic below (isTerminalTaskStatus /
+// resolveTaskOperationalDate / shouldMonthlyArchiveTask):
+//   1. runMonthlyTaskArchiveIfNeeded() — Admin-only, runs on app init, sweeps
+//      ALL tasks. This is the "replace with a backend cron job" stand-in.
+//   2. updateTask() — Sprint 3.1C.4, runs on every save (any role with edit
+//      permission), and applies the identical check to just the one task
+//      being saved, so a task that's both terminal and already in a closed
+//      operational month leaves Active immediately instead of waiting for
+//      the next admin session or a page refresh.
+// Tasks are still deliberately NEVER archived just because they turned
+// terminal in the CURRENT month — unlike Projects, which archive inline on
+// save regardless of month. See Sprint 3.1C.
 //
 // Rules:
-//   - Fires ONLY when today is the last calendar day of the current month.
-//   - Does NOT run catch-up at the start of a new month.
-//   - Does NOT archive tasks without a completed_at timestamp.
-//   - Archives tasks completed within the current calendar month (completed_at
-//     between the 1st and today of the current month, inclusive).
-//   - localStorage key is written only when the archive actually runs.
+//   - Terminal statuses only: completed, cancelled. Non-terminal tasks
+//     (todo/in_progress/review/on_hold) are never touched, no matter how
+//     old their deadline is — they must stay visible as open work.
+//   - Catches up: each admin session archives every terminal task whose
+//     operational date falls on or before the end of the last fully closed
+//     calendar month (not just the immediately preceding month, so a
+//     multi-month gap in admin logins is cleared in one sweep). The
+//     current month is never touched.
+//   - Operational date (resolveTaskOperationalDate), Sprint 3.1C.3:
+//     deadline -> start_date -> created_at -> completed_at -> now. This is
+//     "which month did the work belong to", NOT "when did it become
+//     terminal" — a task that operationally belongs to June still archives
+//     even if it's only marked completed/cancelled today. completed_at is
+//     deliberately last (before "now"): Sprint 3.1C.2 made updateTask()
+//     stamp it on entering either terminal status as a useful signal, but
+//     it must never outrank a real deadline/start_date, or a task cancelled
+//     today for a June deadline would wrongly stay Active until August.
+//     completed_at is backfilled (backfillMissingCompletedAt) for completed
+//     tasks missing it, purely so it remains a decent last-resort value.
+//   - Sprint 3.1C.4: deadline/start_date are parsed via parseDateOnlyLocal(),
+//     not a bare `new Date(string)` — see that function's comment for why a
+//     date-only string silently shifts a calendar day backwards in western
+//     timezones once compared against this file's local-time month
+//     boundaries otherwise.
+//   - start_date/created_at are read-only inputs here, never written to the
+//     tasks table — their presence in the schema is unconfirmed, and
+//     reading a missing property is safe in JS while writing an unknown
+//     column is not (see the projects_archive_migration.sql incident).
+//   - Idempotent: is_archived = false is enforced in both the JS filter and
+//     the SQL update, so re-running is always safe. Eligibility is
+//     re-evaluated against current data on every call — a task can become
+//     terminal for an already-closed month after that month was last
+//     checked (e.g. edited to completed/cancelled later), so a matching
+//     localStorage marker is never used to skip the scan. The marker is
+//     written purely as a diagnostic "last checked" record.
+//   - Sprint 3.1C.4: a task already archived by older, pre-3.1C.3 logic
+//     that no longer qualifies under the current operational-month rule is
+//     deliberately left archived. Nothing here re-evaluates already-
+//     archived rows (both entry points skip them by construction) — that's
+//     stale data from a prior bug, not something this code auto-corrects.
+//     Use the manual Restore to Active action for those rows.
+
+const TASK_ARCHIVE_MARKER_KEY = 'tgora_task_archive_last_closed_month';
+
+// A task status that permanently ends its lifecycle. Kept separate from
+// isTerminalProjectStatus() — tasks and projects archive on different
+// triggers (monthly sweep vs. immediate on save) and must stay independent.
+function isTerminalTaskStatus(status) {
+  const s = (status || '').toLowerCase();
+  return s === 'completed' || s === 'cancelled';
+}
+
+// Sprint 3.1C.4: deadline/start_date come from <input type="date"> and/or a
+// Postgres `date` column — bare "YYYY-MM-DD" strings with no time or
+// timezone component. `new Date("YYYY-MM-DD")` parses those as UTC
+// midnight, while every month-boundary in this file (getLastClosedMonthRange)
+// is built with the LOCAL-time Date constructor. In any timezone west of
+// UTC, that mismatch silently shifts a date-only value back by a full
+// calendar day once compared — a task with a locally-picked "Jul 1"
+// deadline could resolve to "Jun 30" and get wrongly swept into a closed
+// month. Parsing the y/m/d components directly and building the Date via
+// the local-time constructor keeps it anchored to the day the user
+// actually picked. Full timestamps (completed_at, and created_at if it
+// carries a timezone) already parse correctly and pass through unchanged.
+function parseDateOnlyLocal(value) {
+  if (!value) return null;
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value));
+  if (match) {
+    const [, y, m, d] = match;
+    return new Date(Number(y), Number(m) - 1, Number(d));
+  }
+  return new Date(value);
+}
+
+// Best available date to decide which OPERATIONAL month a task belongs to
+// — i.e. the month the work itself happened in, not the month it was
+// marked terminal. Sprint 3.1C.3: deadline/start_date lead the fallback
+// chain and completed_at is deliberately last (before "now"), so a task
+// that operationally belongs to an old, closed month still archives even
+// when it was only completed/cancelled today. Pure read — never writes to
+// the task, so it's safe even if start_date/created_at aren't real columns
+// on this table (a missing property just reads as undefined and falls
+// through to the next candidate).
+function resolveTaskOperationalDate(task) {
+  const candidate = task?.deadline || task?.start_date || task?.created_at || task?.completed_at;
+  return candidate ? parseDateOnlyLocal(candidate) : new Date();
+}
+
+// End-of-day boundary of the last fully closed calendar month, relative to `now`.
+function getLastClosedMonthRange(now = new Date()) {
+  const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+  const start = new Date(currentMonthStart.getFullYear(), currentMonthStart.getMonth() - 1, 1, 0, 0, 0, 0);
+  const end = new Date(currentMonthStart.getTime() - 1); // last instant before the current month began
+  return { start, end };
+}
+
+function shouldMonthlyArchiveTask(task, cutoffDate) {
+  if (!task || task.is_archived) return false;
+  if (!isTerminalTaskStatus(task.status)) return false;
+  return resolveTaskOperationalDate(task) <= cutoffDate;
+}
+
+// Sprint 3.1C reliability fix: some completed tasks (legacy rows, imports,
+// or anything that became 'completed' outside the updateTask() status-
+// transition path) never got completed_at stamped, which permanently
+// excluded them from the archive sweep. Backfill a fallback value once per
+// task, without ever touching a completed_at that's already set.
+async function backfillMissingCompletedAt() {
+  const candidates = state.tasks.filter(
+    (t) => (t.status || '').toLowerCase() === 'completed' && !t.completed_at
+  );
+
+  for (const t of candidates) {
+    const fallback = t.deadline || t.updated_at || t.created_at || new Date().toISOString();
+
+    const { error } = await supabaseClient
+      .from('tasks')
+      .update({ completed_at: fallback })
+      .eq('id', t.id)
+      .is('completed_at', null);
+
+    if (error) {
+      console.error('backfillMissingCompletedAt:', t.id, error);
+    }
+  }
+}
+
 async function runMonthlyTaskArchiveIfNeeded() {
   if (!isAdmin()) return;
 
   const now = new Date();
-  const currentYear = now.getFullYear();
-  const currentMonth = now.getMonth(); // 0-indexed
-  const currentMonthKey = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}`;
-
-  // Only fire on the actual last day of the month — no catch-up logic.
-  const lastDayOfMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
-  const isLastDay = now.getDate() === lastDayOfMonth;
-
-  if (!isLastDay) return;
-
-  // Idempotent: skip if archive already ran for this month.
-  const lastArchiveMonth = localStorage.getItem('tgora_last_task_archive_month') || '';
-  if (lastArchiveMonth === currentMonthKey) return;
+  const { end: closedMonthEnd } = getLastClosedMonthRange(now);
+  const closedMonthKey = `${closedMonthEnd.getFullYear()}-${String(closedMonthEnd.getMonth() + 1).padStart(2, '0')}`;
 
   try {
-    // Archive completed tasks whose completed_at falls within the current month.
-    const startOfMonth = new Date(currentYear, currentMonth, 1).toISOString();
-    const endOfDay = new Date(currentYear, currentMonth, lastDayOfMonth, 23, 59, 59, 999).toISOString();
+    // Eligibility is always re-checked against current data, never skipped
+    // purely because the closed-month marker already matches. A task can
+    // become terminal (edited to completed/cancelled) for an already-closed
+    // month at any later date — e.g. a task cancelled on July 1st for a
+    // June deadline — so the marker alone is not a safe skip signal. This
+    // scan is a cheap in-memory filter, not a network call.
+    const eligibleIds = state.tasks
+      .filter((t) => shouldMonthlyArchiveTask(t, closedMonthEnd))
+      .map((t) => t.id);
+
+    if (eligibleIds.length === 0) {
+      // Nothing to do — record that this closed month was checked, purely
+      // as a diagnostic marker. It is never used to bail out early.
+      localStorage.setItem(TASK_ARCHIVE_MARKER_KEY, closedMonthKey);
+      return;
+    }
+
+    await backfillMissingCompletedAt();
 
     const { error } = await supabaseClient
       .from('tasks')
       .update({ is_archived: true, archived_at: now.toISOString() })
-      .eq('status', 'completed')
-      .eq('is_archived', false)
-      .not('completed_at', 'is', null)
-      .gte('completed_at', startOfMonth)
-      .lte('completed_at', endOfDay);
+      .in('id', eligibleIds)
+      .eq('is_archived', false);
 
     if (error) {
       console.error('runMonthlyTaskArchiveIfNeeded:', error);
       return;
     }
 
-    // Write marker only on success.
-    localStorage.setItem('tgora_last_task_archive_month', currentMonthKey);
+    localStorage.setItem(TASK_ARCHIVE_MARKER_KEY, closedMonthKey);
 
     // Refresh state so the UI reflects newly archived tasks.
     await refreshDataAndRender();
-    toast('Completed tasks archived for the month.', 'success');
+    toast('Terminal tasks archived for the closed month.', 'success');
   } catch (err) {
     console.error('runMonthlyTaskArchiveIfNeeded unexpected error:', err);
   }
