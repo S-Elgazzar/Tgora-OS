@@ -106,6 +106,7 @@ const state = {
   financeTransactions: [],
   financeForecasts: [],
   financeSettings: [],
+  financeFixedCosts: [],
   financeTab: 'dashboard',
   financeDateRange:   localStorage.getItem('tgora_finance_date_range')   || 'this_month',
   financeCustomStart: localStorage.getItem('tgora_finance_custom_start') || '',
@@ -1426,6 +1427,19 @@ async function fetchFinanceSettings() {
     // Table may not exist yet during development/rollout — do not break the app,
     // just fall back to whatever defaults the callers already use.
     console.warn('fetchFinanceSettings: falling back to defaults', error);
+    return [];
+  }
+  return data || [];
+}
+
+async function fetchFinanceFixedCosts() {
+  if (!isAdmin()) return [];
+  const { data, error } = await supabaseClient
+    .from('finance_fixed_costs').select('*').eq('is_active', true).order('cost_name');
+  if (error) {
+    // Table may not exist yet during development/rollout — do not break the app,
+    // just fall back to finance_settings / the hardcoded default.
+    console.warn('fetchFinanceFixedCosts: falling back to finance_settings/default', error);
     return [];
   }
   return data || [];
@@ -5721,6 +5735,7 @@ async function refreshDataAndRender() {
     financeTransactions,
     financeForecasts,
     financeSettings,
+    financeFixedCosts,
   ] = await Promise.all([
     fetchProjects(),
     fetchTasks(),
@@ -5738,6 +5753,7 @@ async function refreshDataAndRender() {
     fetchFinanceTransactions(),
     fetchFinanceForecasts(),
     fetchFinanceSettings(),
+    fetchFinanceFixedCosts(),
   ]);
 
   const prevRole = state.currentRole;
@@ -5757,6 +5773,7 @@ async function refreshDataAndRender() {
   state.financeTransactions = financeTransactions;
   state.financeForecasts    = financeForecasts;
   state.financeSettings     = financeSettings;
+  state.financeFixedCosts   = financeFixedCosts;
 
   // Re-derive role from the freshly-fetched team members so that external
   // role changes are reflected without a full page reload.
@@ -5924,7 +5941,14 @@ const FINANCE_FIXED_COSTS_DEFAULT = [
   { label: 'Internet / Utilities', amount: 1200 },
   { label: 'Miscellaneous', amount: 3000 },
 ];
+// Resolution order: finance_fixed_costs table rows > finance_settings
+// 'fixed_costs' > FINANCE_FIXED_COSTS_DEFAULT. Callers always get the same
+// { label, amount } shape regardless of which source was used.
 function getFinanceFixedCosts() {
+  const rows = state.financeFixedCosts || [];
+  if (rows.length) {
+    return rows.map(r => ({ label: r.cost_name, amount: Number(r.amount) || 0 }));
+  }
   return getFinanceArraySetting('fixed_costs', FINANCE_FIXED_COSTS_DEFAULT);
 }
 
@@ -14010,13 +14034,14 @@ renderStaticButtonMounts();
     }
 
     await cleanupOldNotifications();
-    const [notifications, financeAccounts, financeCategories, financeTransactions, financeForecasts, financeSettings] = await Promise.all([
+    const [notifications, financeAccounts, financeCategories, financeTransactions, financeForecasts, financeSettings, financeFixedCosts] = await Promise.all([
       fetchNotifications(),
       fetchFinanceAccounts(),
       fetchFinanceCategories(),
       fetchFinanceTransactions(),
       fetchFinanceForecasts(),
       fetchFinanceSettings(),
+      fetchFinanceFixedCosts(),
     ]);
     state.notifications       = notifications;
     state.financeAccounts     = financeAccounts;
@@ -14024,6 +14049,7 @@ renderStaticButtonMounts();
     state.financeTransactions = financeTransactions;
     state.financeForecasts    = financeForecasts;
     state.financeSettings     = financeSettings;
+    state.financeFixedCosts   = financeFixedCosts;
 
   } catch (err) {
     console.error(err);
