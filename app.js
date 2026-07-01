@@ -6285,6 +6285,14 @@ function buildFinanceEngine(options = {}) {
   };
 }
 
+// Thin access helper (Sprint 4.1E) so KPI drilldowns and other call sites don't
+// need to know how the engine is built. No caching/memoization — each call
+// builds a fresh engine from current state, same as calling buildFinanceEngine()
+// directly, so results are always consistent with what's on screen.
+function getFinanceEngine() {
+  return buildFinanceEngine();
+}
+
 function getClientBalanceSummary(dr) {
   const txs = state.financeTransactions.filter(t => !t.is_archived && !t.is_deleted && t.status !== 'cancelled' && (!dr || isInDateRange(t.transaction_date, dr)));
   const map = {};
@@ -6574,7 +6582,7 @@ const FINANCE_KPI_CONFIG = {
     periodFiltered: false,
     getData() {
       const txs = state.financeTransactions.filter(t => !t.is_archived && !t.is_deleted && t.status !== 'cancelled' && t.transaction_type === 'capital_injection');
-      return { value: txs.reduce((s, t) => s + Number(t.amount), 0), rows: txs.map(t => ({ date: t.transaction_date, txNum: t.transaction_number, desc: t.description, amount: Number(t.amount), positive: true, client: t.client_name || getCrmClientName(t.client_id) || '', project: t.project_name || '', category: getCategoryName(t.category_id) || '', ref: t.reference || '' })) };
+      return { value: getFinanceEngine().summary.totalCapital, rows: txs.map(t => ({ date: t.transaction_date, txNum: t.transaction_number, desc: t.description, amount: Number(t.amount), positive: true, client: t.client_name || getCrmClientName(t.client_id) || '', project: t.project_name || '', category: getCategoryName(t.category_id) || '', ref: t.reference || '' })) };
     },
   },
   realRevenue: {
@@ -6588,7 +6596,7 @@ const FINANCE_KPI_CONFIG = {
     getData() {
       const dr = getFinanceDateRange();
       const txs = state.financeTransactions.filter(t => !t.is_archived && !t.is_deleted && t.status !== 'cancelled' && t.transaction_type === 'income' && isInDateRange(t.transaction_date, dr));
-      return { value: txs.reduce((s, t) => s + Number(t.amount), 0), rows: txs.map(t => ({ date: t.transaction_date, txNum: t.transaction_number, desc: t.description, amount: Number(t.amount), positive: true, client: t.client_name || getCrmClientName(t.client_id) || '', project: t.project_name || '', category: getCategoryName(t.category_id) || '', ref: t.reference || '' })) };
+      return { value: getFinanceEngine().summary.realRevenue, rows: txs.map(t => ({ date: t.transaction_date, txNum: t.transaction_number, desc: t.description, amount: Number(t.amount), positive: true, client: t.client_name || getCrmClientName(t.client_id) || '', project: t.project_name || '', category: getCategoryName(t.category_id) || '', ref: t.reference || '' })) };
     },
   },
   realExpenses: {
@@ -6602,7 +6610,7 @@ const FINANCE_KPI_CONFIG = {
     getData() {
       const dr = getFinanceDateRange();
       const txs = state.financeTransactions.filter(t => !t.is_archived && !t.is_deleted && t.status !== 'cancelled' && t.transaction_type === 'expense' && isInDateRange(t.transaction_date, dr));
-      return { value: txs.reduce((s, t) => s + Number(t.amount), 0), rows: txs.map(t => ({ date: t.transaction_date, txNum: t.transaction_number, desc: t.description, amount: Number(t.amount), positive: false, client: t.client_name || getCrmClientName(t.client_id) || '', project: t.project_name || '', category: getCategoryName(t.category_id) || '', ref: t.reference || '' })) };
+      return { value: getFinanceEngine().summary.realExpenses, rows: txs.map(t => ({ date: t.transaction_date, txNum: t.transaction_number, desc: t.description, amount: Number(t.amount), positive: false, client: t.client_name || getCrmClientName(t.client_id) || '', project: t.project_name || '', category: getCategoryName(t.category_id) || '', ref: t.reference || '' })) };
     },
   },
   netProfit: {
@@ -6614,15 +6622,14 @@ const FINANCE_KPI_CONFIG = {
     navAction: { tab: 'transactions', typeFilter: 'all' },
     periodFiltered: true,
     getData() {
-      const dr = getFinanceDateRange();
-      const ps = getFinancePeriodSummary(dr);
-      const pos = ps.netProfit >= 0;
+      const s = getFinanceEngine().summary;
+      const pos = s.netProfit >= 0;
       return {
-        value: ps.netProfit, color: pos ? 'emerald' : 'rose',
+        value: s.netProfit, color: pos ? 'emerald' : 'rose',
         breakdown: [
-          { label: 'Real Revenue',    value: fmtMoney(ps.realIncome),   color: 'emerald' },
-          { label: '− Real Expenses', value: fmtMoney(ps.realExpenses), color: 'rose'    },
-          { label: '= Net Profit',    value: `${pos ? '+' : ''}${fmtMoney(ps.netProfit)}`, color: pos ? 'emerald' : 'rose', bold: true },
+          { label: 'Real Revenue',    value: fmtMoney(s.realRevenue),   color: 'emerald' },
+          { label: '− Real Expenses', value: fmtMoney(s.realExpenses), color: 'rose'    },
+          { label: '= Net Profit',    value: `${pos ? '+' : ''}${fmtMoney(s.netProfit)}`, color: pos ? 'emerald' : 'rose', bold: true },
         ],
       };
     },
@@ -6638,8 +6645,9 @@ const FINANCE_KPI_CONFIG = {
     getData() {
       const accounts = state.financeAccounts.filter(a => a.is_active);
       const breakdown = accounts.map(a => ({ label: a.account_name, value: fmtMoney(getAccountBalance(a.id)), color: 'blue' }));
-      breakdown.push({ label: 'Total', value: fmtMoney(accounts.reduce((s, a) => s + getAccountBalance(a.id), 0)), color: 'blue', bold: true });
-      return { value: accounts.reduce((s, a) => s + getAccountBalance(a.id), 0), breakdown };
+      const total = getFinanceEngine().summary.cashInAccounts;
+      breakdown.push({ label: 'Total', value: fmtMoney(total), color: 'blue', bold: true });
+      return { value: total, breakdown };
     },
   },
   clientFundsHeld: {
@@ -6656,12 +6664,13 @@ const FINANCE_KPI_CONFIG = {
       const spt = base.filter(t => t.transaction_type === 'pass_through_spent');
       const ptIn = rcv.reduce((s, t) => s + Number(t.amount), 0);
       const ptOut = spt.reduce((s, t) => s + Number(t.amount), 0);
+      const held = getFinanceEngine().summary.clientFundsHeld;
       return {
-        value: ptIn - ptOut,
+        value: held,
         breakdown: [
-          { label: 'Funds Received',  value: fmtMoney(ptIn),        color: 'emerald' },
-          { label: '− Funds Spent',   value: fmtMoney(ptOut),       color: 'rose'    },
-          { label: '= Funds Held',    value: fmtMoney(ptIn - ptOut),color: 'amber', bold: true },
+          { label: 'Funds Received',  value: fmtMoney(ptIn),  color: 'emerald' },
+          { label: '− Funds Spent',   value: fmtMoney(ptOut), color: 'rose'    },
+          { label: '= Funds Held',    value: fmtMoney(held),  color: 'amber', bold: true },
         ],
         rows: rcv.map(t => ({ date: t.transaction_date, txNum: t.transaction_number, desc: t.description || '', amount: Number(t.amount), positive: true, client: t.client_name || getCrmClientName(t.client_id) || '', project: t.project_name || '', category: getCategoryName(t.category_id) || '', ref: t.reference || '' })),
       };
@@ -6678,7 +6687,7 @@ const FINANCE_KPI_CONFIG = {
     getData() {
       const dr = getFinanceDateRange();
       const fcs = state.financeForecasts.filter(f => !f.is_archived && !f.is_deleted && !['cancelled','received'].includes(f.status) && f.forecast_type === 'expected_income' && isInDateRange(f.expected_date, dr));
-      return { value: fcs.reduce((s, f) => s + Number(f.amount), 0), rows: fcs.map(f => ({ date: f.expected_date, txNum: '', desc: f.description || '', amount: Number(f.amount), positive: true, client: f.client_name || '', project: f.project_name || '', category: getCategoryName(f.category_id) || '', ref: '' })) };
+      return { value: getFinanceEngine().summary.forecastIncoming, rows: fcs.map(f => ({ date: f.expected_date, txNum: '', desc: f.description || '', amount: Number(f.amount), positive: true, client: f.client_name || '', project: f.project_name || '', category: getCategoryName(f.category_id) || '', ref: '' })) };
     },
   },
   forecastOutgoing: {
@@ -6692,7 +6701,7 @@ const FINANCE_KPI_CONFIG = {
     getData() {
       const dr = getFinanceDateRange();
       const fcs = state.financeForecasts.filter(f => !f.is_archived && !f.is_deleted && !['cancelled','received'].includes(f.status) && f.forecast_type === 'expected_expense' && isInDateRange(f.expected_date, dr));
-      return { value: fcs.reduce((s, f) => s + Number(f.amount), 0), rows: fcs.map(f => ({ date: f.expected_date, txNum: '', desc: f.description || '', amount: Number(f.amount), positive: false, client: f.client_name || '', project: f.project_name || '', category: getCategoryName(f.category_id) || '', ref: '' })) };
+      return { value: getFinanceEngine().summary.forecastOutgoing, rows: fcs.map(f => ({ date: f.expected_date, txNum: '', desc: f.description || '', amount: Number(f.amount), positive: false, client: f.client_name || '', project: f.project_name || '', category: getCategoryName(f.category_id) || '', ref: '' })) };
     },
   },
   cashFlowThisMonth: {
@@ -6704,8 +6713,7 @@ const FINANCE_KPI_CONFIG = {
     navAction: { tab: 'transactions', typeFilter: 'all' },
     periodFiltered: true,
     getData() {
-      const dr = getFinanceDateRange();
-      const cf = getCashFlowForPeriod(dr);
+      const cf = getFinanceEngine().cashFlow;
       const pos = cf.netMovement >= 0;
       return {
         value: cf.netMovement, color: pos ? 'emerald' : 'rose',
