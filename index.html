@@ -453,22 +453,22 @@
     </div>
   </div>
 
-  <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+  <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4">
 
     <div class="stat-card">
       <div class="w-9 h-9 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center">
         <i data-lucide="folder-kanban" class="w-4 h-4"></i>
       </div>
-      <p class="text-xs text-gray-500 mt-3">Total Projects</p>
+      <p class="text-xs text-gray-500 mt-3">All Projects</p>
       <h3 class="text-2xl font-semibold text-gray-900 mt-0.5" id="stat-total-projects">0</h3>
-      <p class="text-xs text-gray-400 mt-0.5">Agency projects</p>
+      <p class="text-xs text-gray-400 mt-0.5">Active + archived</p>
     </div>
 
     <div class="stat-card">
       <div class="w-9 h-9 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
         <i data-lucide="play-circle" class="w-4 h-4"></i>
       </div>
-      <p class="text-xs text-gray-500 mt-3">Active Projects</p>
+      <p class="text-xs text-gray-500 mt-3">Operational Projects</p>
       <h3 class="text-2xl font-semibold text-gray-900 mt-0.5" id="stat-active-projects">0</h3>
       <p class="text-xs text-gray-400 mt-0.5">Currently running</p>
     </div>
@@ -491,6 +491,15 @@
       <p class="text-xs text-gray-400 mt-0.5">High priority</p>
     </div>
 
+    <div class="stat-card">
+      <div class="w-9 h-9 rounded-lg bg-gray-100 text-gray-500 flex items-center justify-center">
+        <i data-lucide="x-circle" class="w-4 h-4"></i>
+      </div>
+      <p class="text-xs text-gray-500 mt-3">Cancelled Projects</p>
+      <h3 class="text-2xl font-semibold text-gray-900 mt-0.5" id="stat-cancelled-projects">0</h3>
+      <p class="text-xs text-gray-400 mt-0.5">Includes archived</p>
+    </div>
+
   </div>
 </div>
 
@@ -503,15 +512,15 @@
     </div>
   </div>
 
-  <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+  <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4">
 
     <div class="stat-card">
       <div class="w-9 h-9 rounded-lg bg-sky-50 text-sky-600 flex items-center justify-center">
         <i data-lucide="list-todo" class="w-4 h-4"></i>
       </div>
-      <p class="text-xs text-gray-500 mt-3" id="stat-total-tasks-label">Total Tasks</p>
+      <p class="text-xs text-gray-500 mt-3" id="stat-total-tasks-label">Operational Tasks</p>
       <h3 class="text-2xl font-semibold text-gray-900 mt-0.5" id="stat-total-tasks">0</h3>
-      <p class="text-xs text-gray-400 mt-0.5" id="stat-total-tasks-sub">Across all projects</p>
+      <p class="text-xs text-gray-400 mt-0.5" id="stat-total-tasks-sub">Active workload</p>
     </div>
 
     <div class="stat-card">
@@ -539,6 +548,15 @@
       <p class="text-xs text-gray-500 mt-3">Overdue Tasks</p>
       <h3 class="text-2xl font-semibold text-gray-900 mt-0.5" id="stat-overdue">0</h3>
       <p class="text-xs text-gray-400 mt-0.5">Past deadline</p>
+    </div>
+
+    <div class="stat-card">
+      <div class="w-9 h-9 rounded-lg bg-gray-100 text-gray-500 flex items-center justify-center">
+        <i data-lucide="x-circle" class="w-4 h-4"></i>
+      </div>
+      <p class="text-xs text-gray-500 mt-3">Cancelled Tasks</p>
+      <h3 class="text-2xl font-semibold text-gray-900 mt-0.5" id="stat-cancelled-tasks">0</h3>
+      <p class="text-xs text-gray-400 mt-0.5">Called off</p>
     </div>
 
   </div>
@@ -575,7 +593,7 @@
     <h3 class="text-sm font-semibold text-gray-900">Team Workload</h3>
     <p class="text-xs text-gray-400 mt-0.5">Active tasks per member</p>
   </div>
-  <div class="h-56">
+  <div class="h-72">
     <canvas id="teamChart"></canvas>
   </div>
 </div>
@@ -656,13 +674,20 @@
               <div id="projects-active-filters" class="hidden"></div>
             </div>
 
-            <button
-              id="projects-reset-filters"
-              type="button"
-              class="hidden h-8 px-2.5 inline-flex items-center gap-1.5 text-xs font-medium text-gray-500 hover:text-gray-700 border border-gray-200 rounded-lg transition w-fit"
-            >
-              <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i> Reset Filters
-            </button>
+            <div class="flex items-center gap-2">
+              <div class="flex items-center gap-0.5 bg-gray-100 rounded-lg p-0.5" id="projects-archive-toggle">
+                <button type="button" class="archive-toggle-btn active" data-archive-view="active">Active</button>
+                <button type="button" class="archive-toggle-btn" data-archive-view="archived">Archived</button>
+                <button type="button" class="archive-toggle-btn" data-archive-view="all">All</button>
+              </div>
+              <button
+                id="projects-reset-filters"
+                type="button"
+                class="hidden h-8 px-2.5 inline-flex items-center gap-1.5 text-xs font-medium text-gray-500 hover:text-gray-700 border border-gray-200 rounded-lg transition w-fit"
+              >
+                <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i> Reset Filters
+              </button>
+            </div>
           </div>
 
           <!-- Projects table -->
@@ -690,6 +715,7 @@
                         <button type="button" class="task-th-popover-option" data-value="active">Active</button>
                         <button type="button" class="task-th-popover-option" data-value="on_hold">On Hold</button>
                         <button type="button" class="task-th-popover-option" data-value="completed">Completed</button>
+                        <button type="button" class="task-th-popover-option" data-value="cancelled">Cancelled</button>
                       </div>
                     </th>
                     <th class="px-5 py-3 relative">
@@ -817,6 +843,7 @@
                   <button type="button" class="task-th-popover-option" data-value="review">In Review</button>
                   <button type="button" class="task-th-popover-option" data-value="completed">Completed</button>
                   <button type="button" class="task-th-popover-option" data-value="on_hold">On Hold</button>
+                  <button type="button" class="task-th-popover-option" data-value="cancelled">Cancelled</button>
                 </div>
               </th>
               <th class="px-5 py-3 relative">
@@ -1106,6 +1133,7 @@
                 <button type="button" class="task-th-popover-option" data-value="review">In Review</button>
                 <button type="button" class="task-th-popover-option" data-value="completed">Completed</button>
                 <button type="button" class="task-th-popover-option" data-value="on_hold">On Hold</button>
+                <button type="button" class="task-th-popover-option" data-value="cancelled">Cancelled</button>
               </div>
             </th>
             <th class="px-5 py-3 relative">
@@ -1269,6 +1297,7 @@
                 <button type="button" class="task-th-popover-option" data-value="review">In Review</button>
                 <button type="button" class="task-th-popover-option" data-value="completed">Completed</button>
                 <button type="button" class="task-th-popover-option" data-value="on_hold">On Hold</button>
+                <button type="button" class="task-th-popover-option" data-value="cancelled">Cancelled</button>
               </div>
             </th>
             <th class="px-5 py-3 relative">
@@ -2084,6 +2113,9 @@
     <!-- Executive Insights -->
     <div id="finance-insights-panel" class="mb-4"></div>
 
+    <!-- Business Health -->
+    <div id="finance-business-health-panel" class="mb-4"></div>
+
     <!-- Recent Transactions -->
     <div class="shadow-card rounded-2xl bg-white p-5 cursor-pointer" data-action="open-widget-drilldown" data-widget="recent-transactions">
       <div class="flex items-center justify-between mb-3">
@@ -2585,6 +2617,7 @@
               <option value="active" selected>Active</option>
               <option value="on_hold">On Hold</option>
               <option value="completed">Completed</option>
+              <option value="cancelled">Cancelled</option>
             </select>
           </div>
           <div>
@@ -2667,6 +2700,7 @@
             <option value="review">In Review</option>
             <option value="on_hold">On Hold</option>
             <option value="completed">Completed</option>
+            <option value="cancelled">Cancelled</option>
           </select>
         </div>
 

@@ -2603,20 +2603,26 @@ function populateClientOwnerSelect() {
 }
 
 function renderStats() {
+  // "All Projects" is deliberately all-time inventory (active + archived) —
+  // see its subtitle. Every other project KPI here (Operational/On Hold/
+  // Urgent) is operational-only. Cancelled Projects is the other all-time
+  // exception: cancelled projects are auto-archived (Sprint 3.1A), so that
+  // card counts archived cancelled projects via visibleProjects.
+  const operationalProjects = getOperationalProjects();
   const visibleProjects = getVisibleProjects();
   const visibleTasks = getVisibleTasks();
 
   const totalProjects = visibleProjects.length;
 
-  const activeProjects = visibleProjects.filter(
+  const activeProjects = operationalProjects.filter(
     (p) => (p.status || '').toLowerCase() === 'active'
   ).length;
 
-  const onHoldProjects = visibleProjects.filter(
+  const onHoldProjects = operationalProjects.filter(
     (p) => (p.status || '').toLowerCase() === 'on_hold'
   ).length;
 
-  const urgentProjects = visibleProjects.filter(
+  const urgentProjects = operationalProjects.filter(
     (p) => (p.priority || '').toLowerCase() === 'urgent'
   ).length;
 
@@ -2624,6 +2630,8 @@ function renderStats() {
     (p) => (p.status || '').toLowerCase() === 'cancelled'
   ).length;
 
+  // "Operational Tasks" — getVisibleTasks() already excludes archived
+  // (monthly-cycle) tasks, so every card below is current-cycle only.
   const totalTasks = visibleTasks.length;
 
   const completedTasks = visibleTasks.filter(
@@ -2702,12 +2710,12 @@ if (teamCountEl) {
 
   const totalTasksLabel = $('#stat-total-tasks-label');
   if (totalTasksLabel) {
-    totalTasksLabel.textContent = member ? 'My Tasks' : 'Total Tasks';
+    totalTasksLabel.textContent = member ? 'My Tasks' : 'Operational Tasks';
   }
 
   const totalTasksSub = $('#stat-total-tasks-sub');
   if (totalTasksSub) {
-    totalTasksSub.textContent = member ? 'Assigned to you' : 'Across all projects';
+    totalTasksSub.textContent = member ? 'Assigned to you' : 'Active workload';
   }
 
   const recentProjectsSub = $('#recent-projects-subtitle');
@@ -2764,15 +2772,20 @@ function renderCharts() {
   } else {
     if (projectsCard) projectsCard.classList.remove('hidden');
 
-    const activeProjects = state.projects.filter(
+    // Operational-only, same helper as renderStats() — completed projects
+    // are auto-archived (Sprint 3.1A) so archived completions are historical
+    // and excluded here rather than inflating the "Completed" slice.
+    const operationalProjectsForChart = getOperationalProjects();
+
+    const activeProjects = operationalProjectsForChart.filter(
       (p) => (p.status || '').toLowerCase() === 'active'
     ).length;
 
-    const onHoldProjects = state.projects.filter(
+    const onHoldProjects = operationalProjectsForChart.filter(
       (p) => (p.status || '').toLowerCase() === 'on_hold'
     ).length;
 
-    const completedProjects = state.projects.filter(
+    const completedProjects = operationalProjectsForChart.filter(
       (p) => (p.status || '').toLowerCase() === 'completed'
     ).length;
 
@@ -2915,7 +2928,9 @@ if (memberView) {
 
   const workloadMap = {};
 
-  state.tasks
+  // Same active/non-archived source as Tasks Overview / Upcoming Tasks —
+  // keeps archived (monthly-cycle) tasks out of the workload counts.
+  getVisibleTasks()
     .filter((task) => (task.status || '').toLowerCase() !== 'completed')
     .forEach((task) => {
       const member = task.assigned_to || 'Unassigned';
@@ -2965,11 +2980,14 @@ if (memberView) {
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        layout: { padding: 0 },
+        // Bottom padding + wrapped legend keep member labels from being
+        // clipped under the chart when there are several team members.
+        layout: { padding: { top: 0, right: 0, bottom: 8, left: 0 } },
         plugins: {
           legend: {
             position: 'bottom',
-            labels: { boxWidth: 10, font: { size: 11 }, padding: 8 }
+            align: 'center',
+            labels: { boxWidth: 10, font: { size: 11 }, padding: 12 }
           }
         }
       }
@@ -3090,7 +3108,9 @@ function renderTodayFocus() {
 
 function renderRecentProjects() {
   const container = $('#recent-projects-list');
-  const recent = [...getVisibleProjects()].slice(0, 5);
+  // Operational only — archived projects are historical and shouldn't
+  // surface in the "latest engagements" widget by default.
+  const recent = [...getOperationalProjects()].slice(0, 5);
   if (recent.length === 0) {
     const emptyMsg = isMember()
       ? 'No projects are linked to your tasks yet.'
@@ -8941,6 +8961,15 @@ function getVisibleProjects() {
   );
 
   return state.projects.filter((p) => visibleProjectIds.has(Number(p.id)));
+}
+
+// Operational projects: the non-archived subset of whatever the caller is
+// permitted to see. Unlike getProjectViewBase(), this ignores the Projects
+// page archiveView toggle — Dashboard KPIs must always reflect the current
+// operational state of the company, not whatever filter the user last left
+// the Projects page on. Single source of truth for every Dashboard project KPI.
+function getOperationalProjects() {
+  return getVisibleProjects().filter((p) => !p.is_archived);
 }
 
 // A project status that permanently ends the engagement — used to decide
