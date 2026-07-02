@@ -6064,6 +6064,20 @@ function classifyFinanceForecast(fc) {
   return rule ? { forecastType: fc.forecast_type, ...rule } : null;
 }
 
+// Sprint 4.2B: organization-level cash direction for a single transaction
+// type. Thin wrapper over getFinanceRule().cashImpact — +1 for cash-in
+// (income/capital_injection/pass_through_received), -1 for cash-out
+// (expense/pass_through_spent), 0 for no org-level movement. `transfer`
+// already carries cashImpact: 0 in FINANCE_RULES (money moves between two of
+// the org's own accounts, so the org-wide total is unaffected), and an
+// unrecognized type safely falls back to 0 via getFinanceRule() returning
+// null. This is for ORG-LEVEL cash flow only — it does not know which
+// account a transfer credits/debits; per-account/ledger direction stays on
+// its own transfer-specific branch in each caller.
+function getFinanceCashImpact(type) {
+  return getFinanceRule(type)?.cashImpact ?? 0;
+}
+
 function financeTypeBadge(txType) {
   const bg    = FINANCE_TX_TYPE_BG[txType]    || 'bg-gray-50';
   const color = FINANCE_TX_TYPE_COLORS[txType] || 'text-gray-600';
@@ -6283,21 +6297,25 @@ function getFinancePeriodSummary(dr) {
   return { realIncome, realExpenses, netProfit: realIncome - realExpenses };
 }
 
+// Sprint 4.2B: org-level cash-in/cash-out classification now reads
+// getFinanceCashImpact(type) (±1/0 from the Finance Rules layer) instead of
+// the inline ['income','capital_injection','pass_through_received'] / ['expense',
+// 'pass_through_spent'] arrays. Transfer and any unrecognized type resolve to
+// impact 0, so neither loop touches them — identical to before, where
+// transfer matched neither array. No date-range or formula change.
 function getCashFlowForPeriod(dr) {
   const activeTx = state.financeTransactions.filter(t => !t.is_archived && !t.is_deleted && t.status !== 'cancelled');
   let openingBalance = state.financeAccounts.reduce((s, a) => s + (Number(a.opening_balance) || 0), 0);
   activeTx.filter(t => !isInDateRange(t.transaction_date, dr) && !dr.isAllTime && new Date(t.transaction_date + 'T00:00:00') < dr.startDate).forEach(t => {
     const amt = Number(t.amount) || 0;
-    const type = t.transaction_type;
-    if (['income', 'capital_injection', 'pass_through_received'].includes(type)) openingBalance += amt;
-    else if (['expense', 'pass_through_spent'].includes(type)) openingBalance -= amt;
+    openingBalance += getFinanceCashImpact(t.transaction_type) * amt;
   });
   let cashIn = 0, cashOut = 0;
   activeTx.filter(t => isInDateRange(t.transaction_date, dr)).forEach(t => {
     const amt = Number(t.amount) || 0;
-    const type = t.transaction_type;
-    if (['income', 'capital_injection', 'pass_through_received'].includes(type)) cashIn += amt;
-    else if (['expense', 'pass_through_spent'].includes(type)) cashOut += amt;
+    const impact = getFinanceCashImpact(t.transaction_type);
+    if (impact > 0) cashIn += amt;
+    else if (impact < 0) cashOut += amt;
   });
   return { openingBalance, cashIn, cashOut, closingBalance: openingBalance + cashIn - cashOut, netMovement: cashIn - cashOut };
 }
@@ -6385,6 +6403,8 @@ function getFinanceForecastSummary() {
   return { expectedIncomeThisMonth, expectedExpensesThisMonth, expectedNetCashflow, weightedIncome, overdueCount };
 }
 
+// Sprint 4.2B: same migration as getCashFlowForPeriod() — classification now
+// reads getFinanceCashImpact(type) instead of inline arrays. No date-range change.
 function getCashFlowThisMonth() {
   const now = new Date();
   const yr = now.getFullYear(), mo = now.getMonth();
@@ -6394,9 +6414,7 @@ function getCashFlowThisMonth() {
   let openingBalance = state.financeAccounts.reduce((s, a) => s + (Number(a.opening_balance) || 0), 0);
   activeTx.filter(t => new Date(t.transaction_date + 'T00:00:00') < monthStart).forEach(t => {
     const amt = Number(t.amount) || 0;
-    const type = t.transaction_type;
-    if (['income', 'capital_injection', 'pass_through_received'].includes(type)) openingBalance += amt;
-    else if (['expense', 'pass_through_spent'].includes(type)) openingBalance -= amt;
+    openingBalance += getFinanceCashImpact(t.transaction_type) * amt;
   });
 
   let cashIn = 0, cashOut = 0;
@@ -6405,9 +6423,9 @@ function getCashFlowThisMonth() {
     return d.getFullYear() === yr && d.getMonth() === mo;
   }).forEach(t => {
     const amt = Number(t.amount) || 0;
-    const type = t.transaction_type;
-    if (['income', 'capital_injection', 'pass_through_received'].includes(type)) cashIn += amt;
-    else if (['expense', 'pass_through_spent'].includes(type)) cashOut += amt;
+    const impact = getFinanceCashImpact(t.transaction_type);
+    if (impact > 0) cashIn += amt;
+    else if (impact < 0) cashOut += amt;
   });
 
   return { openingBalance, cashIn, cashOut, closingBalance: openingBalance + cashIn - cashOut, netMovement: cashIn - cashOut };
@@ -7317,7 +7335,7 @@ function openWidgetDrilldown(widgetKey) {
           </thead>
           <tbody>
             ${periodTx.map(t => {
-              const isIn = ['income', 'capital_injection', 'pass_through_received'].includes(t.transaction_type);
+              const isIn = getFinanceCashImpact(t.transaction_type) > 0;
               return `<tr class="kpi-tr">
                 <td class="kpi-td text-gray-500 whitespace-nowrap">${fmtDate(t.transaction_date)}</td>
                 <td class="kpi-td">${financeTypeBadge(t.transaction_type)}</td>
