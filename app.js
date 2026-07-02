@@ -5881,15 +5881,15 @@ const FINANCE_FORECAST_STATUS_COLORS = {
 // Originally a DESCRIPTIVE rules table + pure lookup helpers documenting, in
 // one place, the accounting impact every transaction/forecast type has
 // across the Finance module (see investigation in the Sprint 4.2A report).
-// As of Sprint 4.2B/4.2C/4.2D, several calculators have been wired to read
-// from it instead of carrying their own inline classification:
+// As of Sprint 4.2B/4.2C/4.2D/4.2E, several calculators have been wired to
+// read from it instead of carrying their own inline classification:
 // getAccountBalance/getCashFlowForPeriod/getCashFlowThisMonth (org/account-
 // level cash, 4.2B); getFinanceSummary/getClientBalanceSummary/getProjectPnL
 // (revenue/expense/profit/client-funds, 4.2C); getFinancePeriodSummary
-// (period revenue/expense, 4.2D) — no formula changes in any of them, only
-// the classification source. openAccountLedgerModal still carries its own
-// inline classification (out of scope so far; see the sprint reports for
-// why).
+// (period revenue/expense, 4.2D); openAccountLedgerModal and
+// openWidgetDrilldown's 'account-balances' branch (per-account ledger in/out
+// via getFinanceAccountImpact(), 4.2E) — no formula changes in any of them,
+// only the classification source.
 //
 // Directional impact fields (revenueImpact, expenseImpact, profitImpact,
 // cashImpact, clientFundsImpact, forecastImpact) use signed polarity rather
@@ -6097,6 +6097,34 @@ function getFinanceProfitImpact(type) {
 }
 function getFinanceClientFundsImpact(type) {
   return getFinanceRule(type)?.clientFundsImpact ?? 0;
+}
+
+// Sprint 4.2E: account-level (not org-level) in/out direction for a single
+// transaction against a specific account — +1 inflow, -1 outflow, 0 no
+// impact. Org-level cash flow and account-level ledger are different:
+// org-level getFinanceCashImpact() always returns 0 for `transfer` (money
+// stays inside the org), but at the account level a transfer moves money
+// out of `from_account_id` and into `to_account_id`, so that branch is
+// handled here explicitly rather than by delegating to getFinanceCashImpact
+// for transfers. Mirrors the transfer branch already established in
+// getAccountBalance() (Sprint 4.2A): two independent checks (not
+// if/else-if), so a (pathological, not currently reachable via the
+// transaction form) transfer where from_account_id === to_account_id ===
+// accountId nets to 0 rather than being forced to a single sign. For every
+// non-transfer type, delegates to getFinanceCashImpact() — identical
+// direction to the org-level case as long as the transaction belongs to
+// this account.
+function getFinanceAccountImpact(transaction, accountId) {
+  if (!transaction) return 0;
+  const type = transaction.transaction_type;
+  if (type === 'transfer') {
+    let impact = 0;
+    if (Number(transaction.from_account_id) === Number(accountId)) impact -= 1;
+    if (Number(transaction.to_account_id) === Number(accountId)) impact += 1;
+    return impact;
+  }
+  if (Number(transaction.account_id) !== Number(accountId)) return 0;
+  return getFinanceCashImpact(type);
 }
 
 function financeTypeBadge(txType) {
@@ -7397,6 +7425,12 @@ function openWidgetDrilldown(widgetKey) {
       </div>` : `<p class="text-sm text-gray-400 text-center py-6">No transactions in this period.</p>`}`;
   }
 
+  // Sprint 4.2E: per-account in/out now reads getFinanceAccountImpact()
+  // instead of the inline transfer if/if + income/expense arrays this branch
+  // used before — same accumulation shape (two independent conditions for
+  // transfer), so behavior is unchanged including the self-transfer edge
+  // case. No date filtering here by design (this widget is live, not
+  // period-filtered).
   else if (widgetKey === 'account-balances') {
     const accounts = state.financeAccounts.filter(a => a.is_active);
     const txs = state.financeTransactions.filter(t => !t.is_archived && !t.is_deleted && t.status !== 'cancelled');
@@ -7405,14 +7439,9 @@ function openWidgetDrilldown(widgetKey) {
       let totalIn = 0, totalOut = 0;
       txs.forEach(t => {
         const amt = Number(t.amount) || 0;
-        const type = t.transaction_type;
-        if (type === 'transfer') {
-          if (Number(t.from_account_id) === Number(a.id)) totalOut += amt;
-          if (Number(t.to_account_id)   === Number(a.id)) totalIn  += amt;
-        } else if (Number(t.account_id) === Number(a.id)) {
-          if (['income', 'capital_injection', 'pass_through_received'].includes(type)) totalIn  += amt;
-          else if (['expense', 'pass_through_spent'].includes(type))                   totalOut += amt;
-        }
+        const impact = getFinanceAccountImpact(t, a.id);
+        if (impact > 0) totalIn += amt;
+        else if (impact < 0) totalOut += amt;
       });
       return { id: a.id, name: a.account_name, type: FINANCE_ACCT_TYPE_LABELS[a.account_type] || a.account_type, openingBal, totalIn, totalOut, currentBal: openingBal + totalIn - totalOut };
     });
@@ -8118,6 +8147,13 @@ function renderFinanceAccounts() {
   refreshIcons();
 }
 
+// Sprint 4.2E: row in/out amounts now read getFinanceAccountImpact() instead
+// of the inline transfer if/else + ['income','capital_injection',
+// 'pass_through_received'] / ['expense','pass_through_spent'] arrays this
+// function used before. Running balance formula, row order, and DOM
+// rendering are untouched. See getFinanceAccountImpact()'s comment for the
+// one documented edge-case behavior note (self-transfer nets to 0 instead of
+// -amount) — not reachable through the current transaction form.
 function openAccountLedgerModal(accountId) {
   const acct = state.financeAccounts.find(a => Number(a.id) === accountId);
   if (!acct) return;
@@ -8141,18 +8177,11 @@ function openAccountLedgerModal(accountId) {
   let totalInflow = 0, totalOutflow = 0;
 
   const rows = txs.map(t => {
-    const amt  = Number(t.amount) || 0;
-    const type = t.transaction_type;
-    let inAmt = 0, outAmt = 0;
-
-    if (type === 'transfer') {
-      if (Number(t.from_account_id) === accountId) outAmt = amt;
-      else inAmt = amt;
-    } else if (['income', 'capital_injection', 'pass_through_received'].includes(type)) {
-      inAmt = amt;
-    } else if (['expense', 'pass_through_spent'].includes(type)) {
-      outAmt = amt;
-    }
+    const amt    = Number(t.amount) || 0;
+    const type   = t.transaction_type;
+    const impact = getFinanceAccountImpact(t, accountId);
+    const inAmt  = impact > 0 ? amt : 0;
+    const outAmt = impact < 0 ? amt : 0;
 
     runBal        += inAmt - outAmt;
     totalInflow   += inAmt;
