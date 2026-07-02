@@ -6171,23 +6171,59 @@ const ACCOUNTING_ENTRY_TYPES = {
   CREDIT: 'credit',
 };
 
-// Per-transaction-type posting rules. Left empty on purpose.
+// Sprint 4.3C: Finance Rule -> Chart of Accounts mapping (debit/credit
+// account codes only — no calculations, no posting, no journal generation
+// happens here). Keyed by the transaction_type string each FINANCE_RULES
+// entry stores on itself as `transactionType` (see FINANCE_TX_TYPE_TO_RULE_KEY
+// above) — NOT by the FINANCE_RULES object's own key names (e.g.
+// 'capitalInjection') — so buildJournalEntries() below looks this up via
+// rule.transactionType. Account codes only, and only codes already seeded
+// by Sprint 4.3B's finance_chart_of_accounts_migration.sql (1000, 2100,
+// 3000, 3200, 4000, 5000) — no new Chart Accounts are introduced here.
 //
-// Sprint 4.3B added a Chart of Accounts (finance_chart_of_accounts /
-// state.financeChartOfAccounts, looked up via getChartAccountByCode() below)
-// with account_code as its stable identifier. The intended future shape of
-// this object, once Journal Posting is designed, is to key by
-// FINANCE_TX_TYPE_TO_RULE_KEY's rule keys and reference account_code rather
-// than a free-text account name, e.g.:
-//   income: { debitAccountCode: '1000', creditAccountCode: '4000' }   // Cash and Bank / Service Revenue
-//   expense: { debitAccountCode: '5000', creditAccountCode: '1000' }  // Operating Expenses / Cash and Bank
-// This is deliberately NOT populated yet: it requires deciding how
-// finance_accounts (operational cash/bank accounts) roll up into COA lines
-// (see finance_chart_of_accounts_migration.sql's linked_finance_account_id,
-// also left unpopulated) and is left to whichever sprint designs Journal
-// Posting. buildJournalEntries() below is written to tolerate a missing
-// rule (returns no entries) rather than assuming this is populated.
-const ACCOUNTING_RULES = {};
+// `transfer` is deliberately NOT mapped: it moves cash between two of the
+// org's own operational finance_accounts (accountBalanceImpact is a
+// { fromAccount, toAccount } pair, not a single scalar — see FINANCE_RULES
+// above), and posting that as one Chart-of-Accounts debit/credit pair would
+// require knowing which specific Chart account each finance_account rolls
+// up to. That rollup doesn't exist yet (linked_finance_account_id is still
+// unpopulated — see Sprint 4.3B report), so mapping `transfer` here would be
+// a guess rather than a real answer. Left unsupported until that design
+// exists.
+//
+// Forecast rules (FINANCE_RULES.forecast.*) are not mapped either — a
+// forecast is a projection, not a completed transaction, so it has no
+// journal entry. This falls out naturally rather than needing a special
+// case: forecasts carry `forecast_type`, not `transaction_type`, so
+// getFinanceRule() (which only reads FINANCE_TX_TYPE_TO_RULE_KEY) already
+// returns null for them before ACCOUNTING_RULES is even consulted.
+const ACCOUNTING_RULES = {
+  income: {
+    debitAccountCode:  '1000', // Cash and Bank
+    creditAccountCode: '4000', // Service Revenue
+  },
+  expense: {
+    debitAccountCode:  '5000', // Operating Expenses
+    creditAccountCode: '1000', // Cash and Bank
+  },
+  capital_injection: {
+    debitAccountCode:  '1000', // Cash and Bank
+    creditAccountCode: '3000', // Owner Equity
+  },
+  partner_withdrawal: {
+    debitAccountCode:  '3200', // Partner Drawings
+    creditAccountCode: '1000', // Cash and Bank
+  },
+  pass_through_received: {
+    debitAccountCode:  '1000', // Cash and Bank
+    creditAccountCode: '2100', // Client Funds Liability
+  },
+  pass_through_spent: {
+    debitAccountCode:  '2100', // Client Funds Liability
+    creditAccountCode: '1000', // Cash and Bank
+  },
+  // transfer: intentionally absent — see comment above.
+};
 
 // Default shape of a normalized Journal Entry — a plain object model, same
 // convention FINANCE_RULES entries use above.
@@ -6206,13 +6242,41 @@ function createJournalEntry(overrides = {}) {
   return { ...ACCOUNTING_DEFAULTS, ...overrides };
 }
 
-// Stub. Will convert a single Finance transaction into its corresponding
-// Journal Entries once ACCOUNTING_RULES is populated with real
-// Chart-of-Accounts mappings in a future sprint. Returns an empty array
-// today. Not called from any existing Finance code path.
+// Sprint 4.3C: converts a single Finance transaction into its corresponding
+// Journal Entries via ACCOUNTING_RULES. Returns [] for anything unmapped —
+// unknown/unrecognized transaction_type (getFinanceRule() returns null),
+// transfer, or a forecast (see ACCOUNTING_RULES' comment above for why both
+// stay unmapped) — rather than guessing. No calculation beyond copying the
+// transaction amount, no posting, no state mutation, no persistence. Not
+// called from any existing Finance code path.
 function buildJournalEntries(transaction) {
   if (!transaction) return [];
-  return [];
+  const rule = getFinanceRule(transaction.transaction_type);
+  if (!rule) return [];
+  const mapping = ACCOUNTING_RULES[rule.transactionType];
+  if (!mapping) return [];
+
+  const amount      = Number(transaction.amount) || 0;
+  const description = transaction.description || transaction.transaction_type;
+
+  return [
+    createJournalEntry({
+      account:         mapping.debitAccountCode,
+      debit:           amount,
+      credit:          0,
+      description,
+      transactionId:   transaction.id ?? null,
+      transactionType: transaction.transaction_type,
+    }),
+    createJournalEntry({
+      account:         mapping.creditAccountCode,
+      debit:           0,
+      credit:          amount,
+      description,
+      transactionId:   transaction.id ?? null,
+      transactionType: transaction.transaction_type,
+    }),
+  ];
 }
 
 // Accounting Engine entry point.
