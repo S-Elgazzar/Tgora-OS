@@ -6462,6 +6462,91 @@ function getLedgerAccount(accountCode) {
   return buildGeneralLedger().find(a => a.accountCode === accountCode) || null;
 }
 
+// findLedgerAccount(accountCode) was considered for this sprint but not
+// added: getLedgerAccount(accountCode) above already does exactly that
+// lookup (by Chart of Accounts code, null if not found) with no different
+// semantics to offer, so a second function would just be a same-behavior
+// alias. Callers wanting "find an account by code" should use
+// getLedgerAccount() directly.
+
+// ─── Ledger Integrity & Audit Helpers (Sprint 4.3G) ──────────────────────────
+// Pure, read-only validation over the General Ledger (Sprint 4.3F) and the
+// posted Journal (Sprint 4.3D/4.3E). No new state, no caching, no mutation —
+// every helper here re-derives its answer from buildGeneralLedger() and/or
+// state.accountingJournal on each call, same as the ledger engine itself.
+// This is a diagnostic layer only: it reports issues, it never fixes or
+// blocks a post (Journal Posting's own all-or-nothing balance check in
+// postJournal() already prevents an unbalanced posting from ever reaching
+// state.accountingJournal — these helpers exist to audit the aggregate
+// result afterward, e.g. as a pre-flight check before a future Trial
+// Balance sprint).
+
+// Checks the General Ledger for structural problems that buildGeneralLedger()
+// itself doesn't already guard against by construction (e.g. a Chart of
+// Accounts row seeded with a bad normal_balance, or negative totals from a
+// negative transaction amount slipping past upstream validation). Accepts
+// an optional pre-built ledger (as returned by getLedgerAccounts()) so a
+// caller can validate a snapshot without triggering a second rebuild;
+// defaults to a fresh getLedgerAccounts() when omitted. Never throws —
+// every problem found is collected into `issues` instead.
+function validateLedger(ledger) {
+  const accounts = Array.isArray(ledger) ? ledger : getLedgerAccounts();
+  const issues = [];
+
+  for (const account of accounts) {
+    const accountCode = account?.accountCode ?? null;
+
+    if (!account?.accountCode) {
+      issues.push({ accountCode, type: 'missing_account_code', message: 'Ledger account is missing an account code.' });
+    }
+    if (!account?.accountName) {
+      issues.push({ accountCode, type: 'missing_account_name', message: 'Ledger account is missing an account name.' });
+    }
+    if (account?.normalBalance !== 'debit' && account?.normalBalance !== 'credit') {
+      issues.push({ accountCode, type: 'invalid_normal_balance', message: `Normal balance "${account?.normalBalance}" is not "debit" or "credit".` });
+    }
+    if (Number(account?.debitTotal) < 0) {
+      issues.push({ accountCode, type: 'negative_debit_total', message: `Debit total is negative (${account.debitTotal}).` });
+    }
+    if (Number(account?.creditTotal) < 0) {
+      issues.push({ accountCode, type: 'negative_credit_total', message: `Credit total is negative (${account.creditTotal}).` });
+    }
+  }
+
+  return { isValid: issues.length === 0, issues };
+}
+
+// Sums debit/credit totals across every General Ledger account. `balanced`
+// uses the same epsilon (0.005) as isBalancedJournal() above rather than
+// strict equality, since these totals are sums of many entries' amounts and
+// floating-point summation can drift by fractions of a cent even when the
+// underlying journal is genuinely balanced — the same reasoning
+// isBalancedJournal() already applies per-posting, extended here to the
+// ledger-wide aggregate.
+function getLedgerTotals() {
+  const accounts = getLedgerAccounts();
+  const totalDebits  = accounts.reduce((s, a) => s + (Number(a.debitTotal)  || 0), 0);
+  const totalCredits = accounts.reduce((s, a) => s + (Number(a.creditTotal) || 0), 0);
+  const difference = totalDebits - totalCredits;
+  return {
+    totalDebits,
+    totalCredits,
+    difference,
+    balanced: Math.abs(difference) < 0.005,
+  };
+}
+
+// Scans state.accountingJournal directly (not the aggregated ledger) for
+// any posting whose own entries fail isBalancedJournal(). postJournal()
+// already refuses to post an unbalanced journal, so under normal operation
+// this always returns [] — it exists as a direct audit of the journal's
+// integrity, independent of (and a cross-check against) the ledger
+// aggregation in buildGeneralLedger().
+function getUnbalancedPostings() {
+  const journal = Array.isArray(state.accountingJournal) ? state.accountingJournal : [];
+  return journal.filter(posting => !isBalancedJournal(posting?.entries));
+}
+
 function financeTypeBadge(txType) {
   const bg    = FINANCE_TX_TYPE_BG[txType]    || 'bg-gray-50';
   const color = FINANCE_TX_TYPE_COLORS[txType] || 'text-gray-600';
