@@ -632,6 +632,8 @@ select.form-input:disabled {
 .badge-on_hold .dot    { background: #f59e0b; }
 .badge-completed  { background: #ecfdf5; color: #047857; }
 .badge-completed .dot  { background: #10b981; }
+.badge-cancelled  { background: #f3f4f6; color: #6b7280; }
+.badge-cancelled .dot  { background: #9ca3af; }
 
 /* CRM Lead status badges */
 .badge-new            { background: #eff6ff; color: #1d4ed8; }
