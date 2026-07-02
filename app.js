@@ -6388,6 +6388,80 @@ function formatChartAccountLabel(account) {
   return `${account.account_code} — ${account.account_name}`;
 }
 
+// ─── General Ledger Engine (Sprint 4.3F) ─────────────────────────────────────
+// Reads ONLY state.accountingJournal (the posted Journal Postings from
+// Sprint 4.3D/4.3E) — never state.financeTransactions. Accounting is the
+// source of truth for the ledger, not the raw Finance transactions that fed
+// it. Chart of Accounts helpers above are used solely to resolve each
+// entry's account code to its name/normal balance; finance_accounts and
+// FINANCE_RULES are not touched. Pure and uncached — every call rebuilds
+// the ledger fresh from the current journal, so there is nothing to
+// invalidate and no risk of drifting from state.accountingJournal.
+//
+// For each account, balance polarity follows its Chart of Accounts
+// normal_balance: debit-normal accounts (assets, expenses) net as
+// debitTotal - creditTotal; credit-normal accounts (liabilities, equity,
+// revenue) net as creditTotal - debitTotal. This is a mechanical read of
+// whatever finance_chart_of_accounts_migration.sql seeded — e.g. '3200'
+// Partner Drawings is seeded credit-normal there, so it nets the same
+// direction as Owner Equity here rather than the debit-normal convention a
+// real drawings/contra-equity account would traditionally use. Not a
+// judgment call made in this sprint; just following the existing seed.
+//
+// An entry whose account code has no Chart of Accounts match (not seeded,
+// or state.financeChartOfAccounts hasn't loaded) is skipped safely rather
+// than guessing a name/normal balance for it.
+function buildGeneralLedger() {
+  const journal = Array.isArray(state.accountingJournal) ? state.accountingJournal : [];
+  const ledgerByCode = {};
+
+  for (const posting of journal) {
+    const entries = Array.isArray(posting?.entries) ? posting.entries : [];
+    for (const entry of entries) {
+      const chartAccount = getChartAccountByCode(entry.account);
+      if (!chartAccount) continue;
+
+      if (!ledgerByCode[entry.account]) {
+        ledgerByCode[entry.account] = {
+          accountCode:   entry.account,
+          accountName:   chartAccount.account_name,
+          normalBalance: chartAccount.normal_balance,
+          debitTotal:    0,
+          creditTotal:   0,
+          balance:       0,
+          entries:       [],
+        };
+      }
+
+      const ledgerAccount = ledgerByCode[entry.account];
+      ledgerAccount.debitTotal  += Number(entry.debit)  || 0;
+      ledgerAccount.creditTotal += Number(entry.credit) || 0;
+      ledgerAccount.entries.push(entry);
+    }
+  }
+
+  return Object.values(ledgerByCode).map(account => ({
+    ...account,
+    balance: account.normalBalance === 'debit'
+      ? account.debitTotal - account.creditTotal
+      : account.creditTotal - account.debitTotal,
+  }));
+}
+
+// Returns the complete General Ledger — one row per account code that
+// appears in state.accountingJournal and resolves against the Chart of
+// Accounts. Pure; no mutation of state.accountingJournal or
+// state.financeChartOfAccounts.
+function getLedgerAccounts() {
+  return buildGeneralLedger();
+}
+
+// Returns a single ledger account by Chart of Accounts code, or null if
+// that code has no posted entries (or isn't a recognized Chart account).
+function getLedgerAccount(accountCode) {
+  return buildGeneralLedger().find(a => a.accountCode === accountCode) || null;
+}
+
 function financeTypeBadge(txType) {
   const bg    = FINANCE_TX_TYPE_BG[txType]    || 'bg-gray-50';
   const color = FINANCE_TX_TYPE_COLORS[txType] || 'text-gray-600';
