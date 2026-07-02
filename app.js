@@ -6127,6 +6127,83 @@ function getFinanceAccountImpact(transaction, accountId) {
   return getFinanceCashImpact(type);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// ─── Accounting Engine — Foundation (Sprint 4.3A) ────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+// Scaffolding only. Nothing in this section is called from anywhere else in
+// the app yet — it exists so a future sprint has a place to build a real
+// Double-Entry Accounting Engine (Chart of Accounts, Journal Posting,
+// Ledger, Trial Balance) without first having to invent the shapes below.
+//
+// This is NOT a replacement for FINANCE_RULES above. FINANCE_RULES answers
+// "what kind of business event is this transaction?" (revenue, expense,
+// client funds, ...). This layer will eventually answer a different
+// question: "how does that event post as debits/credits to accounting
+// accounts?" The two layers stay separate on purpose — a future
+// buildJournalEntries() is expected to read FINANCE_RULES for the business
+// classification and ACCOUNTING_RULES for the posting behavior, but that
+// wiring does not exist yet and must not be added before a Chart of
+// Accounts exists.
+
+// Accounting-side vocabulary — the debit/credit posting side of an entry.
+// Distinct from FINANCE_TX_TYPE_* above, which describes business
+// transaction types, not accounting posting sides.
+const ACCOUNTING_ENTRY_TYPES = {
+  DEBIT: 'debit',
+  CREDIT: 'credit',
+};
+
+// Per-transaction-type posting rules. Left empty on purpose: a real entry
+// here (e.g. { debitAccount: 'Cash', creditAccount: 'Revenue' }) requires a
+// Chart of Accounts, which does not exist yet and is out of scope for this
+// sprint. buildJournalEntries() below is written to tolerate a missing rule
+// (returns no entries) rather than assuming this is populated.
+const ACCOUNTING_RULES = {};
+
+// Default shape of a normalized Journal Entry — a plain object model, same
+// convention FINANCE_RULES entries use above.
+const ACCOUNTING_DEFAULTS = {
+  account: '',
+  debit: 0,
+  credit: 0,
+  description: '',
+  transactionId: null,
+  transactionType: '',
+};
+
+// Returns a new Journal Entry object (never a shared reference), with any
+// provided fields overriding the defaults above.
+function createJournalEntry(overrides = {}) {
+  return { ...ACCOUNTING_DEFAULTS, ...overrides };
+}
+
+// Stub. Will convert a single Finance transaction into its corresponding
+// Journal Entries once ACCOUNTING_RULES is populated with real
+// Chart-of-Accounts mappings in a future sprint. Returns an empty array
+// today. Not called from any existing Finance code path.
+function buildJournalEntries(transaction) {
+  if (!transaction) return [];
+  return [];
+}
+
+// Accounting Engine entry point.
+// Flow: Finance Transaction -> Accounting Rule -> Journal Entries.
+// Thin orchestration over buildJournalEntries() today. Not called from any
+// existing Finance code path.
+function buildAccountingEntries(transaction) {
+  return buildJournalEntries(transaction);
+}
+
+// Validates the fundamental double-entry invariant: total debits == total
+// credits. Pure, tolerant of a non-array input, and unused for now —
+// reserved for when Journal Posting is introduced.
+function isBalancedJournal(entries) {
+  const list = Array.isArray(entries) ? entries : [];
+  const totalDebit  = list.reduce((s, e) => s + (Number(e.debit)  || 0), 0);
+  const totalCredit = list.reduce((s, e) => s + (Number(e.credit) || 0), 0);
+  return Math.abs(totalDebit - totalCredit) < 0.005;
+}
+
 function financeTypeBadge(txType) {
   const bg    = FINANCE_TX_TYPE_BG[txType]    || 'bg-gray-50';
   const color = FINANCE_TX_TYPE_COLORS[txType] || 'text-gray-600';
@@ -6375,16 +6452,32 @@ function getCashFlowForPeriod(dr) {
   return { openingBalance, cashIn, cashOut, closingBalance: openingBalance + cashIn - cashOut, netMovement: cashIn - cashOut };
 }
 
+// Sprint 4.2F: expectedIncomeThisMonth/expectedExpensesThisMonth/weightedIncome
+// now read the Finance Rules layer (classifyFinanceForecast().revenueImpact/
+// expenseImpact) instead of the inline forecast_type === 'expected_income'/
+// 'expected_expense' checks this function used before — classifyFinanceForecast()
+// already existed as the correct abstraction (Sprint 4.2-era) but was never
+// wired up anywhere. Same result for every forecast_type in the data model
+// today: expectedIncome is the only implemented forecast rule with
+// revenueImpact > 0, expectedExpense the only one with expenseImpact > 0, and
+// an unrecognized/not-yet-implemented type (expectedTransfer, clientFunds)
+// resolves to 0 via classifyFinanceForecast() returning null/0-impact,
+// identical to before where it matched neither string check. Mirrors the
+// getFinancePeriodSummary/getFinanceSummary migration pattern already applied
+// to real transactions. overdueCount doesn't classify by type, so it is
+// unchanged. No formula or date-range change.
 function getFinanceForecastForPeriod(dr) {
   const now = new Date(); now.setHours(0, 0, 0, 0);
   const active = state.financeForecasts.filter(f =>
     !f.is_archived && !f.is_deleted && !['cancelled', 'received'].includes(f.status) &&
     isInDateRange(f.expected_date, dr)
   );
-  const expectedIncomeThisMonth   = active.filter(f => f.forecast_type === 'expected_income').reduce((s, f) => s + Number(f.amount), 0);
-  const expectedExpensesThisMonth = active.filter(f => f.forecast_type === 'expected_expense').reduce((s, f) => s + Number(f.amount), 0);
+  const expectedIncomeThisMonth   = active.reduce((s, f) => s + (classifyFinanceForecast(f)?.revenueImpact ?? 0) * Number(f.amount), 0);
+  const expectedExpensesThisMonth = active.reduce((s, f) => s + (classifyFinanceForecast(f)?.expenseImpact ?? 0) * Number(f.amount), 0);
   const expectedNetCashflow       = expectedIncomeThisMonth - expectedExpensesThisMonth;
-  const weightedIncome            = state.financeForecasts.filter(f => !f.is_archived && !f.is_deleted && !['cancelled', 'received'].includes(f.status) && f.forecast_type === 'expected_income').reduce((s, f) => s + Number(f.amount) * (Number(f.probability) || 100) / 100, 0);
+  const weightedIncome            = state.financeForecasts
+    .filter(f => !f.is_archived && !f.is_deleted && !['cancelled', 'received'].includes(f.status))
+    .reduce((s, f) => s + (classifyFinanceForecast(f)?.revenueImpact ?? 0) * Number(f.amount) * (Number(f.probability) || 100) / 100, 0);
   const overdueCount              = state.financeForecasts.filter(f => !f.is_archived && !f.is_deleted && f.status === 'expected' && new Date(f.expected_date) < now).length;
   return { expectedIncomeThisMonth, expectedExpensesThisMonth, expectedNetCashflow, weightedIncome, overdueCount };
 }
