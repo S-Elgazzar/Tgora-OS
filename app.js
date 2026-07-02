@@ -5875,6 +5875,195 @@ const FINANCE_FORECAST_STATUS_COLORS = {
   expected: 'text-blue-700', committed: 'text-indigo-700', received: 'text-emerald-700', cancelled: 'text-gray-500', overdue: 'text-rose-700',
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
+// ─── Finance Rules & Accounting Engine (Sprint 4.2A) ─────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+// Foundational layer only. This is a DESCRIPTIVE rules table + pure lookup
+// helpers — it documents, in one place, the accounting impact every
+// transaction/forecast type currently has across the Finance module (see
+// investigation in the Sprint 4.2A report). It does NOT change any existing
+// calculation: getFinanceSummary/getFinancePeriodSummary/getCashFlowForPeriod/
+// getAccountBalance/getClientBalanceSummary/getProjectPnL/openAccountLedgerModal
+// etc. still each carry their own inline classification arrays exactly as
+// before. Wiring those functions to read from FINANCE_RULES instead is future
+// work (see "Functions Prepared For Future Migration" in the sprint report) —
+// doing it now would risk changing formulas, which this sprint must not do.
+//
+// Directional impact fields (revenueImpact, expenseImpact, profitImpact,
+// cashImpact, clientFundsImpact, forecastImpact) use signed polarity rather
+// than booleans/adjectives, so a future accounting calculation can do
+// `total += rule.cashImpact * amount` instead of branching on strings:
+//   +1 = increases that dimension   -1 = decreases it   0 = no effect
+// accountBalanceImpact is the same convention, except for `transfer`, which
+// affects two different accounts oppositely and so is a
+// { fromAccount, toAccount } pair instead of a single scalar.
+const FINANCE_RULES = {
+  income: {
+    transactionType: 'income',
+    label: 'Income',
+    revenueImpact: +1, expenseImpact: 0, profitImpact: +1,
+    cashImpact: +1, clientFundsImpact: 0, forecastImpact: 0,
+    accountBalanceImpact: +1,
+    businessHealthImpact: ['currentRevenue', 'breakEvenProgress', 'safeTargetProgress', 'netProfit'],
+    isOperational: true, isRealCash: true, isForecastOnly: false, isInternalMovement: false,
+  },
+  expense: {
+    transactionType: 'expense',
+    label: 'Expense',
+    revenueImpact: 0, expenseImpact: +1, profitImpact: -1,
+    cashImpact: -1, clientFundsImpact: 0, forecastImpact: 0,
+    accountBalanceImpact: -1,
+    businessHealthImpact: ['netProfit'],
+    isOperational: true, isRealCash: true, isForecastOnly: false, isInternalMovement: false,
+  },
+  transfer: {
+    transactionType: 'transfer',
+    label: 'Transfer',
+    revenueImpact: 0, expenseImpact: 0, profitImpact: 0,
+    cashImpact: 0, clientFundsImpact: 0, forecastImpact: 0,
+    accountBalanceImpact: { fromAccount: -1, toAccount: +1 },
+    businessHealthImpact: [],
+    isOperational: false, isRealCash: true, isForecastOnly: false, isInternalMovement: true,
+  },
+  capitalInjection: {
+    transactionType: 'capital_injection',
+    label: 'Capital Injection',
+    revenueImpact: 0, expenseImpact: 0, profitImpact: 0,
+    cashImpact: +1, clientFundsImpact: 0, forecastImpact: 0,
+    accountBalanceImpact: +1,
+    businessHealthImpact: ['cashInAccounts', 'cashRunwayMonths', 'totalCapital (KPI only)'],
+    isOperational: false, isRealCash: true, isForecastOnly: false, isInternalMovement: false,
+  },
+  // Not present in the data model today — no transaction_type value, no
+  // FINANCE_TX_TYPE_* entry, no UI option. Included as a forward-looking
+  // placeholder only (the account model already has a 'partner_account'
+  // account type, so this is a plausible future addition), mirrored as the
+  // inverse of capitalInjection. isImplemented: false means nothing in the
+  // app currently produces or reads this rule.
+  partnerWithdrawal: {
+    transactionType: 'partner_withdrawal',
+    label: 'Partner Withdrawal',
+    revenueImpact: 0, expenseImpact: 0, profitImpact: 0,
+    cashImpact: -1, clientFundsImpact: 0, forecastImpact: 0,
+    accountBalanceImpact: -1,
+    businessHealthImpact: ['cashInAccounts', 'cashRunwayMonths'],
+    isOperational: false, isRealCash: true, isForecastOnly: false, isInternalMovement: false,
+    isImplemented: false,
+  },
+  passThroughIn: {
+    transactionType: 'pass_through_received',
+    label: 'Pass-Through In',
+    revenueImpact: 0, expenseImpact: 0, profitImpact: 0,
+    cashImpact: +1, clientFundsImpact: +1, forecastImpact: 0,
+    accountBalanceImpact: +1,
+    businessHealthImpact: ['cashInAccounts', 'cashRunwayMonths', 'clientFundsHeld'],
+    isOperational: false, isRealCash: true, isForecastOnly: false, isInternalMovement: false,
+  },
+  passThroughOut: {
+    transactionType: 'pass_through_spent',
+    label: 'Pass-Through Out',
+    revenueImpact: 0, expenseImpact: 0, profitImpact: 0,
+    cashImpact: -1, clientFundsImpact: -1, forecastImpact: 0,
+    accountBalanceImpact: -1,
+    businessHealthImpact: ['cashInAccounts', 'cashRunwayMonths', 'clientFundsHeld'],
+    isOperational: false, isRealCash: true, isForecastOnly: false, isInternalMovement: false,
+  },
+  // Forecasts never touch real cash/revenue/expense totals (cashImpact/
+  // accountBalanceImpact are always 0, isRealCash always false) — they only
+  // feed the Forecast Pipeline KPIs and Business Health's projectedRevenue/
+  // projectedGap/weighted-income figures until a matching real transaction
+  // is recorded (forecasts are excluded from calculations once status
+  // becomes 'received', at which point the real transaction takes over).
+  // revenueImpact/expenseImpact here describe the *projected* direction,
+  // consistent with what the same field means on real transactions above.
+  forecast: {
+    expectedIncome: {
+      forecastType: 'expected_income',
+      label: 'Expected Income',
+      revenueImpact: +1, expenseImpact: 0, profitImpact: 0,
+      cashImpact: 0, clientFundsImpact: 0, forecastImpact: +1,
+      accountBalanceImpact: 0,
+      businessHealthImpact: ['forecastIncoming', 'weightedExpectedIncome', 'projectedRevenue', 'projectedGap'],
+      isOperational: false, isRealCash: false, isForecastOnly: true, isInternalMovement: false,
+    },
+    expectedExpense: {
+      forecastType: 'expected_expense',
+      label: 'Expected Expense',
+      revenueImpact: 0, expenseImpact: +1, profitImpact: 0,
+      cashImpact: 0, clientFundsImpact: 0, forecastImpact: +1,
+      accountBalanceImpact: 0,
+      businessHealthImpact: ['forecastOutgoing'],
+      isOperational: false, isRealCash: false, isForecastOnly: true, isInternalMovement: false,
+    },
+    // Both defined in FINANCE_FORECAST_TYPE_LABELS/BG/COLORS (selectable in
+    // the UI) but no calculation function anywhere filters on either value —
+    // dead branches of the taxonomy today. Flagged as a risk in the report.
+    expectedTransfer: {
+      forecastType: 'expected_transfer',
+      label: 'Expected Transfer',
+      revenueImpact: 0, expenseImpact: 0, profitImpact: 0,
+      cashImpact: 0, clientFundsImpact: 0, forecastImpact: 0,
+      accountBalanceImpact: 0,
+      businessHealthImpact: [],
+      isOperational: false, isRealCash: false, isForecastOnly: true, isInternalMovement: true,
+      isImplemented: false,
+    },
+    clientFunds: {
+      forecastType: 'client_funds',
+      label: 'Client Funds',
+      revenueImpact: 0, expenseImpact: 0, profitImpact: 0,
+      cashImpact: 0, clientFundsImpact: +1, forecastImpact: 0,
+      accountBalanceImpact: 0,
+      businessHealthImpact: [],
+      isOperational: false, isRealCash: false, isForecastOnly: true, isInternalMovement: false,
+      isImplemented: false,
+    },
+  },
+};
+
+// Maps the real transaction_type/forecast_type DB values to their FINANCE_RULES
+// key, since a few rule keys (capitalInjection, passThroughIn/Out) don't match
+// the snake_case DB value 1:1.
+const FINANCE_TX_TYPE_TO_RULE_KEY = {
+  income: 'income',
+  expense: 'expense',
+  transfer: 'transfer',
+  capital_injection: 'capitalInjection',
+  partner_withdrawal: 'partnerWithdrawal',
+  pass_through_received: 'passThroughIn',
+  pass_through_spent: 'passThroughOut',
+};
+const FINANCE_FORECAST_TYPE_TO_RULE_KEY = {
+  expected_income: 'expectedIncome',
+  expected_expense: 'expectedExpense',
+  expected_transfer: 'expectedTransfer',
+  client_funds: 'clientFunds',
+};
+
+// Pure lookups — no state access, no DOM, no fetch. Return null for an
+// unrecognized/unimplemented type rather than throwing, so a future caller
+// can safely fall back to today's inline logic if a rule isn't found.
+function getFinanceRule(transactionType) {
+  const key = FINANCE_TX_TYPE_TO_RULE_KEY[transactionType];
+  return key ? FINANCE_RULES[key] : null;
+}
+function getFinanceForecastRule(forecastType) {
+  const key = FINANCE_FORECAST_TYPE_TO_RULE_KEY[forecastType];
+  return key ? FINANCE_RULES.forecast[key] : null;
+}
+// Attaches the matching rule to a transaction/forecast object without
+// mutating the input. Returns null if the type has no rule (e.g. an unknown
+// or not-yet-implemented type) — callers should treat that the same as
+// "no rule available yet", not as an error.
+function classifyFinanceTransaction(tx) {
+  const rule = tx && getFinanceRule(tx.transaction_type);
+  return rule ? { transactionType: tx.transaction_type, ...rule } : null;
+}
+function classifyFinanceForecast(fc) {
+  const rule = fc && getFinanceForecastRule(fc.forecast_type);
+  return rule ? { forecastType: fc.forecast_type, ...rule } : null;
+}
+
 function financeTypeBadge(txType) {
   const bg    = FINANCE_TX_TYPE_BG[txType]    || 'bg-gray-50';
   const color = FINANCE_TX_TYPE_COLORS[txType] || 'text-gray-600';
@@ -5967,6 +6156,16 @@ function getCategoryName(id) {
   return state.financeCategories.find(c => Number(c.id) === Number(id))?.category_name || '—';
 }
 
+// Sprint 4.2A: the single-account in/out classification now reads from the
+// Finance Rules layer (getFinanceRule().cashImpact, +1/-1/0) instead of the
+// inline ['income','capital_injection','pass_through_received'] / ['expense',
+// 'pass_through_spent'] arrays this function used before — same result for
+// every type that occurs in real data today (verified: income/capital_injection/
+// pass_through_received all have cashImpact +1, expense/pass_through_spent both
+// have -1), with an unrecognized type now safely resolving to "no rule found"
+// (no balance change) instead of silently matching neither array. Transfer
+// keeps its own two-account branch above since it isn't a single-account
+// scalar impact (see FINANCE_RULES.transfer.accountBalanceImpact).
 function getAccountBalance(accountId) {
   const acct = state.financeAccounts.find(a => Number(a.id) === Number(accountId));
   if (!acct) return 0;
@@ -5978,8 +6177,8 @@ function getAccountBalance(accountId) {
       if (Number(t.from_account_id) === Number(accountId)) balance -= amt;
       if (Number(t.to_account_id)   === Number(accountId)) balance += amt;
     } else if (Number(t.account_id) === Number(accountId)) {
-      if (['income', 'capital_injection', 'pass_through_received'].includes(type)) balance += amt;
-      else if (['expense', 'pass_through_spent'].includes(type))                   balance -= amt;
+      const rule = getFinanceRule(type);
+      if (rule) balance += rule.cashImpact * amt;
     }
   });
   return balance;
