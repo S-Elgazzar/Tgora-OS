@@ -5881,14 +5881,15 @@ const FINANCE_FORECAST_STATUS_COLORS = {
 // Originally a DESCRIPTIVE rules table + pure lookup helpers documenting, in
 // one place, the accounting impact every transaction/forecast type has
 // across the Finance module (see investigation in the Sprint 4.2A report).
-// As of Sprint 4.2B/4.2C, several calculators have been wired to read from
-// it instead of carrying their own inline classification: getAccountBalance/
-// getCashFlowForPeriod/getCashFlowThisMonth (org/account-level cash, 4.2B)
-// and getFinanceSummary/getClientBalanceSummary/getProjectPnL
-// (revenue/expense/profit/client-funds, 4.2C) — no formula changes in any of
-// them, only the classification source. getFinancePeriodSummary and
-// openAccountLedgerModal still carry their own inline classification (not in
-// scope for 4.2C; see the sprint report for why).
+// As of Sprint 4.2B/4.2C/4.2D, several calculators have been wired to read
+// from it instead of carrying their own inline classification:
+// getAccountBalance/getCashFlowForPeriod/getCashFlowThisMonth (org/account-
+// level cash, 4.2B); getFinanceSummary/getClientBalanceSummary/getProjectPnL
+// (revenue/expense/profit/client-funds, 4.2C); getFinancePeriodSummary
+// (period revenue/expense, 4.2D) — no formula changes in any of them, only
+// the classification source. openAccountLedgerModal still carries its own
+// inline classification (out of scope so far; see the sprint reports for
+// why).
 //
 // Directional impact fields (revenueImpact, expenseImpact, profitImpact,
 // cashImpact, clientFundsImpact, forecastImpact) use signed polarity rather
@@ -6308,12 +6309,18 @@ function isInDateRange(dateStr, dr) {
   return d >= dr.startDate && d <= dr.endDate;
 }
 
+// Sprint 4.2D: realIncome/realExpenses now read the Finance Rules layer
+// (getFinanceRevenueImpact/getFinanceExpenseImpact) instead of the inline
+// per-type filter this function used before — same result for every type in
+// real data today (verified in the Sprint 4.2D report). netProfit stays a
+// plain formula (no classification involved), so no profitImpact helper is
+// needed here. No date-range or row-filtering change.
 function getFinancePeriodSummary(dr) {
   const activeTx = state.financeTransactions.filter(t =>
     !t.is_archived && !t.is_deleted && t.status !== 'cancelled' && isInDateRange(t.transaction_date, dr)
   );
-  const realIncome   = activeTx.filter(t => t.transaction_type === 'income').reduce((s, t) => s + Number(t.amount), 0);
-  const realExpenses = activeTx.filter(t => t.transaction_type === 'expense').reduce((s, t) => s + Number(t.amount), 0);
+  const realIncome   = activeTx.reduce((s, t) => s + getFinanceRevenueImpact(t.transaction_type) * Number(t.amount), 0);
+  const realExpenses = activeTx.reduce((s, t) => s + getFinanceExpenseImpact(t.transaction_type) * Number(t.amount), 0);
   return { realIncome, realExpenses, netProfit: realIncome - realExpenses };
 }
 
