@@ -107,6 +107,7 @@ const state = {
   financeForecasts: [],
   financeSettings: [],
   financeFixedCosts: [],
+  financeChartOfAccounts: [],
   financeTab: 'dashboard',
   financeDateRange:   localStorage.getItem('tgora_finance_date_range')   || 'this_month',
   financeCustomStart: localStorage.getItem('tgora_finance_custom_start') || '',
@@ -1440,6 +1441,20 @@ async function fetchFinanceFixedCosts() {
     // Table may not exist yet during development/rollout — do not break the app,
     // just fall back to finance_settings / the hardcoded default.
     console.warn('fetchFinanceFixedCosts: falling back to finance_settings/default', error);
+    return [];
+  }
+  return data || [];
+}
+
+async function fetchFinanceChartOfAccounts() {
+  if (!isAdmin()) return [];
+  const { data, error } = await supabaseClient
+    .from('finance_chart_of_accounts').select('*').eq('is_active', true).order('account_code');
+  if (error) {
+    // Table may not exist yet during development/rollout (Sprint 4.3B) — do
+    // not break the app, just fall back to no Chart of Accounts. Nothing
+    // reads state.financeChartOfAccounts yet, so an empty array is safe.
+    console.warn('fetchFinanceChartOfAccounts: table not available yet', error);
     return [];
   }
   return data || [];
@@ -5736,6 +5751,7 @@ async function refreshDataAndRender() {
     financeForecasts,
     financeSettings,
     financeFixedCosts,
+    financeChartOfAccounts,
   ] = await Promise.all([
     fetchProjects(),
     fetchTasks(),
@@ -5754,6 +5770,7 @@ async function refreshDataAndRender() {
     fetchFinanceForecasts(),
     fetchFinanceSettings(),
     fetchFinanceFixedCosts(),
+    fetchFinanceChartOfAccounts(),
   ]);
 
   const prevRole = state.currentRole;
@@ -5774,6 +5791,7 @@ async function refreshDataAndRender() {
   state.financeForecasts    = financeForecasts;
   state.financeSettings     = financeSettings;
   state.financeFixedCosts   = financeFixedCosts;
+  state.financeChartOfAccounts = financeChartOfAccounts;
 
   // Re-derive role from the freshly-fetched team members so that external
   // role changes are reflected without a full page reload.
@@ -6153,11 +6171,22 @@ const ACCOUNTING_ENTRY_TYPES = {
   CREDIT: 'credit',
 };
 
-// Per-transaction-type posting rules. Left empty on purpose: a real entry
-// here (e.g. { debitAccount: 'Cash', creditAccount: 'Revenue' }) requires a
-// Chart of Accounts, which does not exist yet and is out of scope for this
-// sprint. buildJournalEntries() below is written to tolerate a missing rule
-// (returns no entries) rather than assuming this is populated.
+// Per-transaction-type posting rules. Left empty on purpose.
+//
+// Sprint 4.3B added a Chart of Accounts (finance_chart_of_accounts /
+// state.financeChartOfAccounts, looked up via getChartAccountByCode() below)
+// with account_code as its stable identifier. The intended future shape of
+// this object, once Journal Posting is designed, is to key by
+// FINANCE_TX_TYPE_TO_RULE_KEY's rule keys and reference account_code rather
+// than a free-text account name, e.g.:
+//   income: { debitAccountCode: '1000', creditAccountCode: '4000' }   // Cash and Bank / Service Revenue
+//   expense: { debitAccountCode: '5000', creditAccountCode: '1000' }  // Operating Expenses / Cash and Bank
+// This is deliberately NOT populated yet: it requires deciding how
+// finance_accounts (operational cash/bank accounts) roll up into COA lines
+// (see finance_chart_of_accounts_migration.sql's linked_finance_account_id,
+// also left unpopulated) and is left to whichever sprint designs Journal
+// Posting. buildJournalEntries() below is written to tolerate a missing
+// rule (returns no entries) rather than assuming this is populated.
 const ACCOUNTING_RULES = {};
 
 // Default shape of a normalized Journal Entry — a plain object model, same
@@ -6202,6 +6231,26 @@ function isBalancedJournal(entries) {
   const totalDebit  = list.reduce((s, e) => s + (Number(e.debit)  || 0), 0);
   const totalCredit = list.reduce((s, e) => s + (Number(e.credit) || 0), 0);
   return Math.abs(totalDebit - totalCredit) < 0.005;
+}
+
+// ─── Chart of Accounts (Sprint 4.3B) ─────────────────────────────────────────
+// Pure lookup helpers over state.financeChartOfAccounts. Reads only — no
+// caller anywhere yet, and none of these touch state.financeAccounts or any
+// existing balance/formula. See fetchFinanceChartOfAccounts() for how the
+// data is loaded (falls back to [] if finance_chart_of_accounts doesn't
+// exist yet), so these all degrade gracefully to "not found" until then.
+function getChartAccountByCode(code) {
+  return state.financeChartOfAccounts.find(a => a.account_code === code) || null;
+}
+function getChartAccountsByType(type) {
+  return state.financeChartOfAccounts.filter(a => a.account_type === type);
+}
+function getChartAccountNormalBalance(account) {
+  return account?.normal_balance || null;
+}
+function formatChartAccountLabel(account) {
+  if (!account) return '';
+  return `${account.account_code} — ${account.account_name}`;
 }
 
 function financeTypeBadge(txType) {
@@ -14559,7 +14608,7 @@ renderStaticButtonMounts();
     }
 
     await cleanupOldNotifications();
-    const [notifications, financeAccounts, financeCategories, financeTransactions, financeForecasts, financeSettings, financeFixedCosts] = await Promise.all([
+    const [notifications, financeAccounts, financeCategories, financeTransactions, financeForecasts, financeSettings, financeFixedCosts, financeChartOfAccounts] = await Promise.all([
       fetchNotifications(),
       fetchFinanceAccounts(),
       fetchFinanceCategories(),
@@ -14567,6 +14616,7 @@ renderStaticButtonMounts();
       fetchFinanceForecasts(),
       fetchFinanceSettings(),
       fetchFinanceFixedCosts(),
+      fetchFinanceChartOfAccounts(),
     ]);
     state.notifications       = notifications;
     state.financeAccounts     = financeAccounts;
@@ -14575,6 +14625,7 @@ renderStaticButtonMounts();
     state.financeForecasts    = financeForecasts;
     state.financeSettings     = financeSettings;
     state.financeFixedCosts   = financeFixedCosts;
+    state.financeChartOfAccounts = financeChartOfAccounts;
 
   } catch (err) {
     console.error(err);
