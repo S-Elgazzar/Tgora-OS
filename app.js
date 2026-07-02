@@ -6298,43 +6298,74 @@ function isBalancedJournal(entries) {
   return Math.abs(totalDebit - totalCredit) < 0.005;
 }
 
-// ─── Journal Posting Engine (Sprint 4.3D) ────────────────────────────────────
+// Local, in-memory posting identity (Sprint 4.3E) — no DB, no UUIDs. Lives
+// only as long as the page session, same as state.accountingJournal itself.
+let accountingJournalNextId = 1;
+let accountingJournalNextNumber = 1;
+function generateJournalNumber() {
+  return `JRN-${String(accountingJournalNextNumber++).padStart(6, '0')}`;
+}
+
+// ─── Journal Posting Engine (Sprint 4.3D/4.3E) ───────────────────────────────
 // Posts a single Finance transaction into the in-memory General Journal
 // (state.accountingJournal). Thin orchestration over buildAccountingEntries()
 // and isBalancedJournal() above — all-or-nothing, never a partial post.
-// Returns [] (and posts nothing) for an invalid transaction, an unmapped/
+// Returns null (and posts nothing) for an invalid transaction, an unmapped/
 // unimplemented transaction_type (buildAccountingEntries() returns []), or
 // an unbalanced journal. Not called from any existing Finance code path.
+//
+// Sprint 4.3E wraps the Journal Entries (unchanged shape) in a Journal
+// Posting — header metadata + the entries themselves — instead of pushing
+// bare entries into the journal. Each posting gets a locally-generated,
+// incrementing id/journalNumber; status is always 'posted' (the only status
+// this engine produces) and source is always 'finance_transaction' (the
+// only producer that exists).
 function postJournal(transaction) {
   const entries = buildAccountingEntries(transaction);
-  if (entries.length === 0) return [];
-  if (!isBalancedJournal(entries)) return [];
-  state.accountingJournal.push(...entries);
-  return entries;
+  if (entries.length === 0) return null;
+  if (!isBalancedJournal(entries)) return null;
+
+  const posting = {
+    id:              accountingJournalNextId++,
+    journalNumber:   generateJournalNumber(),
+    transactionId:   transaction.id ?? null,
+    transactionType: transaction.transaction_type,
+    description:     transaction.description || transaction.transaction_type,
+    postingDate:     transaction.transaction_date || null,
+    createdAt:       new Date().toISOString(),
+    source:          'finance_transaction',
+    status:          'posted',
+    entries,
+  };
+
+  state.accountingJournal.push(posting);
+  return posting;
 }
 
 // Posts an array of Finance transactions via postJournal(), one at a time.
 // Pure aggregation only — does not clear state.accountingJournal first, so
 // repeated calls accumulate onto whatever is already posted. A transaction
-// is "posted" if postJournal() returned at least one entry, "skipped"
+// is "posted" if postJournal() returned a Journal Posting, "skipped"
 // otherwise (invalid, unmapped type, transfer, forecast, or unbalanced).
 function postAllAccountingTransactions(transactions) {
   const list = Array.isArray(transactions) ? transactions : [];
+  const journalPostings = [];
   const postedEntries = [];
   const postedTransactions = [];
   const skippedTransactions = [];
 
   for (const transaction of list) {
-    const entries = postJournal(transaction);
-    if (entries.length > 0) {
-      postedEntries.push(...entries);
+    const posting = postJournal(transaction);
+    if (posting) {
+      journalPostings.push(posting);
+      postedEntries.push(...posting.entries);
       postedTransactions.push(transaction);
     } else {
       skippedTransactions.push(transaction);
     }
   }
 
-  return { postedEntries, postedTransactions, skippedTransactions };
+  return { journalPostings, postedEntries, postedTransactions, skippedTransactions };
 }
 
 // ─── Chart of Accounts (Sprint 4.3B) ─────────────────────────────────────────
