@@ -108,6 +108,7 @@ const state = {
   financeSettings: [],
   financeFixedCosts: [],
   financeChartOfAccounts: [],
+  accountingJournal: [], // in-memory General Journal (Sprint 4.3D) — posted entries only, no persistence
   financeTab: 'dashboard',
   financeDateRange:   localStorage.getItem('tgora_finance_date_range')   || 'this_month',
   financeCustomStart: localStorage.getItem('tgora_finance_custom_start') || '',
@@ -6295,6 +6296,45 @@ function isBalancedJournal(entries) {
   const totalDebit  = list.reduce((s, e) => s + (Number(e.debit)  || 0), 0);
   const totalCredit = list.reduce((s, e) => s + (Number(e.credit) || 0), 0);
   return Math.abs(totalDebit - totalCredit) < 0.005;
+}
+
+// ─── Journal Posting Engine (Sprint 4.3D) ────────────────────────────────────
+// Posts a single Finance transaction into the in-memory General Journal
+// (state.accountingJournal). Thin orchestration over buildAccountingEntries()
+// and isBalancedJournal() above — all-or-nothing, never a partial post.
+// Returns [] (and posts nothing) for an invalid transaction, an unmapped/
+// unimplemented transaction_type (buildAccountingEntries() returns []), or
+// an unbalanced journal. Not called from any existing Finance code path.
+function postJournal(transaction) {
+  const entries = buildAccountingEntries(transaction);
+  if (entries.length === 0) return [];
+  if (!isBalancedJournal(entries)) return [];
+  state.accountingJournal.push(...entries);
+  return entries;
+}
+
+// Posts an array of Finance transactions via postJournal(), one at a time.
+// Pure aggregation only — does not clear state.accountingJournal first, so
+// repeated calls accumulate onto whatever is already posted. A transaction
+// is "posted" if postJournal() returned at least one entry, "skipped"
+// otherwise (invalid, unmapped type, transfer, forecast, or unbalanced).
+function postAllAccountingTransactions(transactions) {
+  const list = Array.isArray(transactions) ? transactions : [];
+  const postedEntries = [];
+  const postedTransactions = [];
+  const skippedTransactions = [];
+
+  for (const transaction of list) {
+    const entries = postJournal(transaction);
+    if (entries.length > 0) {
+      postedEntries.push(...entries);
+      postedTransactions.push(transaction);
+    } else {
+      skippedTransactions.push(transaction);
+    }
+  }
+
+  return { postedEntries, postedTransactions, skippedTransactions };
 }
 
 // ─── Chart of Accounts (Sprint 4.3B) ─────────────────────────────────────────
