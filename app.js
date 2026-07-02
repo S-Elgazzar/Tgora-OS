@@ -5878,16 +5878,17 @@ const FINANCE_FORECAST_STATUS_COLORS = {
 // ═══════════════════════════════════════════════════════════════════════════
 // ─── Finance Rules & Accounting Engine (Sprint 4.2A) ─────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════
-// Foundational layer only. This is a DESCRIPTIVE rules table + pure lookup
-// helpers — it documents, in one place, the accounting impact every
-// transaction/forecast type currently has across the Finance module (see
-// investigation in the Sprint 4.2A report). It does NOT change any existing
-// calculation: getFinanceSummary/getFinancePeriodSummary/getCashFlowForPeriod/
-// getAccountBalance/getClientBalanceSummary/getProjectPnL/openAccountLedgerModal
-// etc. still each carry their own inline classification arrays exactly as
-// before. Wiring those functions to read from FINANCE_RULES instead is future
-// work (see "Functions Prepared For Future Migration" in the sprint report) —
-// doing it now would risk changing formulas, which this sprint must not do.
+// Originally a DESCRIPTIVE rules table + pure lookup helpers documenting, in
+// one place, the accounting impact every transaction/forecast type has
+// across the Finance module (see investigation in the Sprint 4.2A report).
+// As of Sprint 4.2B/4.2C, several calculators have been wired to read from
+// it instead of carrying their own inline classification: getAccountBalance/
+// getCashFlowForPeriod/getCashFlowThisMonth (org/account-level cash, 4.2B)
+// and getFinanceSummary/getClientBalanceSummary/getProjectPnL
+// (revenue/expense/profit/client-funds, 4.2C) — no formula changes in any of
+// them, only the classification source. getFinancePeriodSummary and
+// openAccountLedgerModal still carry their own inline classification (not in
+// scope for 4.2C; see the sprint report for why).
 //
 // Directional impact fields (revenueImpact, expenseImpact, profitImpact,
 // cashImpact, clientFundsImpact, forecastImpact) use signed polarity rather
@@ -6076,6 +6077,25 @@ function classifyFinanceForecast(fc) {
 // its own transfer-specific branch in each caller.
 function getFinanceCashImpact(type) {
   return getFinanceRule(type)?.cashImpact ?? 0;
+}
+
+// Sprint 4.2C: revenue/expense/profit/client-funds direction for a single
+// transaction type, mirroring getFinanceCashImpact() above. Thin wrappers over
+// getFinanceRule().*Impact — +1/0/-1, with an unrecognized type safely
+// resolving to 0 via getFinanceRule() returning null. Used by
+// getFinanceSummary/getClientBalanceSummary/getProjectPnL to replace their
+// inline per-type switch statements.
+function getFinanceRevenueImpact(type) {
+  return getFinanceRule(type)?.revenueImpact ?? 0;
+}
+function getFinanceExpenseImpact(type) {
+  return getFinanceRule(type)?.expenseImpact ?? 0;
+}
+function getFinanceProfitImpact(type) {
+  return getFinanceRule(type)?.profitImpact ?? 0;
+}
+function getFinanceClientFundsImpact(type) {
+  return getFinanceRule(type)?.clientFundsImpact ?? 0;
 }
 
 function financeTypeBadge(txType) {
@@ -6364,6 +6384,15 @@ function getFinancePeriodBadge(color) {
 // }
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Sprint 4.2C: realIncome/realExpenses/passThroughHeld/cashFlowThisMonth now
+// read the Finance Rules layer (getFinanceRevenueImpact/getFinanceExpenseImpact/
+// getFinanceClientFundsImpact/getFinanceProfitImpact) instead of the inline
+// per-type switch this function used before — same result for every type in
+// real data today (verified in the Sprint 4.2C report). totalCapital stays on
+// its own inline check: capital_injection has no isolated Finance Rules field
+// (cashImpact is shared with income/pass_through_received, so it can't be used
+// to isolate capital alone without adding a new rule dimension, which this
+// sprint must not do).
 function getFinanceSummary() {
   const activeTx = state.financeTransactions.filter(t => !t.is_archived && !t.is_deleted && t.status !== 'cancelled');
   const now = new Date();
@@ -6374,13 +6403,12 @@ function getFinanceSummary() {
   let totalCapital = 0, realIncome = 0, realExpenses = 0, passThroughHeld = 0, cashFlowThisMonth = 0;
   activeTx.forEach(t => {
     const amt = Number(t.amount) || 0;
-    switch (t.transaction_type) {
-      case 'capital_injection':     totalCapital += amt; break;
-      case 'income':                realIncome   += amt; if (thisMonth(t)) cashFlowThisMonth += amt; break;
-      case 'expense':               realExpenses += amt; if (thisMonth(t)) cashFlowThisMonth -= amt; break;
-      case 'pass_through_received': passThroughHeld += amt; break;
-      case 'pass_through_spent':    passThroughHeld -= amt; break;
-    }
+    const type = t.transaction_type;
+    if (type === 'capital_injection') totalCapital += amt;
+    realIncome      += getFinanceRevenueImpact(type) * amt;
+    realExpenses    += getFinanceExpenseImpact(type) * amt;
+    passThroughHeld += getFinanceClientFundsImpact(type) * amt;
+    if (thisMonth(t)) cashFlowThisMonth += getFinanceProfitImpact(type) * amt;
   });
   const netProfit = realIncome - realExpenses;
   const totalAccountBalances = state.financeAccounts
@@ -6510,6 +6538,11 @@ function getFinanceEngine() {
   return buildFinanceEngine();
 }
 
+// Sprint 4.2C: per-client revenue/expenses/pass-through now read the Finance
+// Rules layer (getFinanceRevenueImpact/getFinanceExpenseImpact/
+// getFinanceClientFundsImpact) instead of the inline per-type switch this
+// function used before — same result for every type in real data today
+// (verified in the Sprint 4.2C report). Output shape unchanged.
 function getClientBalanceSummary(dr) {
   const txs = state.financeTransactions.filter(t => !t.is_archived && !t.is_deleted && t.status !== 'cancelled' && (!dr || isInDateRange(t.transaction_date, dr)));
   const map = {};
@@ -6520,12 +6553,12 @@ function getClientBalanceSummary(dr) {
       map[key] = { clientId: t.client_id || null, clientName: t.client_name || getCrmClientName(t.client_id) || 'Unknown', revenue: 0, ptReceived: 0, ptSpent: 0, expenses: 0 };
     }
     const amt = Number(t.amount) || 0;
-    switch (t.transaction_type) {
-      case 'income':                map[key].revenue    += amt; break;
-      case 'pass_through_received': map[key].ptReceived += amt; break;
-      case 'pass_through_spent':    map[key].ptSpent    += amt; break;
-      case 'expense':               map[key].expenses   += amt; break;
-    }
+    const type = t.transaction_type;
+    map[key].revenue  += getFinanceRevenueImpact(type) * amt;
+    map[key].expenses += getFinanceExpenseImpact(type) * amt;
+    const cfImpact = getFinanceClientFundsImpact(type);
+    if (cfImpact > 0)      map[key].ptReceived += amt;
+    else if (cfImpact < 0) map[key].ptSpent    += amt;
   });
   return Object.values(map).map(c => ({
     ...c,
@@ -6535,6 +6568,16 @@ function getClientBalanceSummary(dr) {
   })).sort((a, b) => b.revenue - a.revenue);
 }
 
+// Sprint 4.2C: per-project revenue/expenses/pass-through now read the Finance
+// Rules layer (getFinanceRevenueImpact/getFinanceExpenseImpact/
+// getFinanceClientFundsImpact) instead of the inline per-type switch this
+// function used before — same result for every type in real data today
+// (verified in the Sprint 4.2C report). The income/expense/pass_through_*
+// whitelist guard is kept as-is: it controls which transactions create a
+// project entry at all (e.g. a project with only a capital_injection
+// transaction must not appear in Project P&L), which is a membership
+// decision, not a classification one, so it doesn't belong in the rule
+// helpers. Output shape unchanged.
 function getProjectPnL(dr) {
   const txs = state.financeTransactions.filter(t => !t.is_archived && !t.is_deleted && t.status !== 'cancelled' && (!dr || isInDateRange(t.transaction_date, dr)));
   const map = {};
@@ -6544,12 +6587,11 @@ function getProjectPnL(dr) {
     const key = t.project_name || '__unassigned__';
     if (!map[key]) map[key] = { projectName: t.project_name || 'Unassigned', revenue: 0, expenses: 0, ptReceived: 0, ptSpent: 0 };
     const amt = Number(t.amount) || 0;
-    switch (type) {
-      case 'income':                map[key].revenue    += amt; break;
-      case 'expense':               map[key].expenses   += amt; break;
-      case 'pass_through_received': map[key].ptReceived += amt; break;
-      case 'pass_through_spent':    map[key].ptSpent    += amt; break;
-    }
+    map[key].revenue  += getFinanceRevenueImpact(type) * amt;
+    map[key].expenses += getFinanceExpenseImpact(type) * amt;
+    const cfImpact = getFinanceClientFundsImpact(type);
+    if (cfImpact > 0)      map[key].ptReceived += amt;
+    else if (cfImpact < 0) map[key].ptSpent    += amt;
   });
   return Object.values(map).map(p => ({
     ...p,
