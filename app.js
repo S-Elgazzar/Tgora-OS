@@ -6547,6 +6547,79 @@ function getUnbalancedPostings() {
   return journal.filter(posting => !isBalancedJournal(posting?.entries));
 }
 
+// ─── Trial Balance Engine (Sprint 4.4A) ──────────────────────────────────────
+// Pure, derived-only presentation of the General Ledger (Sprint 4.3F) as a
+// classic two-column Trial Balance. Reads ONLY getLedgerAccounts() (plus
+// getChartAccountByCode() to resolve each row's account_type for display —
+// the ledger model itself doesn't carry accountType) — never
+// state.financeTransactions, and never state.accountingJournal directly.
+// The ledger has already done the real work (grouping entries by account,
+// computing debitTotal/creditTotal/balance per Sprint 4.3F's normal-balance
+// rules); this layer only re-projects each account's signed `balance` back
+// into a debit/credit column pair, the shape a Trial Balance is expected to
+// have. No new state, no caching, no mutation — rebuilt fresh on every call,
+// same convention as buildGeneralLedger() and the Sprint 4.3G audit helpers.
+//
+// Column placement per account:
+//   normalBalance === 'debit'  -> balance >= 0 goes to debit,  else abs(balance) to credit
+//   normalBalance === 'credit' -> balance >= 0 goes to credit, else abs(balance) to debit
+// This puts a normal-balance account's amount on its expected side and any
+// abnormal (contra) balance on the opposite side, which is what lets
+// debitTotal/creditTotal reconcile to the same figure as
+// getLedgerTotals()/getLedgerAccounts() would for a genuinely balanced
+// ledger — see Validation §6 in the sprint report for the cross-check.
+function buildTrialBalance() {
+  const ledgerAccounts = getLedgerAccounts();
+
+  const rows = ledgerAccounts.map(account => {
+    const chartAccount = getChartAccountByCode(account.accountCode);
+    const balance = Number(account.balance) || 0;
+    let debit = 0;
+    let credit = 0;
+
+    if (account.normalBalance === 'debit') {
+      if (balance >= 0) debit = balance; else credit = Math.abs(balance);
+    } else {
+      if (balance >= 0) credit = balance; else debit = Math.abs(balance);
+    }
+
+    return {
+      accountCode:   account.accountCode,
+      accountName:   account.accountName,
+      accountType:   chartAccount?.account_type || null,
+      normalBalance: account.normalBalance,
+      debit,
+      credit,
+      balance,
+    };
+  });
+
+  const debitTotal  = rows.reduce((s, r) => s + (Number(r.debit)  || 0), 0);
+  const creditTotal = rows.reduce((s, r) => s + (Number(r.credit) || 0), 0);
+  const difference  = debitTotal - creditTotal;
+  const balanced    = Math.abs(difference) < 0.005;
+
+  return {
+    rows,
+    totals: { debitTotal, creditTotal, difference, balanced },
+    isBalanced: balanced,
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+// Returns just the Trial Balance rows. Thin wrapper over buildTrialBalance()
+// — no separate row-building logic, so this can never drift from
+// buildTrialBalance()'s totals.
+function getTrialBalanceRows() {
+  return buildTrialBalance().rows;
+}
+
+// Returns just the Trial Balance totals. Thin wrapper over
+// buildTrialBalance(), same reasoning as getTrialBalanceRows() above.
+function getTrialBalanceTotals() {
+  return buildTrialBalance().totals;
+}
+
 function financeTypeBadge(txType) {
   const bg    = FINANCE_TX_TYPE_BG[txType]    || 'bg-gray-50';
   const color = FINANCE_TX_TYPE_COLORS[txType] || 'text-gray-600';
