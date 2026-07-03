@@ -6955,6 +6955,47 @@ function getAccountingCashFlowTotals(openingCashBalance = 0) {
   };
 }
 
+// ─── Accounting Statements Facade (Sprint 4.4E) ──────────────────────────────
+// Pure composition layer over the four statement engines above (Trial
+// Balance, Income Statement, Balance Sheet, Accounting Cash Flow) plus the
+// Ledger Integrity & Audit Helpers (Sprint 4.3G) — collects what already
+// exists into one object for a future UI/reporting layer to consume. No
+// statement logic lives here: every field is exactly what its own engine
+// already returns, called once and passed through unchanged. No new state,
+// no caching, no mutation — rebuilt fresh on every call, same convention as
+// every engine it composes.
+function buildAccountingStatements(options = {}) {
+  const openingCashBalance = options.openingCashBalance ?? 0;
+
+  return {
+    trialBalance:      buildTrialBalance(),
+    incomeStatement:   buildIncomeStatement(),
+    balanceSheet:      buildBalanceSheet(),
+    cashFlowStatement: buildAccountingCashFlowStatement(openingCashBalance),
+    integrity: {
+      ledgerValidation:   validateLedger(),
+      ledgerTotals:       getLedgerTotals(),
+      unbalancedPostings: getUnbalancedPostings(),
+    },
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+// Thin wrapper over buildAccountingStatements() — no separate composition
+// logic, so this can never drift from the facade.
+function getAccountingStatements(options = {}) {
+  return buildAccountingStatements(options);
+}
+
+// Returns a single named statement/section from the facade, or null for an
+// unrecognized name rather than guessing. `name` matches the facade's own
+// top-level keys except generatedAt, which isn't a statement.
+const ACCOUNTING_STATEMENT_NAMES = ['trialBalance', 'incomeStatement', 'balanceSheet', 'cashFlowStatement', 'integrity'];
+function getAccountingStatement(name, options = {}) {
+  if (!ACCOUNTING_STATEMENT_NAMES.includes(name)) return null;
+  return buildAccountingStatements(options)[name];
+}
+
 function financeTypeBadge(txType) {
   const bg    = FINANCE_TX_TYPE_BG[txType]    || 'bg-gray-50';
   const color = FINANCE_TX_TYPE_COLORS[txType] || 'text-gray-600';
