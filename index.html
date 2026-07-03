@@ -1827,8 +1827,8 @@
     <p id="lead-details-notes" class="text-sm text-gray-600 whitespace-pre-wrap">No notes yet.</p>
   </div>
 
-  <!-- Related client + Convert -->
-  <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+  <!-- Related client + Convert + Related Deal -->
+  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
     <div class="stat-card">
       <h4 class="text-sm font-semibold text-gray-900 mb-2">Related Company</h4>
       <div id="lead-details-client-chip" class="flex items-center gap-2">
@@ -1847,11 +1847,20 @@
         <i data-lucide="arrow-right-circle" class="w-3.5 h-3.5"></i> Convert to Company
       </button>
     </div>
+    <div class="stat-card">
+      <h4 class="text-sm font-semibold text-gray-900 mb-2">Related Deal</h4>
+      <div id="lead-details-deal-chip" class="flex items-center gap-2">
+        <span class="text-xs text-gray-400">Available once this lead is Converted</span>
+      </div>
+    </div>
   </div>
 
   <!-- Timeline -->
   <div class="card mb-6">
-    <h4 class="text-sm font-semibold text-gray-900 mb-3">Timeline</h4>
+    <div class="flex items-center justify-between mb-3">
+      <h4 class="text-sm font-semibold text-gray-900">Timeline</h4>
+      <button id="lead-details-add-activity-btn" data-action="open-activity-modal" data-lead-id="" class="text-xs text-indigo-600 hover:text-indigo-700 font-medium">+ Add Activity</button>
+    </div>
     <div id="lead-details-timeline">
       <p class="text-sm text-gray-400 py-3">No activity yet.</p>
     </div>
@@ -3288,14 +3297,17 @@
           <div><p class="text-xs text-gray-500 font-medium">Service Type</p><p id="deal-details-modal-service-type" class="text-sm font-semibold text-gray-900 mt-0.5">—</p></div>
           <div><p class="text-xs text-gray-500 font-medium">Probability</p><p id="deal-details-modal-probability" class="text-sm font-semibold text-gray-900 mt-0.5">—</p></div>
           <div><p class="text-xs text-gray-500 font-medium">Expected Close</p><p id="deal-details-modal-close" class="text-sm font-semibold text-gray-900 mt-0.5">—</p></div>
-          <div><p class="text-xs text-gray-500 font-medium">Related Lead</p><p id="deal-details-modal-lead" class="text-sm font-semibold text-gray-900 mt-0.5">—</p></div>
+          <div><p class="text-xs text-gray-500 font-medium">Related Lead</p><div id="deal-details-modal-lead" class="text-sm font-semibold text-gray-900 mt-0.5">—</div></div>
         </div>
         <div>
           <p class="text-xs text-gray-500 font-medium mb-1">Notes</p>
           <p id="deal-details-modal-notes" class="text-sm text-gray-700 whitespace-pre-wrap">—</p>
         </div>
         <div>
-          <p class="text-xs text-gray-500 font-medium mb-2">Activities</p>
+          <div class="flex items-center justify-between mb-2">
+            <p class="text-xs text-gray-500 font-medium">Activities</p>
+            <button id="deal-details-modal-add-activity-btn" data-action="open-activity-modal" data-deal-id="" class="text-xs text-indigo-600 hover:text-indigo-700 font-medium">+ Add</button>
+          </div>
           <div id="deal-details-modal-activities"></div>
         </div>
         <div>
@@ -3324,6 +3336,8 @@
         <button data-action="close-modal" class="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center"><i data-lucide="x" class="w-4 h-4 text-gray-500"></i></button>
       </div>
       <form id="activity-form" class="px-6 py-5 space-y-4">
+        <input type="hidden" name="lead_id" id="activity-lead-id-hidden" />
+        <input type="hidden" name="deal_id" id="activity-deal-id-hidden" />
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div class="sm:col-span-2">
             <label class="form-label">Title <span class="text-rose-500">*</span></label>

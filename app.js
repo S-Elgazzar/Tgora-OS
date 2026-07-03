@@ -102,6 +102,12 @@ const state = {
   editingActivityId: null,
   editingNoteId: null,
   editingProposalId: null,
+  // Sprint CRM-4 — set while the Deal modal is open in "Create Deal from
+  // Lead" mode, so handleDealSubmit() knows to return the user to that
+  // Lead's details page instead of the generic Deals tab. Always reset to
+  // null by openNewDealModal()/openEditDealModal() so a cancelled or
+  // unrelated deal creation never leaks a stale redirect target.
+  dealCreationSourceLeadId: null,
   financeAccounts: [],
   financeCategories: [],
   financeTransactions: [],
@@ -5356,6 +5362,13 @@ function renderCrmProposals() {
   refreshIcons();
 }
 
+// Sprint CRM-4 — a Lead qualifies at most one Deal (see openCreateDealFromLead()
+// and the duplicate-prevention check in handleDealSubmit()), so this always
+// returns zero or one result.
+function findDealForLead(leadId) {
+  return state.crmDeals.find(d => Number(d.lead_id) === Number(leadId) && !d.is_archived) || null;
+}
+
 // ---------- Lead Details ----------
 function renderLeadDetails() {
   const lead = state.crmLeads.find(
@@ -5447,6 +5460,32 @@ function renderLeadDetails() {
     }
   }
 
+  // Related deal chip (Sprint CRM-4 — Lead -> Deal is user-controlled, never
+  // auto-created; see openCreateDealFromLead()). Exactly one of: a linked
+  // Deal, an explicit Create Deal action, or a reason it isn't available yet.
+  const dealChipEl = $('#lead-details-deal-chip');
+  if (dealChipEl) {
+    const relatedDeal = findDealForLead(lead.id);
+    if (relatedDeal) {
+      dealChipEl.innerHTML = `
+        <button class="text-xs font-medium text-indigo-600 hover:underline" data-action="open-deal-details" data-id="${relatedDeal.id}">${escapeHtml(relatedDeal.deal_name)}</button>
+        ${renderStatusBadge(relatedDeal.stage || 'discovery')}
+      `;
+    } else if (status === 'converted') {
+      dealChipEl.innerHTML = `
+        <button
+          data-action="create-deal-from-lead"
+          data-id="${lead.id}"
+          class="h-8 px-3 inline-flex items-center gap-2 text-xs font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition"
+        >
+          <i data-lucide="briefcase" class="w-3.5 h-3.5"></i> Create Deal
+        </button>
+      `;
+    } else {
+      dealChipEl.innerHTML = '<span class="text-xs text-gray-400">Available once this lead is Converted</span>';
+    }
+  }
+
   // Timeline
   const timelineEl = $('#lead-details-timeline');
   if (timelineEl) {
@@ -5458,6 +5497,9 @@ function renderLeadDetails() {
     ];
     timelineEl.innerHTML = buildCrmTimeline(items);
   }
+
+  const addActivityBtn = $('#lead-details-add-activity-btn');
+  if (addActivityBtn) addActivityBtn.dataset.leadId = lead.id;
 
   const editBtn = $('#lead-details-edit-btn');
   if (editBtn) editBtn.dataset.id = lead.id;
@@ -5752,11 +5794,21 @@ function openDealDetailsModal(id) {
   setTxt('deal-details-modal-service-type', deal.service_type_id ? (getCrmServiceTypeLabel(deal.service_type_id) || '—') : '—');
   setTxt('deal-details-modal-probability', deal.probability != null ? `${deal.probability}%` : '—');
   setTxt('deal-details-modal-close', deal.expected_close_date ? fmtDate(deal.expected_close_date) : '—');
-  setTxt('deal-details-modal-lead', relatedLead ? relatedLead.lead_name : '—');
   setTxt('deal-details-modal-notes', deal.notes || 'No notes.');
+
+  // Related lead — clickable link back to Lead Details when linked (Sprint CRM-4).
+  const leadEl = $('#deal-details-modal-lead');
+  if (leadEl) {
+    leadEl.innerHTML = relatedLead
+      ? `<button class="text-sm font-semibold text-indigo-600 hover:underline" data-action="open-lead-details" data-id="${relatedLead.id}">${escapeHtml(relatedLead.lead_name)}</button>`
+      : '—';
+  }
 
   const editBtn = $('#deal-details-modal-edit-btn');
   if (editBtn) editBtn.dataset.id = deal.id;
+
+  const addActivityBtn = $('#deal-details-modal-add-activity-btn');
+  if (addActivityBtn) addActivityBtn.dataset.dealId = deal.id;
 
   const activities = state.crmActivities.filter(a => Number(a.deal_id) === id && !a.is_archived);
   const actEl = $('#deal-details-modal-activities');
@@ -11652,6 +11704,7 @@ function handleDealLeadAutofill() {
 function openNewDealModal(prefillClientId) {
   if (!isAdmin()) return;
   state.editingDealId = null;
+  state.dealCreationSourceLeadId = null;
   const form = $('#deal-form');
   form.reset();
   populateDealClientSelect();
@@ -11666,11 +11719,32 @@ function openNewDealModal(prefillClientId) {
   openModal('deal-modal');
 }
 
+// Sprint CRM-4 — explicit, user-triggered "Create Deal" action from a
+// Converted Lead (see renderLeadDetails()'s Related Deal chip). Conversion
+// never auto-creates a Deal; this is the only path that does, and only when
+// the user clicks it. Reuses openNewDealModal()/handleDealLeadAutofill() so
+// the same "only fill currently-empty, clearly-safe fields, never guess the
+// Deal name" behavior from Sprint CRM-3B applies here too.
+function openCreateDealFromLead(leadId) {
+  if (!isAdmin()) return;
+  const lead = state.crmLeads.find(l => Number(l.id) === Number(leadId));
+  if (!lead) { toast('Lead not found', 'error'); return; }
+  if (findDealForLead(lead.id)) { toast('This lead already has a linked deal', 'info'); return; }
+
+  openNewDealModal(lead.client_id != null ? lead.client_id : undefined);
+  const leadSel = $('#deal-lead-id');
+  if (leadSel) leadSel.value = String(lead.id);
+  handleDealLeadAutofill();
+  state.dealCreationSourceLeadId = lead.id;
+  $('#deal-modal-title').textContent = 'Create Deal from Lead';
+}
+
 function openEditDealModal(id) {
   if (!isAdmin()) return;
   const deal = state.crmDeals.find(d => Number(d.id) === id);
   if (!deal) { toast('Deal not found', 'error'); return; }
   state.editingDealId = id;
+  state.dealCreationSourceLeadId = null;
   const form = $('#deal-form');
   form.reset();
   populateDealClientSelect();
@@ -11714,6 +11788,26 @@ async function handleDealSubmit(e) {
   else payload.lead_id = null;
   if (payload.probability) payload.probability = Number(payload.probability);
   else payload.probability = null;
+
+  // Sprint CRM-4 — one Lead qualifies at most one Deal. Enforced here (the
+  // single write path for both create and edit) rather than only at the
+  // "Create Deal" button, so picking an already-linked lead from the plain
+  // Deal form (or re-linking an existing deal to it) is blocked too.
+  if (payload.lead_id) {
+    const conflictingDeal = state.crmDeals.find(d =>
+      Number(d.lead_id) === payload.lead_id &&
+      !d.is_archived &&
+      Number(d.id) !== Number(state.editingDealId)
+    );
+    if (conflictingDeal) {
+      toast(`This lead is already linked to deal "${conflictingDeal.deal_name}"`, 'error');
+      submitBtn.disabled = false;
+      submitBtn.innerHTML = isEditing ? '<i data-lucide="check" class="w-4 h-4"></i> Update Deal' : '<i data-lucide="check" class="w-4 h-4"></i> Create Deal';
+      refreshIcons();
+      return;
+    }
+  }
+
   let result = null;
   if (isEditing) { payload.updated_at = new Date().toISOString(); result = await updateCrmDeal(state.editingDealId, payload); }
   else { result = await createCrmDeal(payload); }
@@ -11725,8 +11819,14 @@ async function handleDealSubmit(e) {
   state.editingDealId = null;
   form.reset();
   closeModal();
+  const returnToLeadId = state.dealCreationSourceLeadId;
+  state.dealCreationSourceLeadId = null;
   await refreshDataAndRender();
-  setCrmTab('deals');
+  if (!isEditing && returnToLeadId) {
+    openLeadDetails(returnToLeadId);
+  } else {
+    setCrmTab('deals');
+  }
 }
 
 // ---------- Activity Modal Helpers ----------
@@ -11746,7 +11846,11 @@ function populateActivityOwnerSelect() {
       .map(m => `<option value="${m.id}">${escapeHtml(m.name)}</option>`).join('');
 }
 
-function openNewActivityModal(prefillClientId) {
+// Sprint CRM-4 — prefillLeadId/prefillDealId let a caller attach the new
+// Activity directly to a Lead or Deal via the form's hidden lead_id/deal_id
+// fields (crm_activities already has both columns — see
+// crm_base_schema_recovery_migration.sql — this just wires the UI to them).
+function openNewActivityModal(prefillClientId, prefillLeadId, prefillDealId) {
   if (!isAdmin()) return;
   state.editingActivityId = null;
   const form = $('#activity-form');
@@ -11754,6 +11858,10 @@ function openNewActivityModal(prefillClientId) {
   populateActivityClientSelect();
   populateActivityOwnerSelect();
   if (prefillClientId) { const sel = $('#activity-client-id'); if (sel) sel.value = prefillClientId; }
+  const leadHid = $('#activity-lead-id-hidden');
+  if (leadHid) leadHid.value = prefillLeadId || '';
+  const dealHid = $('#activity-deal-id-hidden');
+  if (dealHid) dealHid.value = prefillDealId || '';
   $('#activity-modal-title').textContent = 'New Activity';
   const submitBtn = form.querySelector('button[type=submit]');
   if (submitBtn) submitBtn.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i> Create Activity';
@@ -11778,6 +11886,8 @@ function openEditActivityModal(id) {
   form.outcome.value = activity.outcome || '';
   const cSel = $('#activity-client-id'); if (cSel) cSel.value = activity.client_id != null ? String(activity.client_id) : '';
   const oSel = $('#activity-owner-id'); if (oSel) oSel.value = activity.owner_id != null ? String(activity.owner_id) : '';
+  const leadHid = $('#activity-lead-id-hidden'); if (leadHid) leadHid.value = activity.lead_id != null ? String(activity.lead_id) : '';
+  const dealHid = $('#activity-deal-id-hidden'); if (dealHid) dealHid.value = activity.deal_id != null ? String(activity.deal_id) : '';
   $('#activity-modal-title').textContent = 'Edit Activity';
   const submitBtn = form.querySelector('button[type=submit]');
   if (submitBtn) submitBtn.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i> Update Activity';
@@ -11797,6 +11907,10 @@ async function handleActivitySubmit(e) {
   const payload = normalizePayload(new FormData(form));
   if (payload.client_id) payload.client_id = Number(payload.client_id);
   if (payload.owner_id) payload.owner_id = Number(payload.owner_id);
+  if (payload.lead_id) payload.lead_id = Number(payload.lead_id);
+  else payload.lead_id = null;
+  if (payload.deal_id) payload.deal_id = Number(payload.deal_id);
+  else payload.deal_id = null;
   let result = null;
   if (isEditing) { payload.updated_at = new Date().toISOString(); result = await updateCrmActivity(state.editingActivityId, payload); }
   else { result = await createCrmActivity(payload); }
@@ -14701,6 +14815,12 @@ if (action === 'convert-lead-to-client') {
   return;
 }
 
+if (action === 'create-deal-from-lead') {
+  const id = Number(trigger.dataset.id);
+  openCreateDealFromLead(id);
+  return;
+}
+
 if (action === 'back-to-client-list') {
   state.selectedClientId = null;
   localStorage.removeItem('tgora_selected_client_id');
@@ -14752,7 +14872,9 @@ if (action === 'archive-deal') {
 
 if (action === 'open-activity-modal') {
   const prefillClientId = trigger.dataset.clientId ? Number(trigger.dataset.clientId) : undefined;
-  openNewActivityModal(prefillClientId);
+  const prefillLeadId = trigger.dataset.leadId ? Number(trigger.dataset.leadId) : undefined;
+  const prefillDealId = trigger.dataset.dealId ? Number(trigger.dataset.dealId) : undefined;
+  openNewActivityModal(prefillClientId, prefillLeadId, prefillDealId);
   return;
 }
 
