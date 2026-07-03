@@ -1356,6 +1356,21 @@ async function fetchFinanceTransactions() {
   if (error) { console.error('fetchFinanceTransactions', error); return []; }
   return data || [];
 }
+
+// Sprint 4.5B: the single choke point every standalone (non-batch) Finance
+// transaction mutation path already funnels through — create, edit, split
+// receipt, forecast conversion, restore all fetch a fresh
+// state.financeTransactions and then re-render. Wiring the Accounting
+// Journal sync in exactly here (rather than at each call site) means every
+// current and future caller of this helper gets automatic posting for
+// free. See syncAccountingJournal() (Journal Posting Engine section) for
+// the reconciliation/idempotency logic itself — this is only the fetch+sync
+// pairing, no posting logic lives here.
+async function loadFinanceTransactionsAndSync() {
+  state.financeTransactions = await fetchFinanceTransactions();
+  syncAccountingJournal();
+}
+
 async function createFinanceAccount(payload) {
   if (!isAdmin()) return null;
   const { data, error } = await supabaseClient.from('finance_accounts').insert([payload]).select().single();
@@ -1554,6 +1569,7 @@ async function convertForecastToTransaction(forecastId) {
     const [txs, forecasts] = await Promise.all([fetchFinanceTransactions(), fetchFinanceForecasts()]);
     state.financeTransactions = txs;
     state.financeForecasts    = forecasts;
+    syncAccountingJournal(); // Sprint 4.5B — reconcile Journal against the newly-created transaction
     renderFinanceView();
   }
 }
@@ -5794,6 +5810,7 @@ async function refreshDataAndRender() {
   state.financeSettings     = financeSettings;
   state.financeFixedCosts   = financeFixedCosts;
   state.financeChartOfAccounts = financeChartOfAccounts;
+  syncAccountingJournal(); // Sprint 4.5B — reconcile Journal against the freshly-fetched transactions
 
   // Re-derive role from the freshly-fetched team members so that external
   // role changes are reflected without a full page reload.
@@ -6367,6 +6384,74 @@ function postAllAccountingTransactions(transactions) {
   }
 
   return { journalPostings, postedEntries, postedTransactions, skippedTransactions };
+}
+
+// ─── Automatic Journal Posting Integration (Sprint 4.5B) ────────────────────
+// Fully reconciles state.accountingJournal from state.financeTransactions —
+// the single integration point between real Finance transactions and the
+// Accounting Engine. Reuses postAllAccountingTransactions() (itself a thin
+// loop over postJournal()) rather than introducing a second posting path.
+//
+// Sprint 4.5B originally posted incrementally (only transactions not yet
+// represented in the journal, by transactionId), which meant an edited
+// transaction kept its stale original-amount posting forever — the Journal
+// could drift from Finance with no way to catch up short of inventing
+// reversal entries, which are explicitly out of scope. Revised here to
+// clear state.accountingJournal and repost from scratch on every call
+// instead: the same "pure, no caching, rebuilt fresh on every call"
+// convention every other engine in this stack already follows (General
+// Ledger, Trial Balance, Income Statement, Balance Sheet, Cash Flow — see
+// their own section comments above). Journal Posting couldn't follow that
+// convention until now because a posting has identity (id/journalNumber,
+// Sprint 4.3E) that earlier sprints assumed had to be preserved; a full
+// rebuild means that identity is only stable for the duration of one
+// reconciled state, not across edits — acceptable because nothing in this
+// codebase persists or displays journalNumber/id across syncs (no posting
+// history, no audit trail, both explicitly out of scope).
+//
+// "Active" matches the exact filter every other Finance read path already
+// applies to decide what counts as a real transaction (see
+// validateFinanceTotals()'s base filter above): not archived, not
+// soft-deleted, not cancelled. Because every sync rebuilds from the CURRENT
+// state.financeTransactions, this function is naturally self-correcting:
+//   - edited transaction  -> next sync reposts it with its current amount/
+//     type/account, so the Journal (and everything derived from it —
+//     Ledger, Trial Balance, Income Statement, Balance Sheet, Cash Flow,
+//     the Facade, and the Accounting Reports UI that reads the Facade)
+//     reflects the edit with no drift.
+//   - archived/soft-deleted/cancelled -> excluded from the active set, so
+//     it simply doesn't appear in the rebuilt journal — this is an
+//     in-memory reporting view, not data loss: the underlying
+//     finance_transactions row and its audit log are untouched in Supabase.
+//   - restored -> becomes active again, reappears on the next sync.
+// No reversal entries exist or are needed: "remove a posting" is just "not
+// include it in this rebuild."
+//
+// Idempotent by construction, for a stronger reason than before: calling
+// this any number of times in a row with an unchanged state.financeTransactions
+// always clears then rebuilds the identical set of postings, so there is
+// never a second posting for the same transaction — clear-then-rebuild
+// cannot accumulate duplicates the way append-only posting could.
+// postJournal()'s own unmapped/unbalanced skip logic (Sprint 4.3D) means an
+// unpostable transaction (unknown type, transfer, forecast, or a genuinely
+// unbalanced entry pair) is silently skipped here too — Finance transaction
+// creation/update itself already succeeded and returned before this
+// function is ever called, so Accounting can never block or fail Finance.
+function syncAccountingJournal() {
+  state.accountingJournal = [];
+  accountingJournalNextId = 1;
+  accountingJournalNextNumber = 1;
+
+  const transactions = Array.isArray(state.financeTransactions) ? state.financeTransactions : [];
+  const activeTransactions = transactions.filter(t =>
+    !t.is_archived && !t.is_deleted && t.status !== 'cancelled'
+  );
+
+  if (activeTransactions.length === 0) {
+    return { journalPostings: [], postedEntries: [], postedTransactions: [], skippedTransactions: [] };
+  }
+
+  return postAllAccountingTransactions(activeTransactions);
 }
 
 // ─── Chart of Accounts (Sprint 4.3B) ─────────────────────────────────────────
@@ -10306,7 +10391,7 @@ async function handleFinanceTransactionSubmit(e) {
   if (ok) {
     toast(id ? 'Transaction updated.' : 'Transaction added.', 'success');
     closeModal();
-    state.financeTransactions = await fetchFinanceTransactions();
+    await loadFinanceTransactionsAndSync();
     renderFinanceView();
   }
 }
@@ -10352,7 +10437,7 @@ async function handleSplitReceiptSubmit(e) {
   if (ptResult) {
     toast('Split receipt recorded.', 'success');
     closeModal();
-    state.financeTransactions = await fetchFinanceTransactions();
+    await loadFinanceTransactionsAndSync();
     renderFinanceView();
   }
 }
@@ -14574,7 +14659,7 @@ if (action === 'restore-finance-transaction') {
     const ok = await restoreFinanceTransaction(id);
     if (ok) {
       toast('Transaction restored.', 'success');
-      state.financeTransactions = await fetchFinanceTransactions();
+      await loadFinanceTransactionsAndSync();
       renderFinanceView();
     }
   })();
@@ -15574,6 +15659,7 @@ renderStaticButtonMounts();
     state.financeSettings     = financeSettings;
     state.financeFixedCosts   = financeFixedCosts;
     state.financeChartOfAccounts = financeChartOfAccounts;
+    syncAccountingJournal(); // Sprint 4.5B — initial load: post every active transaction once
 
   } catch (err) {
     console.error(err);
