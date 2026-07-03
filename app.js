@@ -6620,6 +6620,92 @@ function getTrialBalanceTotals() {
   return buildTrialBalance().totals;
 }
 
+// ─── Income Statement Engine (Sprint 4.4B) ───────────────────────────────────
+// Pure, derived-only Income Statement built from buildTrialBalance() —
+// never from state.financeTransactions, and never from
+// state.accountingJournal directly. The Trial Balance has already resolved
+// each account's debit/credit column (Sprint 4.4A); this layer only filters
+// those rows down to accountType 'revenue'/'expense' and reduces each to a
+// single signed amount. No new state, no caching, no mutation — rebuilt
+// fresh on every call, same convention as every engine layer below it.
+//
+// Sign convention per row (mirrors the Trial Balance's own debit/credit
+// split, just collapsed to one number):
+//   revenue: amount = credit - debit  (credit column is positive revenue;
+//            a stray debit balance on a revenue account, e.g. a reversal,
+//            nets out as negative revenue rather than being dropped)
+//   expense: amount = debit - credit  (debit column is positive expense;
+//            a stray credit balance on an expense account, e.g. a refund,
+//            nets out as negative expense)
+// Since a Trial Balance row only ever has one of debit/credit non-zero,
+// this is equivalent to "use the normal-side column, treat the opposite
+// side as a negative" as specified — written as a subtraction so it holds
+// even in the (currently unreachable, but not assumed impossible) case
+// where both are non-zero.
+//
+// grossProfit/operatingProfit/netProfit are intentionally all the same
+// figure (revenue.total - expenses.total) for now — no COGS, tax, or
+// depreciation sections exist yet. Kept as three separate fields (instead
+// of one aliased number) so a future sprint can specialize each without
+// changing this function's return shape.
+function buildIncomeStatement() {
+  const trialBalanceRows = getTrialBalanceRows();
+
+  const revenueRows = trialBalanceRows
+    .filter(row => row.accountType === 'revenue')
+    .map(row => ({
+      accountCode: row.accountCode,
+      accountName: row.accountName,
+      amount: (Number(row.credit) || 0) - (Number(row.debit) || 0),
+    }));
+
+  const expenseRows = trialBalanceRows
+    .filter(row => row.accountType === 'expense')
+    .map(row => ({
+      accountCode: row.accountCode,
+      accountName: row.accountName,
+      amount: (Number(row.debit) || 0) - (Number(row.credit) || 0),
+    }));
+
+  const revenueTotal = revenueRows.reduce((s, r) => s + r.amount, 0);
+  const expenseTotal = expenseRows.reduce((s, r) => s + r.amount, 0);
+  const grossProfit = revenueTotal - expenseTotal;
+
+  return {
+    revenue: { rows: revenueRows, total: revenueTotal },
+    expenses: { rows: expenseRows, total: expenseTotal },
+    grossProfit,
+    operatingProfit: grossProfit,
+    netProfit: grossProfit,
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+// Returns just the revenue rows. Thin wrapper over buildIncomeStatement()
+// — no separate filtering logic, so this can never drift from the totals.
+function getIncomeStatementRevenueRows() {
+  return buildIncomeStatement().revenue.rows;
+}
+
+// Returns just the expense rows. Thin wrapper over buildIncomeStatement(),
+// same reasoning as getIncomeStatementRevenueRows() above.
+function getIncomeStatementExpenseRows() {
+  return buildIncomeStatement().expenses.rows;
+}
+
+// Returns just the summary figures (both section totals plus the three
+// profit figures). Thin wrapper over buildIncomeStatement().
+function getIncomeStatementTotals() {
+  const statement = buildIncomeStatement();
+  return {
+    revenueTotal:    statement.revenue.total,
+    expenseTotal:    statement.expenses.total,
+    grossProfit:     statement.grossProfit,
+    operatingProfit: statement.operatingProfit,
+    netProfit:       statement.netProfit,
+  };
+}
+
 function financeTypeBadge(txType) {
   const bg    = FINANCE_TX_TYPE_BG[txType]    || 'bg-gray-50';
   const color = FINANCE_TX_TYPE_COLORS[txType] || 'text-gray-600';
