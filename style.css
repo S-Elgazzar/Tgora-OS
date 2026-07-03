@@ -664,6 +664,21 @@ select.form-input:disabled {
 .badge-won .dot       { background: #16a34a; }
 .badge-lost           { background: #fef2f2; color: #991b1b; }
 .badge-lost .dot      { background: #ef4444; }
+/* Lead-only statuses (Sprint CRM-3A) — Lead status display maps legacy
+   won/lost rows to these; Deal keeps using badge-won/badge-lost above. */
+.badge-converted      { background: #dcfce7; color: #14532d; }
+.badge-converted .dot { background: #16a34a; }
+.badge-disqualified   { background: #fef2f2; color: #991b1b; }
+.badge-disqualified .dot { background: #ef4444; }
+/* CRM Deal stage badges (Sprint CRM-3B) — discovery/proposal/negotiation had
+   no class, so they rendered as unstyled text with an invisible dot next to
+   colored Won/Lost badges. Won/Lost keep using badge-won/badge-lost above. */
+.badge-discovery      { background: #eff6ff; color: #1d4ed8; }
+.badge-discovery .dot { background: #3b82f6; }
+.badge-proposal       { background: #f3e8ff; color: #6b21a8; }
+.badge-proposal .dot  { background: #a855f7; }
+.badge-negotiation    { background: #fef3c7; color: #92400e; }
+.badge-negotiation .dot { background: #f59e0b; }
 .badge-archived       { background: #f3f4f6; color: #6b7280; }
 .badge-archived .dot  { background: #9ca3af; }
 

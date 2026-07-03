@@ -1054,7 +1054,7 @@ function renderStaticButtonMounts() {
   if (crmNewClientMount) {
     crmNewClientMount.innerHTML = renderButton(createCreateButtonDescriptor({
       id: 'crm-new-client-btn',
-      text: 'New Client',
+      text: 'New Company',
       dataset: { action: 'open-client-modal' },
     }));
   }
@@ -1131,6 +1131,19 @@ async function fetchTeamMembers() {
 // Sprint CRM-2 (no destructive status changes, no UI changes to the Lead
 // status list) — it's left as a documented follow-up for a future sprint
 // once teams have migrated off relying on Lead.status for Won/Lost.
+//
+// Sprint CRM-3A follow-up: the Lead status UI (form + badges + filters) now
+// offers 'converted'/'disqualified' instead of 'won'/'lost' going forward.
+// Existing rows still stored as 'won'/'lost' are NOT migrated — this helper
+// maps them to their new display-only equivalent so old and new rows read
+// consistently. It never writes back to the database.
+function normalizeCrmLeadStatusForDisplay(status) {
+  const key = String(status || '').toLowerCase();
+  if (key === 'won') return 'converted';
+  if (key === 'lost') return 'disqualified';
+  return key;
+}
+
 async function fetchCrmLeads() {
   const { data, error } = await supabaseClient
     .from('crm_leads')
@@ -4816,7 +4829,7 @@ function renderCrmLeads() {
   }
 
   if (f.status && f.status !== 'all') {
-    leads = leads.filter((l) => (l.status || '').toLowerCase() === f.status);
+    leads = leads.filter((l) => normalizeCrmLeadStatusForDisplay(l.status) === f.status);
   }
 
   if (f.owner !== null && f.owner !== undefined) {
@@ -4876,7 +4889,7 @@ function renderCrmLeads() {
           </td>
           <td class="px-5 py-3.5 text-sm text-gray-700">${escapeHtml(l.company_name || '—')}</td>
           <td class="px-5 py-3.5 text-sm text-gray-700">${labelize(l.source)}</td>
-          <td class="px-5 py-3.5">${renderStatusBadge(l.status)}</td>
+          <td class="px-5 py-3.5">${renderStatusBadge(normalizeCrmLeadStatusForDisplay(l.status))}</td>
           <td class="px-5 py-3.5 text-sm text-gray-700">${ownerCell}</td>
           <td class="px-5 py-3.5 text-sm text-gray-500">${timeAgo(l.updated_at)}</td>
           <td class="px-5 py-3.5 text-right">${actionsCell}</td>
@@ -5356,7 +5369,7 @@ function renderLeadDetails() {
     return;
   }
 
-  const status   = (lead.status   || 'new').toLowerCase();
+  const status   = normalizeCrmLeadStatusForDisplay(lead.status || 'new');
   const priority = (lead.priority || 'medium').toLowerCase();
   const owner    = state.teamMembers.find((m) => Number(m.id) === Number(lead.owner_id));
 
@@ -5411,11 +5424,11 @@ function renderLeadDetails() {
     if (lead.client_id) {
       const linkedClient = state.crmClients.find(c => Number(c.id) === Number(lead.client_id));
       clientChipEl.innerHTML = linkedClient
-        ? `<span class="text-xs text-gray-500">Linked Client:</span>
+        ? `<span class="text-xs text-gray-500">Linked Company:</span>
            <button class="text-xs font-medium text-indigo-600 hover:underline" data-action="open-client-details" data-id="${linkedClient.id}">${escapeHtml(linkedClient.client_name)}</button>`
-        : '<span class="text-xs text-gray-400">Linked client not found</span>';
+        : '<span class="text-xs text-gray-400">Linked company not found</span>';
     } else {
-      clientChipEl.innerHTML = '<span class="text-xs text-gray-400">No linked client</span>';
+      clientChipEl.innerHTML = '<span class="text-xs text-gray-400">No linked company</span>';
     }
   }
 
@@ -5428,7 +5441,7 @@ function renderLeadDetails() {
       convertBtn.classList.add('opacity-50', 'cursor-not-allowed');
     } else {
       convertBtn.disabled = false;
-      convertBtn.textContent = 'Convert to Client';
+      convertBtn.textContent = 'Convert to Company';
       convertBtn.classList.remove('opacity-50', 'cursor-not-allowed');
       convertBtn.dataset.id = lead.id;
     }
@@ -5462,7 +5475,7 @@ async function convertLeadToClient(leadId) {
   if (!isAdmin()) return;
   const lead = state.crmLeads.find(l => Number(l.id) === leadId);
   if (!lead) { toast('Lead not found', 'error'); return; }
-  if (lead.client_id) { toast('Lead is already linked to a client', 'info'); return; }
+  if (lead.client_id) { toast('Lead is already linked to a company', 'info'); return; }
 
   const convertBtn = $('#lead-details-convert-btn');
   if (convertBtn) { convertBtn.disabled = true; convertBtn.textContent = 'Converting…'; }
@@ -5478,7 +5491,7 @@ async function convertLeadToClient(leadId) {
     source:       lead.source || 'unknown',
     owner_id:     lead.owner_id || null,
     status:       'active',
-    type:         'company',
+    client_type:  'company',
     is_archived:  false,
     created_at:   now,
     updated_at:   now,
@@ -5486,8 +5499,8 @@ async function convertLeadToClient(leadId) {
   const { data: clientData, error: clientError } = await supabaseClient.from('crm_clients').insert([clientPayload]).select().single();
   if (clientError) {
     console.error('convertLeadToClient: create client', clientError);
-    toast('Failed to create client', 'error');
-    if (convertBtn) { convertBtn.disabled = false; convertBtn.textContent = 'Convert to Client'; }
+    toast('Failed to create company', 'error');
+    if (convertBtn) { convertBtn.disabled = false; convertBtn.textContent = 'Convert to Company'; }
     return;
   }
 
@@ -5511,9 +5524,9 @@ async function convertLeadToClient(leadId) {
   const { error: linkError } = await supabaseClient.from('crm_leads').update({ client_id: clientData.id, updated_at: now }).eq('id', leadId);
   if (linkError) {
     console.error('convertLeadToClient: link lead', linkError);
-    toast('Client created but lead link failed', 'error');
+    toast('Company created but lead link failed', 'error');
   } else {
-    toast('Lead converted to client', 'success');
+    toast('Lead converted to company', 'success');
   }
 
   await refreshDataAndRender();
@@ -5540,7 +5553,7 @@ function openLeadDetails(id) {
 
 function openClientDetails(id) {
   const client = state.crmClients.find(c => Number(c.id) === id);
-  if (!client) { toast('Client not found', 'error'); return; }
+  if (!client) { toast('Company not found', 'error'); return; }
   state.selectedClientId = id;
   localStorage.setItem('tgora_selected_client_id', id);
   window.history.pushState({ view: 'client-details', clientId: id }, '', `#client-details-${id}`);
@@ -5665,7 +5678,7 @@ function renderClientDetails() {
       : leads.map(l => `
           <div class="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
             <button class="text-sm font-medium text-gray-900 hover:text-indigo-600 text-left" data-action="open-lead-details" data-id="${l.id}">${escapeHtml(l.lead_name)}</button>
-            ${renderStatusBadge(l.status)}
+            ${renderStatusBadge(normalizeCrmLeadStatusForDisplay(l.status))}
           </div>
         `).join('');
   }
@@ -5728,6 +5741,7 @@ function openDealDetailsModal(id) {
 
   const client = state.crmClients.find(c => Number(c.id) === Number(deal.client_id));
   const owner = state.teamMembers.find(m => Number(m.id) === Number(deal.owner_id));
+  const relatedLead = deal.lead_id != null ? state.crmLeads.find(l => Number(l.id) === Number(deal.lead_id)) : null;
 
   const setTxt = (elId, val) => { const el = $(`#${elId}`); if (el) el.textContent = val || '—'; };
   setTxt('deal-details-modal-name', deal.deal_name);
@@ -5738,6 +5752,7 @@ function openDealDetailsModal(id) {
   setTxt('deal-details-modal-service-type', deal.service_type_id ? (getCrmServiceTypeLabel(deal.service_type_id) || '—') : '—');
   setTxt('deal-details-modal-probability', deal.probability != null ? `${deal.probability}%` : '—');
   setTxt('deal-details-modal-close', deal.expected_close_date ? fmtDate(deal.expected_close_date) : '—');
+  setTxt('deal-details-modal-lead', relatedLead ? relatedLead.lead_name : '—');
   setTxt('deal-details-modal-notes', deal.notes || 'No notes.');
 
   const editBtn = $('#deal-details-modal-edit-btn');
@@ -11276,7 +11291,7 @@ function populateLeadClientSelect() {
   const sel = $('#lead-client-id');
   if (!sel) return;
   const activeClients = state.crmClients.filter(c => !c.is_archived);
-  sel.innerHTML = '<option value="">-- No linked client --</option>' +
+  sel.innerHTML = '<option value="">-- No linked company --</option>' +
     activeClients.map(c => `<option value="${c.id}">${escapeHtml(c.client_name)}</option>`).join('');
 }
 
@@ -11315,7 +11330,7 @@ function openEditLeadModal(id) {
   form.service_interest.value  = lead.service_interest || '';
   form.expected_budget.value   = lead.expected_budget || '';
   form.priority.value          = lead.priority || 'medium';
-  form.status.value            = lead.status || 'new';
+  form.status.value            = normalizeCrmLeadStatusForDisplay(lead.status || 'new');
   form.owner_id.value          = lead.owner_id != null ? String(lead.owner_id) : '';
   form.next_follow_up.value    = lead.next_follow_up || '';
   form.notes.value             = lead.notes || '';
@@ -11378,15 +11393,41 @@ async function handleLeadSubmit(e) {
 }
 
 // ---------- Client Modal Helpers ----------
+// Sprint CRM-3B — Company Type select only offers company/individual going
+// forward (Type is entity type, not industry). Existing rows saved with a
+// legacy value (e.g. 'real_estate', 'clinic') must still display and edit
+// safely without being silently coerced to 'company'. These two helpers keep
+// the shared #client-form select clean between opens and only inject a
+// legacy option when editing a record that actually needs it.
+function resetLegacyClientTypeOptions(select) {
+  if (!select) return;
+  Array.from(select.options)
+    .filter((o) => o.dataset.legacyClientType === 'true')
+    .forEach((o) => o.remove());
+}
+
+function ensureClientTypeOption(select, value) {
+  if (!select || !value) return;
+  const exists = Array.from(select.options).some((o) => o.value === value);
+  if (!exists) {
+    const opt = document.createElement('option');
+    opt.value = value;
+    opt.textContent = `${labelize(value)} (legacy)`;
+    opt.dataset.legacyClientType = 'true';
+    select.appendChild(opt);
+  }
+}
+
 function openNewClientModal() {
   if (!isAdmin()) return;
   state.editingClientId = null;
   const form = $('#client-form');
   form.reset();
+  resetLegacyClientTypeOptions(form.client_type);
   populateClientOwnerSelect();
-  $('#client-modal-title').textContent = 'New Client';
+  $('#client-modal-title').textContent = 'New Company';
   const submitBtn = form.querySelector('button[type=submit]');
-  if (submitBtn) submitBtn.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i> Create Client';
+  if (submitBtn) submitBtn.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i> Create Company';
   refreshIcons();
   openModal('client-modal');
 }
@@ -11394,12 +11435,14 @@ function openNewClientModal() {
 function openEditClientModal(id) {
   if (!isAdmin()) return;
   const client = state.crmClients.find((c) => Number(c.id) === id);
-  if (!client) { toast('Client not found', 'error'); return; }
+  if (!client) { toast('Company not found', 'error'); return; }
   state.editingClientId = id;
   const form = $('#client-form');
   form.reset();
   populateClientOwnerSelect();
   form.client_name.value = client.client_name || '';
+  resetLegacyClientTypeOptions(form.client_type);
+  ensureClientTypeOption(form.client_type, client.client_type);
   form.client_type.value = client.client_type || 'company';
   form.industry.value    = client.industry || '';
   form.website.value     = client.website || '';
@@ -11411,9 +11454,9 @@ function openEditClientModal(id) {
   form.owner_id.value    = client.owner_id != null ? String(client.owner_id) : '';
   form.status.value      = client.status || 'active';
   form.notes.value       = client.notes || '';
-  $('#client-modal-title').textContent = 'Edit Client';
+  $('#client-modal-title').textContent = 'Edit Company';
   const submitBtn = form.querySelector('button[type=submit]');
-  if (submitBtn) submitBtn.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i> Update Client';
+  if (submitBtn) submitBtn.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i> Update Company';
   refreshIcons();
   openModal('client-modal');
 }
@@ -11444,13 +11487,13 @@ async function handleClientSubmit(e) {
 
   submitBtn.disabled = false;
   submitBtn.innerHTML = isEditing
-    ? '<i data-lucide="check" class="w-4 h-4"></i> Update Client'
-    : '<i data-lucide="check" class="w-4 h-4"></i> Create Client';
+    ? '<i data-lucide="check" class="w-4 h-4"></i> Update Company'
+    : '<i data-lucide="check" class="w-4 h-4"></i> Create Company';
   refreshIcons();
 
   if (!result) return;
 
-  toast(isEditing ? 'Client updated' : 'Client created', 'success');
+  toast(isEditing ? 'Company updated' : 'Company created', 'success');
   state.editingClientId = null;
   form.reset();
   closeModal();
@@ -11563,6 +11606,47 @@ function populateDealLeadSelect() {
   select.innerHTML = '<option value="">No linked lead</option>' +
     state.crmLeads.filter(l => !l.is_archived)
       .map(l => `<option value="${l.id}">${escapeHtml(l.lead_name)}</option>`).join('');
+}
+
+// Sprint CRM-3B — selecting a Related Lead on the Deal form fills in only
+// currently-empty, clearly-safe fields (client, owner, service type, value).
+// Deal name is intentionally NOT autofilled — company_name/lead_name alone
+// isn't a meaningful deal name, and inventing one risks overwriting what the
+// user intends to type. It never overwrites a field the user (or a prior
+// edit) already populated, never touches the database, and the user can
+// freely edit any autofilled value before saving — this is UI-only
+// convenience, not a Lead conversion or automation.
+function handleDealLeadAutofill() {
+  const form = $('#deal-form');
+  const leadSel = $('#deal-lead-id');
+  if (!form || !leadSel || !leadSel.value) return;
+
+  const lead = state.crmLeads.find((l) => Number(l.id) === Number(leadSel.value));
+  if (!lead) return;
+
+  const clientSel = $('#deal-client-id');
+  if (clientSel && !clientSel.value && lead.client_id != null) {
+    clientSel.value = String(lead.client_id);
+  }
+
+  const ownerSel = $('#deal-owner-id');
+  if (ownerSel && !ownerSel.value && lead.owner_id != null) {
+    ownerSel.value = String(lead.owner_id);
+  }
+
+  const serviceSel = $('#deal-service-type-id');
+  if (serviceSel && !serviceSel.value && lead.service_interest) {
+    const wanted = lead.service_interest.trim().toLowerCase();
+    const match = getActiveCrmServiceTypes().find((s) => s.service_name.toLowerCase() === wanted);
+    if (match) serviceSel.value = String(match.id);
+  }
+
+  if (form.value && !form.value.value.trim() && lead.expected_budget) {
+    const parsed = parseFloat(String(lead.expected_budget).replace(/[^0-9.]/g, ''));
+    if (Number.isFinite(parsed) && parsed > 0) {
+      form.value.value = String(parsed);
+    }
+  }
 }
 
 function openNewDealModal(prefillClientId) {
@@ -14851,6 +14935,7 @@ if (action === 'convert-forecast-to-tx') {
   $('#client-form')?.addEventListener('submit', handleClientSubmit);
   $('#contact-form')?.addEventListener('submit', handleContactSubmit);
   $('#deal-form')?.addEventListener('submit', handleDealSubmit);
+  $('#deal-lead-id')?.addEventListener('change', handleDealLeadAutofill);
   $('#activity-form')?.addEventListener('submit', handleActivitySubmit);
   $('#note-form')?.addEventListener('submit', handleNoteSubmit);
   $('#proposal-form')?.addEventListener('submit', handleProposalSubmit);
