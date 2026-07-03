@@ -6812,6 +6812,149 @@ function getBalanceSheetTotals() {
   };
 }
 
+// ─── Accounting Cash Flow Statement Engine (Sprint 4.4D) ─────────────────────
+// Pure, derived-only Cash Flow Statement built directly from
+// state.accountingJournal (the posted Journal Postings) — never from
+// state.financeTransactions, and never from buildTrialBalance()/
+// buildIncomeStatement()/buildBalanceSheet(), since those aggregate by
+// account rather than by posting and would lose the per-posting cash/offset
+// pairing this statement needs. This is the Accounting Cash Flow Statement
+// (a financial-statement view derived from the ledger), not the existing
+// operational Finance Cash Flow widget (which reads state.financeTransactions
+// directly) — the two are intentionally separate and this engine does not
+// replace, read, or write anything belonging to the other. No new state, no
+// caching, no mutation — rebuilt fresh on every call, same convention as
+// every other engine layer above it.
+//
+// Cash movement detection: a posting is a cash movement only if one of its
+// entries targets the Cash and Bank account (code 1000, see
+// finance_chart_of_accounts_migration.sql). Every posting in
+// state.accountingJournal has exactly two entries (see buildJournalEntries()
+// above), so "the other entry" is unambiguous — it is the offset side whose
+// Chart of Accounts account_type decides which section of the statement the
+// movement belongs to:
+//   revenue / expense / liability -> Operating Activities (liability covers
+//     Client Funds Liability, code 2100 — there is no dedicated Balance
+//     Sheet section for pass-through cash yet, so it is classified as
+//     operating per this sprint's brief rather than left unclassified)
+//   equity                        -> Financing Activities (Owner Equity,
+//     Capital Contributions, Partner Drawings)
+//   asset (other than cash itself, which can never be its own offset)
+//                                 -> Investing Activities. No ACCOUNTING_RULES
+//     mapping currently posts a non-cash asset account (1100/1200 are seeded
+//     in the Chart of Accounts but unmapped), so this section is empty today
+//     by construction, not by a special case — it activates automatically
+//     the day such a mapping exists.
+// A posting with no cash-side entry, or whose offset account isn't a
+// recognized Chart of Accounts row, is skipped rather than guessed at.
+// transfer and unmapped/unknown transaction types never reach this function
+// in the first place — postJournal() already refuses to post them (see
+// Sprint 4.3D/4.3E above), so they fall out naturally rather than needing a
+// second skip check here.
+const ACCOUNTING_CASH_FLOW_CASH_ACCOUNT_CODE = '1000';
+
+function buildAccountingCashFlowStatement(openingCashBalance = 0) {
+  const journal = Array.isArray(state.accountingJournal) ? state.accountingJournal : [];
+
+  const operatingRows = [];
+  const investingRows = [];
+  const financingRows = [];
+
+  for (const posting of journal) {
+    const entries = Array.isArray(posting?.entries) ? posting.entries : [];
+    const cashEntry = entries.find(e => e.account === ACCOUNTING_CASH_FLOW_CASH_ACCOUNT_CODE);
+    if (!cashEntry) continue;
+
+    const amount = (Number(cashEntry.debit) || 0) - (Number(cashEntry.credit) || 0);
+    if (amount === 0) continue;
+
+    const offsetEntry = entries.find(e => e.account !== ACCOUNTING_CASH_FLOW_CASH_ACCOUNT_CODE);
+    if (!offsetEntry) continue;
+
+    const offsetAccount = getChartAccountByCode(offsetEntry.account);
+    if (!offsetAccount) continue;
+
+    const row = {
+      journalNumber:     posting.journalNumber ?? null,
+      transactionId:     posting.transactionId ?? null,
+      transactionType:   posting.transactionType ?? null,
+      description:       posting.description || '',
+      offsetAccountCode: offsetAccount.account_code,
+      offsetAccountName: offsetAccount.account_name,
+      amount,
+    };
+
+    switch (offsetAccount.account_type) {
+      case 'revenue':
+      case 'expense':
+      case 'liability':
+        operatingRows.push(row);
+        break;
+      case 'equity':
+        financingRows.push(row);
+        break;
+      case 'asset':
+        investingRows.push(row);
+        break;
+      default:
+        break;
+    }
+  }
+
+  const operatingTotal = operatingRows.reduce((s, r) => s + r.amount, 0);
+  const investingTotal = investingRows.reduce((s, r) => s + r.amount, 0);
+  const financingTotal = financingRows.reduce((s, r) => s + r.amount, 0);
+  const netCashFlow = operatingTotal + investingTotal + financingTotal;
+
+  const opening = Number(openingCashBalance) || 0;
+  const closingCashBalance = opening + netCashFlow;
+
+  return {
+    operatingActivities: { rows: operatingRows, total: operatingTotal },
+    investingActivities: { rows: investingRows, total: investingTotal },
+    financingActivities: { rows: financingRows, total: financingTotal },
+    netCashFlow,
+    openingCashBalance: opening,
+    closingCashBalance,
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+// Returns just the Operating Activities rows. Thin wrapper over
+// buildAccountingCashFlowStatement() — no separate filtering logic, so this
+// can never drift from the statement's totals.
+function getAccountingCashFlowOperatingRows() {
+  return buildAccountingCashFlowStatement().operatingActivities.rows;
+}
+
+// Returns just the Investing Activities rows. Thin wrapper over
+// buildAccountingCashFlowStatement(), same reasoning as
+// getAccountingCashFlowOperatingRows() above.
+function getAccountingCashFlowInvestingRows() {
+  return buildAccountingCashFlowStatement().investingActivities.rows;
+}
+
+// Returns just the Financing Activities rows. Thin wrapper over
+// buildAccountingCashFlowStatement(), same reasoning as
+// getAccountingCashFlowOperatingRows() above.
+function getAccountingCashFlowFinancingRows() {
+  return buildAccountingCashFlowStatement().financingActivities.rows;
+}
+
+// Returns just the summary figures (section totals, net cash flow, opening/
+// closing cash balance). Thin wrapper over buildAccountingCashFlowStatement().
+function getAccountingCashFlowTotals(openingCashBalance = 0) {
+  const statement = buildAccountingCashFlowStatement(openingCashBalance);
+  return {
+    operatingTotal:      statement.operatingActivities.total,
+    investingTotal:      statement.investingActivities.total,
+    financingTotal:      statement.financingActivities.total,
+    netCashFlow:         statement.netCashFlow,
+    openingCashBalance:  statement.openingCashBalance,
+    closingCashBalance:  statement.closingCashBalance,
+  };
+}
+
 function financeTypeBadge(txType) {
   const bg    = FINANCE_TX_TYPE_BG[txType]    || 'bg-gray-50';
   const color = FINANCE_TX_TYPE_COLORS[txType] || 'text-gray-600';
