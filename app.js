@@ -6706,6 +6706,112 @@ function getIncomeStatementTotals() {
   };
 }
 
+// ─── Balance Sheet Engine (Sprint 4.4C) ──────────────────────────────────────
+// Pure, derived-only Balance Sheet built from buildTrialBalance() and
+// buildIncomeStatement() — never from state.financeTransactions, and never
+// from state.accountingJournal directly. The Trial Balance has already
+// resolved each account's debit/credit column (Sprint 4.4A); this layer
+// only filters those rows down to accountType 'asset'/'liability'/'equity'
+// and reduces each to a single signed amount, the same shape convention the
+// Income Statement (Sprint 4.4B) uses for 'revenue'/'expense'. No new
+// state, no caching, no mutation — rebuilt fresh on every call.
+//
+// Sign convention per row (mirrors the Trial Balance's own debit/credit
+// split, just collapsed to one number):
+//   asset:     amount = debit - credit  (debit column is positive asset; a
+//              stray credit balance on an asset account nets out as a
+//              negative asset rather than being dropped)
+//   liability: amount = credit - debit  (credit column is positive
+//              liability; a stray debit balance nets out as negative)
+//   equity:    amount = credit - debit  (same convention as liability)
+// Since a Trial Balance row only ever has one of debit/credit non-zero,
+// this is equivalent to "use the normal-side column, treat the opposite
+// side as a negative" as specified.
+//
+// Retained Earnings is not a posted Chart of Accounts row — it is derived
+// straight from buildIncomeStatement().netProfit, the same figure the
+// Income Statement itself reports, so the two statements can never
+// disagree about period profit.
+function buildBalanceSheet() {
+  const trialBalanceRows = getTrialBalanceRows();
+
+  const assetRows = trialBalanceRows
+    .filter(row => row.accountType === 'asset')
+    .map(row => ({
+      accountCode: row.accountCode,
+      accountName: row.accountName,
+      amount: (Number(row.debit) || 0) - (Number(row.credit) || 0),
+    }));
+
+  const liabilityRows = trialBalanceRows
+    .filter(row => row.accountType === 'liability')
+    .map(row => ({
+      accountCode: row.accountCode,
+      accountName: row.accountName,
+      amount: (Number(row.credit) || 0) - (Number(row.debit) || 0),
+    }));
+
+  const equityRows = trialBalanceRows
+    .filter(row => row.accountType === 'equity')
+    .map(row => ({
+      accountCode: row.accountCode,
+      accountName: row.accountName,
+      amount: (Number(row.credit) || 0) - (Number(row.debit) || 0),
+    }));
+
+  const assetsTotal     = assetRows.reduce((s, r) => s + r.amount, 0);
+  const liabilitiesTotal = liabilityRows.reduce((s, r) => s + r.amount, 0);
+  const equityTotal     = equityRows.reduce((s, r) => s + r.amount, 0);
+
+  const retainedEarnings = Number(buildIncomeStatement().netProfit) || 0;
+  const totalLiabilitiesAndEquity = liabilitiesTotal + equityTotal + retainedEarnings;
+  const difference = assetsTotal - totalLiabilitiesAndEquity;
+
+  return {
+    assets:      { rows: assetRows,     total: assetsTotal },
+    liabilities: { rows: liabilityRows, total: liabilitiesTotal },
+    equity:      { rows: equityRows,    total: equityTotal },
+    retainedEarnings,
+    totalLiabilitiesAndEquity,
+    difference,
+    balanced: Math.abs(difference) < 0.005,
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+// Returns just the asset rows. Thin wrapper over buildBalanceSheet() — no
+// separate filtering logic, so this can never drift from the totals.
+function getBalanceSheetAssetsRows() {
+  return buildBalanceSheet().assets.rows;
+}
+
+// Returns just the liability rows. Thin wrapper over buildBalanceSheet(),
+// same reasoning as getBalanceSheetAssetsRows() above.
+function getBalanceSheetLiabilitiesRows() {
+  return buildBalanceSheet().liabilities.rows;
+}
+
+// Returns just the equity rows. Thin wrapper over buildBalanceSheet(), same
+// reasoning as getBalanceSheetAssetsRows() above.
+function getBalanceSheetEquityRows() {
+  return buildBalanceSheet().equity.rows;
+}
+
+// Returns just the summary figures (section totals plus retained earnings
+// and the balance check). Thin wrapper over buildBalanceSheet().
+function getBalanceSheetTotals() {
+  const statement = buildBalanceSheet();
+  return {
+    assetsTotal:               statement.assets.total,
+    liabilitiesTotal:          statement.liabilities.total,
+    equityTotal:               statement.equity.total,
+    retainedEarnings:          statement.retainedEarnings,
+    totalLiabilitiesAndEquity: statement.totalLiabilitiesAndEquity,
+    difference:                statement.difference,
+    balanced:                  statement.balanced,
+  };
+}
+
 function financeTypeBadge(txType) {
   const bg    = FINANCE_TX_TYPE_BG[txType]    || 'bg-gray-50';
   const color = FINANCE_TX_TYPE_COLORS[txType] || 'text-gray-600';
