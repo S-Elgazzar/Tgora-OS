@@ -9360,26 +9360,30 @@ function renderFinanceReports() {
 // Income Statement, Balance Sheet, and Cash Flow renderers below. Pure
 // string building only — no state reads, no recalculation; `rows` and
 // `total` are passed in exactly as the statement object already computed
-// them.
+// them. Sprint 4.5C: uses accounting-report-table-container (auto-height)
+// instead of table-scroll-container (20rem min-height) — see style.css —
+// and slightly tighter spacing (mb-3/py-1.5) so a short section (the common
+// case for Chart-of-Accounts-sized data) doesn't leave large empty gaps
+// before the next section or the summary card below it.
 function renderAccountingReportSection(title, rows, total, amountLabelFn) {
   const list = Array.isArray(rows) ? rows : [];
   const bodyHtml = list.length
     ? list.map(r => `<tr class="hover:bg-gray-50 border-b border-gray-50">
-        <td class="px-4 py-2 text-sm text-gray-700">${escapeHtml(r.accountCode ? `${r.accountCode} — ${r.accountName || ''}` : (r.description || r.offsetAccountName || ''))}</td>
-        <td class="px-4 py-2 text-sm text-right ${Number(r.amount) >= 0 ? 'text-emerald-600' : 'text-rose-600'}">${fmtMoney(r.amount)}</td>
+        <td class="px-4 py-1.5 text-sm text-gray-700">${escapeHtml(r.accountCode ? `${r.accountCode} — ${r.accountName || ''}` : (r.description || r.offsetAccountName || ''))}</td>
+        <td class="px-4 py-1.5 text-sm text-right ${Number(r.amount) >= 0 ? 'text-emerald-600' : 'text-rose-600'}">${fmtMoney(r.amount)}</td>
       </tr>`).join('')
-    : `<tr><td colspan="2" class="px-4 py-6 text-center text-gray-400 text-sm">No ${escapeHtml(title.toLowerCase())} yet.</td></tr>`;
+    : `<tr><td colspan="2" class="px-4 py-4 text-center text-gray-400 text-sm">No ${escapeHtml(title.toLowerCase())} yet.</td></tr>`;
 
   return `
-    <div class="mb-4">
-      <h4 class="text-xs font-semibold text-gray-500 uppercase mb-2">${escapeHtml(title)}</h4>
-      <div class="table-scroll-container">
+    <div class="mb-3">
+      <h4 class="text-xs font-semibold text-gray-500 uppercase mb-1.5">${escapeHtml(title)}</h4>
+      <div class="accounting-report-table-container">
         <table class="w-full text-left">
           <tbody>${bodyHtml}</tbody>
           <tfoot>
             <tr class="border-t border-gray-200">
-              <td class="px-4 py-2 text-sm font-semibold text-gray-800">Total ${escapeHtml(title)}</td>
-              <td class="px-4 py-2 text-sm text-right font-semibold ${Number(total) >= 0 ? 'text-emerald-600' : 'text-rose-600'}">${fmtMoney(total)}</td>
+              <td class="px-4 py-1.5 text-sm font-semibold text-gray-800">Total ${escapeHtml(title)}</td>
+              <td class="px-4 py-1.5 text-sm text-right font-semibold ${Number(total) >= 0 ? 'text-emerald-600' : 'text-rose-600'}">${fmtMoney(total)}</td>
             </tr>
           </tfoot>
         </table>
@@ -9387,41 +9391,53 @@ function renderAccountingReportSection(title, rows, total, amountLabelFn) {
     </div>`;
 }
 
-// Trial Balance report: Account | Debit | Credit, mirroring buildTrialBalance()'s
-// own column shape exactly — no re-derivation.
+// Trial Balance report: Account | Debit | Credit | Balance, mirroring
+// buildTrialBalance()'s own column shape — Debit/Credit are unchanged; the
+// Balance column (Sprint 4.5C) reads each row's existing `balance` field
+// (buildTrialBalance() already computes it — see that function's own
+// signed-balance convention above) rather than deriving anything new here.
+// The `?? ` fallback only guards against a row shape that omits `balance`
+// entirely (defensive; buildTrialBalance() always sets it today) — it is
+// not a second calculation of the figure.
 function renderTrialBalanceReport(statement) {
   const rows = Array.isArray(statement?.rows) ? statement.rows : [];
   const totals = statement?.totals || { debitTotal: 0, creditTotal: 0, difference: 0, balanced: true };
 
   const bodyHtml = rows.length
-    ? rows.map(r => `<tr class="hover:bg-gray-50 border-b border-gray-50">
-        <td class="px-4 py-2.5 text-sm font-medium text-gray-800">${escapeHtml(r.accountCode)} — ${escapeHtml(r.accountName)}</td>
-        <td class="px-4 py-2.5 text-sm text-right text-gray-700">${r.debit ? fmtMoney(r.debit) : '—'}</td>
-        <td class="px-4 py-2.5 text-sm text-right text-gray-700">${r.credit ? fmtMoney(r.credit) : '—'}</td>
-      </tr>`).join('')
-    : `<tr><td colspan="3" class="px-4 py-10 text-center text-gray-400 text-sm">No trial balance rows yet.</td></tr>`;
+    ? rows.map(r => {
+        const balance = r.balance ?? ((Number(r.debit) || 0) - (Number(r.credit) || 0));
+        return `<tr class="hover:bg-gray-50 border-b border-gray-50">
+        <td class="px-4 py-1.5 text-sm font-medium text-gray-800">${escapeHtml(r.accountCode)} — ${escapeHtml(r.accountName)}</td>
+        <td class="px-4 py-1.5 text-sm text-right text-gray-700">${r.debit ? fmtMoney(r.debit) : '—'}</td>
+        <td class="px-4 py-1.5 text-sm text-right text-gray-700">${r.credit ? fmtMoney(r.credit) : '—'}</td>
+        <td class="px-4 py-1.5 text-sm text-right font-medium ${Number(balance) >= 0 ? 'text-emerald-600' : 'text-rose-600'}">${fmtMoney(balance)}</td>
+      </tr>`;
+      }).join('')
+    : `<tr><td colspan="4" class="px-4 py-6 text-center text-gray-400 text-sm">No trial balance rows yet.</td></tr>`;
 
   return `
-    <div class="table-scroll-container">
+    <div class="accounting-report-table-container">
       <table class="w-full text-left">
         <thead>
           <tr class="border-b border-gray-100">
-            <th class="px-4 py-2.5 text-xs font-medium text-gray-400 uppercase">Account</th>
-            <th class="px-4 py-2.5 text-xs font-medium text-gray-400 uppercase text-right">Debit</th>
-            <th class="px-4 py-2.5 text-xs font-medium text-gray-400 uppercase text-right">Credit</th>
+            <th class="px-4 py-1.5 text-xs font-medium text-gray-400 uppercase">Account</th>
+            <th class="px-4 py-1.5 text-xs font-medium text-gray-400 uppercase text-right">Debit</th>
+            <th class="px-4 py-1.5 text-xs font-medium text-gray-400 uppercase text-right">Credit</th>
+            <th class="px-4 py-1.5 text-xs font-medium text-gray-400 uppercase text-right">Balance</th>
           </tr>
         </thead>
         <tbody>${bodyHtml}</tbody>
         <tfoot>
           <tr class="border-t border-gray-200">
-            <td class="px-4 py-2.5 text-sm font-semibold text-gray-800">Total</td>
-            <td class="px-4 py-2.5 text-sm text-right font-semibold text-gray-800">${fmtMoney(totals.debitTotal)}</td>
-            <td class="px-4 py-2.5 text-sm text-right font-semibold text-gray-800">${fmtMoney(totals.creditTotal)}</td>
+            <td class="px-4 py-1.5 text-sm font-semibold text-gray-800">Total</td>
+            <td class="px-4 py-1.5 text-sm text-right font-semibold text-gray-800">${fmtMoney(totals.debitTotal)}</td>
+            <td class="px-4 py-1.5 text-sm text-right font-semibold text-gray-800">${fmtMoney(totals.creditTotal)}</td>
+            <td class="px-4 py-1.5 text-sm text-right font-semibold text-gray-400">—</td>
           </tr>
         </tfoot>
       </table>
     </div>
-    <p class="text-xs mt-3 ${totals.balanced ? 'text-emerald-600' : 'text-rose-600'}">${totals.balanced ? 'Balanced' : `Not balanced — difference ${fmtMoney(Math.abs(Number(totals.difference) || 0))}`}</p>`;
+    <p class="text-xs mt-2 ${totals.balanced ? 'text-emerald-600' : 'text-rose-600'}">${totals.balanced ? 'Balanced' : `Not balanced — difference ${fmtMoney(Math.abs(Number(totals.difference) || 0))}`}</p>`;
 }
 
 // Income Statement report: Revenue / Expenses sections + Net Profit, read
@@ -9435,6 +9451,7 @@ function renderIncomeStatementReport(statement) {
   return `
     ${renderAccountingReportSection('Revenue', revenue.rows, revenue.total)}
     ${renderAccountingReportSection('Expenses', expenses.rows, expenses.total)}
+    <div class="border-t border-gray-100 my-2"></div>
     <div class="bg-gray-50 rounded-xl p-3 flex items-center justify-between">
       <span class="text-sm font-semibold text-gray-800">Net Profit</span>
       <span class="text-base font-bold ${netProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}">${fmtMoney(netProfit)}</span>

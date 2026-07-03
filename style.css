@@ -437,6 +437,22 @@ aside::-webkit-scrollbar-thumb:hover {
      rows — without this, overflow-y: auto clips the absolute popover */
   min-height: 20rem;
 }
+
+/* ============================================
+   Accounting report table container — Sprint 4.5C
+   Used only by the Accounting Reports section tables
+   (Trial Balance / Income Statement / Balance Sheet /
+   Cash Flow). These tables have no header-filter
+   popover and are Chart-of-Accounts sized (a handful
+   of rows), so table-scroll-container's 20rem min-height
+   above was pure whitespace here. Height grows and
+   shrinks with actual row count instead; horizontal
+   scroll is still guarded for narrow viewports.
+   ============================================ */
+.accounting-report-table-container {
+  overflow-x: auto;
+}
+
 /* Sticky header: sticks at the top of the scroll container
    so column labels remain visible while scrolling vertically.
    background-color matches the thead's bg-gray-50 class so
