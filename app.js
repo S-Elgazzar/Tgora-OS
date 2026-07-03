@@ -109,6 +109,7 @@ const state = {
   financeFixedCosts: [],
   financeChartOfAccounts: [],
   accountingJournal: [], // in-memory General Journal (Sprint 4.3D) — posted entries only, no persistence
+  accountingReportTab: 'trialBalance', // Accounting Reports statement selector (Sprint 4.5A)
   financeTab: 'dashboard',
   financeDateRange:   localStorage.getItem('tgora_finance_date_range')   || 'this_month',
   financeCustomStart: localStorage.getItem('tgora_finance_custom_start') || '',
@@ -9254,6 +9255,204 @@ function renderFinanceReports() {
   }
 }
 
+// ─── Accounting Reports UI (Sprint 4.5A) ─────────────────────────────────────
+// Read-only rendering layer over the Accounting Statements Facade (Sprint
+// 4.4E) — every renderer here reads its statement argument only, never
+// recalculates, and never touches state.accountingJournal or any other
+// accounting engine state. Lives inside the existing Finance Reports tab
+// (#finance-section-reports), gated behind its own selector
+// (state.accountingReportTab) so it doesn't interfere with the Client
+// Balance / Project P&L / Forecast vs Actual reports already rendered by
+// renderFinanceReports() above.
+//
+// Journal Posting is not wired into real transaction creation yet (see
+// Sprint 4.3D/4.3E), so state.accountingJournal is expected to be empty in
+// normal use until a future sprint wires that up. This UI never fabricates
+// data to fill that gap — an empty journal renders the empty-state message
+// below instead of a statement.
+
+// Builds a simple two-column (account / amount) section table used by the
+// Income Statement, Balance Sheet, and Cash Flow renderers below. Pure
+// string building only — no state reads, no recalculation; `rows` and
+// `total` are passed in exactly as the statement object already computed
+// them.
+function renderAccountingReportSection(title, rows, total, amountLabelFn) {
+  const list = Array.isArray(rows) ? rows : [];
+  const bodyHtml = list.length
+    ? list.map(r => `<tr class="hover:bg-gray-50 border-b border-gray-50">
+        <td class="px-4 py-2 text-sm text-gray-700">${escapeHtml(r.accountCode ? `${r.accountCode} — ${r.accountName || ''}` : (r.description || r.offsetAccountName || ''))}</td>
+        <td class="px-4 py-2 text-sm text-right ${Number(r.amount) >= 0 ? 'text-emerald-600' : 'text-rose-600'}">${fmtMoney(r.amount)}</td>
+      </tr>`).join('')
+    : `<tr><td colspan="2" class="px-4 py-6 text-center text-gray-400 text-sm">No ${escapeHtml(title.toLowerCase())} yet.</td></tr>`;
+
+  return `
+    <div class="mb-4">
+      <h4 class="text-xs font-semibold text-gray-500 uppercase mb-2">${escapeHtml(title)}</h4>
+      <div class="table-scroll-container">
+        <table class="w-full text-left">
+          <tbody>${bodyHtml}</tbody>
+          <tfoot>
+            <tr class="border-t border-gray-200">
+              <td class="px-4 py-2 text-sm font-semibold text-gray-800">Total ${escapeHtml(title)}</td>
+              <td class="px-4 py-2 text-sm text-right font-semibold ${Number(total) >= 0 ? 'text-emerald-600' : 'text-rose-600'}">${fmtMoney(total)}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>`;
+}
+
+// Trial Balance report: Account | Debit | Credit, mirroring buildTrialBalance()'s
+// own column shape exactly — no re-derivation.
+function renderTrialBalanceReport(statement) {
+  const rows = Array.isArray(statement?.rows) ? statement.rows : [];
+  const totals = statement?.totals || { debitTotal: 0, creditTotal: 0, difference: 0, balanced: true };
+
+  const bodyHtml = rows.length
+    ? rows.map(r => `<tr class="hover:bg-gray-50 border-b border-gray-50">
+        <td class="px-4 py-2.5 text-sm font-medium text-gray-800">${escapeHtml(r.accountCode)} — ${escapeHtml(r.accountName)}</td>
+        <td class="px-4 py-2.5 text-sm text-right text-gray-700">${r.debit ? fmtMoney(r.debit) : '—'}</td>
+        <td class="px-4 py-2.5 text-sm text-right text-gray-700">${r.credit ? fmtMoney(r.credit) : '—'}</td>
+      </tr>`).join('')
+    : `<tr><td colspan="3" class="px-4 py-10 text-center text-gray-400 text-sm">No trial balance rows yet.</td></tr>`;
+
+  return `
+    <div class="table-scroll-container">
+      <table class="w-full text-left">
+        <thead>
+          <tr class="border-b border-gray-100">
+            <th class="px-4 py-2.5 text-xs font-medium text-gray-400 uppercase">Account</th>
+            <th class="px-4 py-2.5 text-xs font-medium text-gray-400 uppercase text-right">Debit</th>
+            <th class="px-4 py-2.5 text-xs font-medium text-gray-400 uppercase text-right">Credit</th>
+          </tr>
+        </thead>
+        <tbody>${bodyHtml}</tbody>
+        <tfoot>
+          <tr class="border-t border-gray-200">
+            <td class="px-4 py-2.5 text-sm font-semibold text-gray-800">Total</td>
+            <td class="px-4 py-2.5 text-sm text-right font-semibold text-gray-800">${fmtMoney(totals.debitTotal)}</td>
+            <td class="px-4 py-2.5 text-sm text-right font-semibold text-gray-800">${fmtMoney(totals.creditTotal)}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+    <p class="text-xs mt-3 ${totals.balanced ? 'text-emerald-600' : 'text-rose-600'}">${totals.balanced ? 'Balanced' : `Not balanced — difference ${fmtMoney(Math.abs(Number(totals.difference) || 0))}`}</p>`;
+}
+
+// Income Statement report: Revenue / Expenses sections + Net Profit, read
+// straight from buildIncomeStatement()'s own revenue/expenses/netProfit
+// fields.
+function renderIncomeStatementReport(statement) {
+  const revenue  = statement?.revenue  || { rows: [], total: 0 };
+  const expenses = statement?.expenses || { rows: [], total: 0 };
+  const netProfit = Number(statement?.netProfit) || 0;
+
+  return `
+    ${renderAccountingReportSection('Revenue', revenue.rows, revenue.total)}
+    ${renderAccountingReportSection('Expenses', expenses.rows, expenses.total)}
+    <div class="bg-gray-50 rounded-xl p-3 flex items-center justify-between">
+      <span class="text-sm font-semibold text-gray-800">Net Profit</span>
+      <span class="text-base font-bold ${netProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}">${fmtMoney(netProfit)}</span>
+    </div>`;
+}
+
+// Balance Sheet report: Assets / Liabilities / Equity sections + Retained
+// Earnings + Difference, read straight from buildBalanceSheet()'s own
+// fields.
+function renderBalanceSheetReport(statement) {
+  const assets      = statement?.assets      || { rows: [], total: 0 };
+  const liabilities = statement?.liabilities || { rows: [], total: 0 };
+  const equity      = statement?.equity      || { rows: [], total: 0 };
+  const retainedEarnings = Number(statement?.retainedEarnings) || 0;
+  const difference       = Number(statement?.difference) || 0;
+  const balanced          = !!statement?.balanced;
+
+  return `
+    ${renderAccountingReportSection('Assets', assets.rows, assets.total)}
+    ${renderAccountingReportSection('Liabilities', liabilities.rows, liabilities.total)}
+    ${renderAccountingReportSection('Equity', equity.rows, equity.total)}
+    <div class="grid grid-cols-2 gap-3">
+      <div class="bg-gray-50 rounded-xl p-3">
+        <p class="text-xs text-gray-400 mb-1">Retained Earnings</p>
+        <p class="text-base font-semibold text-gray-800">${fmtMoney(retainedEarnings)}</p>
+      </div>
+      <div class="bg-gray-50 rounded-xl p-3">
+        <p class="text-xs text-gray-400 mb-1">Difference</p>
+        <p class="text-base font-semibold ${balanced ? 'text-emerald-600' : 'text-rose-600'}">${fmtMoney(difference)}</p>
+      </div>
+    </div>`;
+}
+
+// Cash Flow Statement report: Operating / Investing / Financing sections +
+// Net Cash Flow, read straight from buildAccountingCashFlowStatement()'s own
+// fields.
+function renderAccountingCashFlowReport(statement) {
+  const operating = statement?.operatingActivities || { rows: [], total: 0 };
+  const investing = statement?.investingActivities || { rows: [], total: 0 };
+  const financing = statement?.financingActivities || { rows: [], total: 0 };
+  const netCashFlow = Number(statement?.netCashFlow) || 0;
+
+  return `
+    ${renderAccountingReportSection('Operating Activities', operating.rows, operating.total)}
+    ${renderAccountingReportSection('Investing Activities', investing.rows, investing.total)}
+    ${renderAccountingReportSection('Financing Activities', financing.rows, financing.total)}
+    <div class="bg-gray-50 rounded-xl p-3 flex items-center justify-between">
+      <span class="text-sm font-semibold text-gray-800">Net Cash Flow</span>
+      <span class="text-base font-bold ${netCashFlow >= 0 ? 'text-emerald-600' : 'text-rose-600'}">${fmtMoney(netCashFlow)}</span>
+    </div>`;
+}
+
+// Selector map — the only place the four statement tabs are wired to their
+// renderer, so adding/removing a tab means touching exactly one line here.
+const ACCOUNTING_REPORT_RENDERERS = {
+  trialBalance:      renderTrialBalanceReport,
+  incomeStatement:   renderIncomeStatementReport,
+  balanceSheet:      renderBalanceSheetReport,
+  cashFlowStatement: renderAccountingCashFlowReport,
+};
+
+// Entry point wired into renderFinanceView() below (Finance Reports tab).
+// Reads only getAccountingStatement(name) — never recalculates, never posts,
+// never mutates state.accountingJournal. Shows the empty-state message
+// instead of a statement when no journal postings exist yet, per this
+// sprint's brief: real numbers only, no fabricated/demo data.
+function renderAccountingReports() {
+  const container = $('#accounting-report-content');
+  if (!container) return;
+
+  const activeTab = state.accountingReportTab || 'trialBalance';
+  document.querySelectorAll('[data-accounting-report]').forEach(btn => {
+    const active = btn.dataset.accountingReport === activeTab;
+    btn.classList.toggle('bg-white', active);
+    btn.classList.toggle('text-gray-900', active);
+    btn.classList.toggle('shadow-sm', active);
+    btn.classList.toggle('text-gray-500', !active);
+  });
+
+  const journal = Array.isArray(state.accountingJournal) ? state.accountingJournal : [];
+  if (journal.length === 0) {
+    container.innerHTML = `
+      <div class="flex flex-col items-center justify-center text-center py-12">
+        <i data-lucide="book-open" class="w-8 h-8 text-gray-300 mb-3"></i>
+        <p class="text-sm text-gray-400">Accounting reports will appear once journal postings exist.</p>
+      </div>`;
+    refreshIcons();
+    return;
+  }
+
+  const renderer = ACCOUNTING_REPORT_RENDERERS[activeTab] || renderTrialBalanceReport;
+  container.innerHTML = renderer(getAccountingStatement(activeTab));
+  refreshIcons();
+}
+
+// Switches the active Accounting Report tab and re-renders. Does not touch
+// state.accountingJournal or trigger any posting.
+function setAccountingReportTab(tab) {
+  if (!ACCOUNTING_REPORT_RENDERERS[tab]) return;
+  state.accountingReportTab = tab;
+  renderAccountingReports();
+}
+
 // ─── Finance Validation ──────────────────────────────────────────────────────
 // Call validateFinanceTotals() from the browser console to run reconciliation.
 // Note: getFinanceSummary() and getClientBalanceSummary()/getProjectPnL() are all-time.
@@ -9868,6 +10067,7 @@ function renderFinanceView() {
   renderFinanceForecast();
   renderFinanceAccounts();
   renderFinanceReports();
+  renderAccountingReports();
 }
 
 // --- Finance Modal Helpers ---
@@ -14523,6 +14723,11 @@ if (action === 'convert-forecast-to-tx') {
   // Finance Tab navigation
   document.querySelectorAll('[data-finance-tab]').forEach(btn => {
     btn.addEventListener('click', () => setFinanceTab(btn.dataset.financeTab));
+  });
+
+  // Accounting Report tab navigation (Sprint 4.5A)
+  document.querySelectorAll('[data-accounting-report]').forEach(btn => {
+    btn.addEventListener('click', () => setAccountingReportTab(btn.dataset.accountingReport));
   });
 
   // Finance Transactions filters

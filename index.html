@@ -2384,6 +2384,22 @@
       <h4 class="text-sm font-semibold text-gray-800">Category Breakdown</h4>
       <span class="sidebar-badge-soon mt-2">Soon</span>
     </div>
+
+    <!-- Accounting Reports (Sprint 4.5A) -->
+    <div class="shadow-card rounded-2xl bg-white p-5">
+      <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
+        <h3 class="text-sm font-semibold text-gray-800 flex items-center gap-2">
+          <i data-lucide="book-open-check" class="w-4 h-4 text-indigo-400"></i> Accounting Reports
+        </h3>
+        <div class="inline-flex items-center gap-1 bg-gray-100 p-1 rounded-xl flex-wrap">
+          <button data-accounting-report="trialBalance"      class="view-mode-btn h-8 px-4 rounded-lg text-sm font-medium transition-colors bg-white text-gray-900 shadow-sm">Trial Balance</button>
+          <button data-accounting-report="incomeStatement"   class="view-mode-btn h-8 px-4 rounded-lg text-sm font-medium transition-colors text-gray-500">Income Statement</button>
+          <button data-accounting-report="balanceSheet"      class="view-mode-btn h-8 px-4 rounded-lg text-sm font-medium transition-colors text-gray-500">Balance Sheet</button>
+          <button data-accounting-report="cashFlowStatement" class="view-mode-btn h-8 px-4 rounded-lg text-sm font-medium transition-colors text-gray-500">Cash Flow Statement</button>
+        </div>
+      </div>
+      <div id="accounting-report-content"></div>
+    </div>
   </div>
 </section>
 
