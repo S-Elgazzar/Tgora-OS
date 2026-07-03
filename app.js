@@ -91,6 +91,7 @@ const state = {
   crmActivities: [],
   crmNotes: [],
   crmProposals: [],
+  crmServiceTypes: [],
   crmTab: 'dashboard',
   selectedClientId: Number(localStorage.getItem('tgora_selected_client_id')) || null,
   selectedDealId: Number(localStorage.getItem('tgora_selected_deal_id')) || null,
@@ -1121,6 +1122,15 @@ async function fetchTeamMembers() {
 }
 
 // ---------- CRM Leads Data Layer ----------
+// Architecture note (Sprint CRM-1/CRM-2): crm_leads.status currently still
+// includes 'won'/'lost' values (new, contacted, qualified, proposal_sent,
+// won, lost). Per the Sprint CRM-1 decision, Deal — not Lead — is now the
+// canonical owner of Won/Lost/stage/value/probability/service type. Lead
+// should eventually be simplified to qualification-only statuses (new,
+// contacted, qualified, disqualified, converted). This is NOT changed in
+// Sprint CRM-2 (no destructive status changes, no UI changes to the Lead
+// status list) — it's left as a documented follow-up for a future sprint
+// once teams have migrated off relying on Lead.status for Won/Lost.
 async function fetchCrmLeads() {
   const { data, error } = await supabaseClient
     .from('crm_leads')
@@ -1329,6 +1339,28 @@ async function updateCrmProposal(id, payload) {
 }
 async function archiveCrmProposal(id) {
   return updateCrmProposal(id, { is_archived: true, status: 'archived', updated_at: new Date().toISOString() });
+}
+
+// ---------- CRM Service Types Data Layer ----------
+// Sprint CRM-2: crm_service_types is a new lookup table (see
+// crm_data_model_completion_migration.sql). Fails soft — older databases
+// that haven't run the migration yet should not crash app load.
+async function fetchCrmServiceTypes() {
+  try {
+    const { data, error } = await supabaseClient
+      .from('crm_service_types')
+      .select('*')
+      .eq('is_active', true)
+      .order('sort_order', { ascending: true });
+    if (error) {
+      console.warn('fetchCrmServiceTypes', error);
+      return [];
+    }
+    return data || [];
+  } catch (err) {
+    console.warn('fetchCrmServiceTypes', err);
+    return [];
+  }
 }
 
 // ---------- Finance Data Layer ----------
@@ -5039,6 +5071,11 @@ function renderCrmDashboard() {
   }
 
   // Pipeline breakdown
+  // Architecture note (Sprint CRM-2 investigation): the deal-form's Stage
+  // select only offers discovery/proposal/negotiation/won/lost — 'meeting'
+  // below is not a selectable value anywhere in the UI. Left as-is this
+  // sprint (documentation only, no stage values added/removed); flagged for
+  // normalization in a future sprint so this list matches the form exactly.
   const pipelineEl = $('#crm-dashboard-pipeline');
   if (pipelineEl) {
     const stages = ['discovery', 'proposal', 'negotiation', 'meeting', 'won', 'lost'];
@@ -5698,6 +5735,8 @@ function openDealDetailsModal(id) {
   setTxt('deal-details-modal-stage', labelize(deal.stage));
   setTxt('deal-details-modal-value', deal.value != null ? `${Number(deal.value).toLocaleString()} ${deal.currency || 'EGP'}` : '—');
   setTxt('deal-details-modal-owner', owner ? owner.name : '—');
+  setTxt('deal-details-modal-service-type', deal.service_type_id ? (getCrmServiceTypeLabel(deal.service_type_id) || '—') : '—');
+  setTxt('deal-details-modal-probability', deal.probability != null ? `${deal.probability}%` : '—');
   setTxt('deal-details-modal-close', deal.expected_close_date ? fmtDate(deal.expected_close_date) : '—');
   setTxt('deal-details-modal-notes', deal.notes || 'No notes.');
 
@@ -5763,6 +5802,7 @@ async function refreshDataAndRender() {
     crmActivities,
     crmNotes,
     crmProposals,
+    crmServiceTypes,
     financeAccounts,
     financeCategories,
     financeTransactions,
@@ -5782,6 +5822,7 @@ async function refreshDataAndRender() {
     fetchCrmActivities(),
     fetchCrmNotes(),
     fetchCrmProposals(),
+    fetchCrmServiceTypes(),
     fetchFinanceAccounts(),
     fetchFinanceCategories(),
     fetchFinanceTransactions(),
@@ -5803,6 +5844,7 @@ async function refreshDataAndRender() {
   state.crmActivities = crmActivities;
   state.crmNotes    = crmNotes;
   state.crmProposals = crmProposals;
+  state.crmServiceTypes = crmServiceTypes;
   state.financeAccounts     = financeAccounts;
   state.financeCategories   = financeCategories;
   state.financeTransactions = financeTransactions;
@@ -7162,6 +7204,36 @@ function getFinanceFixedCosts() {
 function getCrmClientName(id) {
   if (!id) return '';
   return state.crmClients.find(c => Number(c.id) === Number(id))?.client_name || '';
+}
+
+// Sprint CRM-2 — fallback labels only, used when crm_service_types hasn't
+// been migrated/seeded yet. The lookup table (crm_service_types) is the
+// source of truth once present; do not add new services here.
+const CRM_SERVICE_TYPE_FALLBACK_LABELS = {
+  branding: 'Branding',
+  digital_marketing: 'Digital Marketing',
+  website: 'Website',
+  video_production: 'Video Production',
+  photography: 'Photography',
+  motion_graphics: 'Motion Graphics',
+  printing: 'Printing',
+  consulting: 'Consulting',
+};
+
+function getCrmServiceTypeById(id) {
+  if (!id) return null;
+  return state.crmServiceTypes.find(s => Number(s.id) === Number(id)) || null;
+}
+
+function getCrmServiceTypeLabel(id) {
+  if (!id) return '';
+  const serviceType = getCrmServiceTypeById(id);
+  if (serviceType) return serviceType.service_name;
+  return CRM_SERVICE_TYPE_FALLBACK_LABELS[String(id)] || '';
+}
+
+function getActiveCrmServiceTypes() {
+  return state.crmServiceTypes.filter(s => s.is_active !== false);
 }
 
 function getAccountName(id) {
@@ -11474,6 +11546,25 @@ function populateDealOwnerSelect() {
       .map(m => `<option value="${m.id}">${escapeHtml(m.name)}</option>`).join('');
 }
 
+// Sprint CRM-2 — falls back to a bare "No service type" option if
+// crm_service_types is empty (table missing or not seeded yet).
+function populateDealServiceTypeSelect() {
+  const select = $('#deal-service-type-id');
+  if (!select) return;
+  select.innerHTML = '<option value="">No service type</option>' +
+    getActiveCrmServiceTypes()
+      .map(s => `<option value="${s.id}">${escapeHtml(s.service_name)}</option>`).join('');
+}
+
+// Sprint CRM-2 — optional provenance link back to the originating Lead.
+function populateDealLeadSelect() {
+  const select = $('#deal-lead-id');
+  if (!select) return;
+  select.innerHTML = '<option value="">No linked lead</option>' +
+    state.crmLeads.filter(l => !l.is_archived)
+      .map(l => `<option value="${l.id}">${escapeHtml(l.lead_name)}</option>`).join('');
+}
+
 function openNewDealModal(prefillClientId) {
   if (!isAdmin()) return;
   state.editingDealId = null;
@@ -11481,6 +11572,8 @@ function openNewDealModal(prefillClientId) {
   form.reset();
   populateDealClientSelect();
   populateDealOwnerSelect();
+  populateDealServiceTypeSelect();
+  populateDealLeadSelect();
   if (prefillClientId) { const sel = $('#deal-client-id'); if (sel) sel.value = prefillClientId; }
   $('#deal-modal-title').textContent = 'New Deal';
   const submitBtn = form.querySelector('button[type=submit]');
@@ -11498,14 +11591,19 @@ function openEditDealModal(id) {
   form.reset();
   populateDealClientSelect();
   populateDealOwnerSelect();
+  populateDealServiceTypeSelect();
+  populateDealLeadSelect();
   form.deal_name.value = deal.deal_name || '';
   form.stage.value = deal.stage || 'discovery';
   form.value.value = deal.value != null ? String(deal.value) : '';
   form.currency.value = deal.currency || 'EGP';
   form.expected_close_date.value = deal.expected_close_date || '';
+  form.probability.value = deal.probability != null ? String(deal.probability) : '';
   form.notes.value = deal.notes || '';
   const cSel = $('#deal-client-id'); if (cSel) cSel.value = deal.client_id != null ? String(deal.client_id) : '';
   const oSel = $('#deal-owner-id'); if (oSel) oSel.value = deal.owner_id != null ? String(deal.owner_id) : '';
+  const sSel = $('#deal-service-type-id'); if (sSel) sSel.value = deal.service_type_id != null ? String(deal.service_type_id) : '';
+  const lSel = $('#deal-lead-id'); if (lSel) lSel.value = deal.lead_id != null ? String(deal.lead_id) : '';
   $('#deal-modal-title').textContent = 'Edit Deal';
   const submitBtn = form.querySelector('button[type=submit]');
   if (submitBtn) submitBtn.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i> Update Deal';
@@ -11526,6 +11624,12 @@ async function handleDealSubmit(e) {
   if (payload.client_id) payload.client_id = Number(payload.client_id);
   if (payload.owner_id) payload.owner_id = Number(payload.owner_id);
   if (payload.value) payload.value = Number(payload.value);
+  if (payload.service_type_id) payload.service_type_id = Number(payload.service_type_id);
+  else payload.service_type_id = null;
+  if (payload.lead_id) payload.lead_id = Number(payload.lead_id);
+  else payload.lead_id = null;
+  if (payload.probability) payload.probability = Number(payload.probability);
+  else payload.probability = null;
   let result = null;
   if (isEditing) { payload.updated_at = new Date().toISOString(); result = await updateCrmDeal(state.editingDealId, payload); }
   else { result = await createCrmDeal(payload); }
@@ -15615,7 +15719,7 @@ renderStaticButtonMounts();
   });
 
   try {
-    const [projects, tasks, teamMembers, crmLeads, crmClients, crmContacts, crmDeals, crmActivities, crmNotes, crmProposals] = await Promise.all([
+    const [projects, tasks, teamMembers, crmLeads, crmClients, crmContacts, crmDeals, crmActivities, crmNotes, crmProposals, crmServiceTypes] = await Promise.all([
       fetchProjects(),
       fetchTasks(),
       fetchTeamMembers(),
@@ -15625,7 +15729,8 @@ renderStaticButtonMounts();
       fetchCrmDeals(),
       fetchCrmActivities(),
       fetchCrmNotes(),
-      fetchCrmProposals()
+      fetchCrmProposals(),
+      fetchCrmServiceTypes()
     ]);
 
     state.projects = projects;
@@ -15638,6 +15743,7 @@ renderStaticButtonMounts();
     state.crmActivities = crmActivities;
     state.crmNotes = crmNotes;
     state.crmProposals = crmProposals;
+    state.crmServiceTypes = crmServiceTypes;
 
     const {
       data: { user },
