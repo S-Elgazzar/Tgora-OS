@@ -140,6 +140,7 @@ const state = {
   crmTab: 'dashboard',
   selectedClientId: Number(localStorage.getItem('tgora_selected_client_id')) || null,
   selectedDealId: Number(localStorage.getItem('tgora_selected_deal_id')) || null,
+  selectedContactId: Number(localStorage.getItem('tgora_selected_contact_id')) || null,
   editingLeadId: null,
   editingClientId: null,
   editingContactId: null,
@@ -5529,10 +5530,10 @@ function renderCrmContacts() {
     return `
       <tr>
         <td class="px-5 py-3.5">
-          <p class="text-sm font-medium text-gray-900">${escapeHtml(c.contact_name)}</p>
+          <button class="text-sm font-medium text-gray-900 hover:text-indigo-600 text-left" data-action="open-contact-details" data-id="${c.id}">${escapeHtml(c.contact_name)}</button>
           ${c.title ? `<p class="text-xs text-gray-500">${escapeHtml(c.title)}</p>` : ''}
         </td>
-        <td class="px-5 py-3.5 text-sm text-gray-700">${client ? escapeHtml(client.client_name) : '—'}</td>
+        <td class="px-5 py-3.5 text-sm text-gray-700">${client ? `<button class="hover:text-indigo-600 hover:underline text-left" data-action="open-client-details" data-id="${client.id}">${escapeHtml(client.client_name)}</button>` : '—'}</td>
         <td class="px-5 py-3.5 text-sm text-gray-700">${escapeHtml(c.phone || '—')}</td>
         <td class="px-5 py-3.5 text-sm text-gray-700">${escapeHtml(c.email || '—')}</td>
         <td class="px-5 py-3.5">${renderStatusBadge(getCrmContactStatus(c))}</td>
@@ -6020,6 +6021,16 @@ function openClientDetails(id) {
   renderClientDetails();
 }
 
+function openContactDetails(id) {
+  const contact = state.crmContacts.find(c => Number(c.id) === id);
+  if (!contact) { toast('Contact not found', 'error'); return; }
+  state.selectedContactId = id;
+  localStorage.setItem('tgora_selected_contact_id', id);
+  window.history.pushState({ view: 'contact-details', contactId: id }, '', `#contact-details-${id}`);
+  setView('contact-details');
+  renderContactDetails();
+}
+
 // Sprint CRM-4.5B — shared safe-external-link builder for Company Details
 // (Website + Social Media). Prefixes bare domains/handles with https:// so
 // the browser doesn't treat them as a relative in-app path, and escapes the
@@ -6125,7 +6136,7 @@ function renderClientDetails() {
       : contacts.map(c => `
           <div class="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
             <div>
-              <p class="text-sm font-medium text-gray-900">${escapeHtml(c.contact_name)}</p>
+              <button class="text-sm font-medium text-gray-900 hover:text-indigo-600 text-left" data-action="open-contact-details" data-id="${c.id}">${escapeHtml(c.contact_name)}</button>
               ${c.title ? `<p class="text-xs text-gray-500">${escapeHtml(c.title)}</p>` : ''}
             </div>
             <div class="text-right text-xs text-gray-500 space-y-0.5">
@@ -6228,6 +6239,129 @@ function renderClientDetails() {
   if (addActivityBtn) addActivityBtn.dataset.clientId = client.id;
   const addProposalBtn = $('#client-details-add-proposal-btn');
   if (addProposalBtn) addProposalBtn.dataset.clientId = client.id;
+
+  refreshIcons();
+}
+
+// Sprint CRM-4.5C — Contact Details. Mirrors renderClientDetails() in shape.
+// crm_contacts only has a client_id FK; no other CRM table (crm_leads,
+// crm_deals, crm_activities, crm_notes) has a contact_id column, so the
+// only *direct* relationship a Contact has is to its parent Company.
+// Leads are additionally matched by name/email as a documented, indirect
+// best-effort link (see comment above the leads block below) rather than
+// invented as a real foreign-key relationship.
+function renderContactDetails() {
+  const contact = state.crmContacts.find(c => Number(c.id) === Number(state.selectedContactId));
+  if (!contact) {
+    state.selectedContactId = null;
+    localStorage.removeItem('tgora_selected_contact_id');
+    setView('crm');
+    return;
+  }
+
+  const status = getCrmContactStatus(contact);
+  const company = state.crmClients.find(cl => Number(cl.id) === Number(contact.client_id));
+
+  const nameEl = $('#contact-details-name');
+  if (nameEl) nameEl.textContent = contact.contact_name || 'Untitled';
+
+  const titleEl = $('#contact-details-title');
+  if (titleEl) titleEl.textContent = contact.title || 'No job title';
+
+  const statusEl = $('#contact-details-status');
+  if (statusEl) {
+    statusEl.className = `badge badge-${status}`;
+    statusEl.innerHTML = `<span class="dot"></span>${labelize(status)}`;
+  }
+
+  const companyChipEl = $('#contact-details-company-chip');
+  if (companyChipEl) {
+    companyChipEl.innerHTML = company
+      ? `<button class="text-sm font-medium text-indigo-600 hover:underline" data-action="open-client-details" data-id="${company.id}">${escapeHtml(company.client_name)}</button>`
+      : '<span class="text-sm text-gray-400">No company linked</span>';
+  }
+
+  const editBtn = $('#contact-details-edit-btn');
+  if (editBtn) editBtn.dataset.id = contact.id;
+  const archiveBtn = $('#contact-details-archive-btn');
+  if (archiveBtn) {
+    archiveBtn.dataset.id = contact.id;
+    archiveBtn.classList.toggle('hidden', !!contact.is_archived);
+  }
+
+  const setText = (id, val) => { const el = $(`#${id}`); if (el) el.textContent = val || '—'; };
+  setText('contact-details-phone',     contact.phone);
+  setText('contact-details-whatsapp',  contact.whatsapp);
+  setText('contact-details-email',     contact.email);
+  setText('contact-details-job-title', contact.title);
+  setText('contact-details-company',   company ? company.client_name : 'No company');
+  setText('contact-details-notes',     contact.notes || 'No notes yet.');
+
+  const statusTextEl = $('#contact-details-status-text');
+  if (statusTextEl) statusTextEl.textContent = labelize(status);
+
+  // Timeline — no contact_id on crm_notes/crm_activities/crm_proposals, so
+  // the safest related data available is the parent Company's activity
+  // (same client_id), same as Company Details shows. The header note above
+  // the panel in index.html makes this scope explicit to the viewer.
+  const timelineEl = $('#contact-details-timeline');
+  if (timelineEl) {
+    if (!company) {
+      timelineEl.innerHTML = '<p class="text-sm text-gray-400 py-3">No linked company, so no activity to show.</p>';
+    } else {
+      const companyNotes = state.crmNotes.filter(n => Number(n.client_id) === Number(company.id) && !n.is_archived);
+      const companyActivities = state.crmActivities.filter(a => Number(a.client_id) === Number(company.id) && !a.is_archived);
+      const companyProposals = state.crmProposals.filter(p => Number(p.client_id) === Number(company.id) && !p.is_archived);
+      const items = [
+        ...companyNotes.map(n => ({ type: 'note', title: n.body ? n.body.substring(0, 60) + (n.body.length > 60 ? '…' : '') : 'Note', date: n.created_at, owner_id: n.created_by })),
+        ...companyActivities.map(a => ({ type: 'activity', title: a.title || labelize(a.activity_type), subtitle: labelize(a.status), date: a.activity_date || a.created_at, owner_id: a.owner_id })),
+        ...companyProposals.map(p => ({ type: 'proposal', title: p.proposal_title, subtitle: labelize(p.status), date: p.sent_date || p.created_at, owner_id: p.owner_id })),
+      ];
+      timelineEl.innerHTML = buildCrmTimeline(items);
+    }
+  }
+
+  // Leads — indirect match only (crm_leads has no contact_id): a lead
+  // counts as related if its email matches this contact's email, or its
+  // free-text contact_person matches this contact's name and (when both
+  // are set) they share the same client_id.
+  const contactEmail = (contact.email || '').trim().toLowerCase();
+  const contactName = (contact.contact_name || '').trim().toLowerCase();
+  const matchedLeads = state.crmLeads.filter(l => {
+    if (l.is_archived) return false;
+    const leadEmail = (l.email || '').trim().toLowerCase();
+    if (contactEmail && leadEmail && leadEmail === contactEmail) return true;
+    const leadContactName = (l.contact_person || '').trim().toLowerCase();
+    if (contactName && leadContactName && leadContactName === contactName) {
+      if (l.client_id && contact.client_id) return Number(l.client_id) === Number(contact.client_id);
+      return true;
+    }
+    return false;
+  });
+  const leadsListEl = $('#contact-details-leads-list');
+  if (leadsListEl) {
+    leadsListEl.innerHTML = matchedLeads.length === 0
+      ? '<p class="text-sm text-gray-400 py-2">No leads matched to this contact yet.</p>'
+      : matchedLeads.map(l => `
+          <div class="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
+            <button class="text-sm font-medium text-gray-900 hover:text-indigo-600 text-left" data-action="open-lead-details" data-id="${l.id}">${escapeHtml(l.lead_name)}</button>
+            ${renderStatusBadge(normalizeCrmLeadStatusForDisplay(l.status))}
+          </div>
+        `).join('');
+  }
+
+  // Deals & Activities — crm_deals/crm_activities have no contact_id and no
+  // contact-identifying free-text field, so there is no reliable way to
+  // match them to a specific contact. State the limitation plainly instead
+  // of guessing, and point to the parent Company where these records live.
+  const limitationEl = $('#contact-details-limitation-note');
+  if (limitationEl) {
+    limitationEl.innerHTML = company
+      ? `Deals and Activities are tracked per Company, not per Contact. View
+         <button class="text-indigo-600 hover:underline font-medium" data-action="open-client-details" data-id="${company.id}">${escapeHtml(company.client_name)}</button>
+         to see all related deals and activity.`
+      : 'Deals and Activities are tracked per Company, not per Contact. This contact has no linked company yet.';
+  }
 
   refreshIcons();
 }
@@ -11211,6 +11345,13 @@ function renderAll() {
     state.selectedClientId = Number(state.selectedClientId);
     setView('client-details');
     renderClientDetails();
+  } else if (
+    savedView === 'contact-details' &&
+    state.selectedContactId
+  ) {
+    state.selectedContactId = Number(state.selectedContactId);
+    setView('contact-details');
+    renderContactDetails();
   } else if (savedView && $(`#view-${savedView}`)) {
     setView(savedView);
   } else {
@@ -11474,7 +11615,7 @@ function syncSearchInputWithView() {
 }
 
 function setView(view) {
-  if ((view === 'crm' || view === 'lead-details' || view === 'client-details') && !isAdmin()) {
+  if ((view === 'crm' || view === 'lead-details' || view === 'client-details' || view === 'contact-details') && !isAdmin()) {
     view = 'dashboard';
   }
 
@@ -12045,6 +12186,20 @@ function populateContactClientSelect() {
       .map(c => `<option value="${c.id}">${escapeHtml(c.client_name)}</option>`).join('');
 }
 
+// Sprint CRM-4.5C — low-risk helper text only; does not auto-create or
+// change any company link, just clarifies what saving the form will do.
+function updateContactCompanyHelper(clientIdValue) {
+  const helper = $('#contact-company-helper');
+  if (!helper) return;
+  const client = clientIdValue ? state.crmClients.find(c => Number(c.id) === Number(clientIdValue)) : null;
+  if (client) {
+    helper.textContent = `This contact will be linked to ${client.client_name}.`;
+    helper.classList.remove('hidden');
+  } else {
+    helper.classList.add('hidden');
+  }
+}
+
 function openNewContactModal(prefillClientId) {
   if (!isAdmin()) return;
   state.editingContactId = null;
@@ -12052,6 +12207,7 @@ function openNewContactModal(prefillClientId) {
   form.reset();
   populateContactClientSelect();
   if (prefillClientId) { const sel = $('#contact-client-id'); if (sel) sel.value = prefillClientId; }
+  updateContactCompanyHelper($('#contact-client-id')?.value);
   $('#contact-modal-title').textContent = 'New Contact';
   const submitBtn = form.querySelector('button[type=submit]');
   if (submitBtn) submitBtn.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i> Create Contact';
@@ -12076,6 +12232,7 @@ function openEditContactModal(id) {
   if (form.status) form.status.value = getCrmContactStatus(contact);
   const sel = $('#contact-client-id');
   if (sel) sel.value = contact.client_id != null ? String(contact.client_id) : '';
+  updateContactCompanyHelper(sel?.value);
   $('#contact-modal-title').textContent = 'Edit Contact';
   const submitBtn = form.querySelector('button[type=submit]');
   if (submitBtn) submitBtn.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i> Update Contact';
@@ -15332,6 +15489,20 @@ if (action === 'archive-contact') {
   return;
 }
 
+if (action === 'open-contact-details') {
+  const id = Number(trigger.dataset.id);
+  openContactDetails(id);
+  return;
+}
+
+if (action === 'back-to-contact-list') {
+  state.selectedContactId = null;
+  localStorage.removeItem('tgora_selected_contact_id');
+  setView('crm');
+  setCrmTab('contacts');
+  return;
+}
+
 if (action === 'open-deal-modal') {
   const prefillClientId = trigger.dataset.clientId ? Number(trigger.dataset.clientId) : undefined;
   openNewDealModal(prefillClientId);
@@ -15543,6 +15714,7 @@ if (action === 'convert-forecast-to-tx') {
   $('#client-type-select')?.addEventListener('change', (e) => updateClientIndustryDatalist(e.target.value));
   $('#client-source-select')?.addEventListener('change', (e) => updateClientReferredByVisibility(e.target.value, $('#client-form')));
   $('#contact-form')?.addEventListener('submit', handleContactSubmit);
+  $('#contact-client-id')?.addEventListener('change', (e) => updateContactCompanyHelper(e.target.value));
   $('#deal-form')?.addEventListener('submit', handleDealSubmit);
   $('#deal-lead-id')?.addEventListener('change', handleDealLeadAutofill);
   $('#activity-form')?.addEventListener('submit', handleActivitySubmit);
