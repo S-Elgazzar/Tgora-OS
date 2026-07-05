@@ -76,9 +76,10 @@ const state = {
       search: '',
       type: 'all',
       status: 'all',
-      owner: null,
       industry: null, // Sprint CRM-4.5A
       company: null, // Sprint CRM-4.5A fix pass
+      // Sprint CRM-4.5B — Owner filter removed along with the Owner column;
+      // owner_id itself is untouched in the database.
     },
     crmContacts: {
       archived: 'active',
@@ -2752,22 +2753,6 @@ function populateLeadOwnerSelect() {
       .join('');
 }
 
-function populateClientOwnerSelect() {
-  const select = $('#client-owner-id');
-  if (!select) return;
-  const active = state.teamMembers.filter(
-    (m) => (m.status || '').toLowerCase() !== 'inactive'
-  );
-  select.innerHTML =
-    '<option value="">No owner</option>' +
-    active
-      .map(
-        (m) =>
-          `<option value="${m.id}">${escapeHtml(m.name)}${m.job_title ? ` — ${escapeHtml(m.job_title)}` : ''}</option>`
-      )
-      .join('');
-}
-
 function renderStats() {
   // "All Projects" is deliberately all-time inventory (active + archived) —
   // see its subtitle. Every other project KPI here (Operational/On Hold/
@@ -3933,7 +3918,6 @@ const HEADER_FILTER_MODULES = {
       'crm-clients-company-popover',
       'crm-clients-type-popover',
       'crm-clients-status-popover',
-      'crm-clients-owner-popover',
       'crm-clients-industry-popover',
     ],
     chipsContainerId: null,
@@ -3943,7 +3927,6 @@ const HEADER_FILTER_MODULES = {
       search: '',
       type: 'all',
       status: 'all',
-      owner: null,
       industry: null,
       company: null,
     },
@@ -4519,14 +4502,12 @@ function renderCrmClientsHeaderFilters() {
   $('#crm-clients-company-th-filter')?.classList.toggle('active', f.company !== null);
   $('#crm-clients-type-th-filter')?.classList.toggle('active', f.type !== 'all');
   $('#crm-clients-status-th-filter')?.classList.toggle('active', f.status !== 'all');
-  $('#crm-clients-owner-th-filter')?.classList.toggle('active', f.owner !== null);
   $('#crm-clients-industry-th-filter')?.classList.toggle('active', f.industry !== null);
 
   buildHeaderFilterOptions('crm-clients-company-popover', 'All Companies', crmDistinctFieldOptions(state.crmClients, 'client_name'), f.company);
   syncHeaderFilterPopoverActive('crm-clients-type-popover', f.type);
   syncHeaderFilterPopoverActive('crm-clients-status-popover', f.status);
 
-  buildHeaderFilterOptions('crm-clients-owner-popover', 'All Owners', crmOwnerFilterOptions(), f.owner);
   buildHeaderFilterOptions('crm-clients-industry-popover', 'All Industries', crmDistinctFieldOptions(state.crmClients, 'industry'), f.industry);
 
   updateCrmClearFiltersVisibility('crm-clients-clear-filters', f, HEADER_FILTER_MODULES.crmClients.defaults);
@@ -5300,10 +5281,6 @@ function renderCrmClients() {
     clients = clients.filter((c) => (c.status || '').toLowerCase() === f.status);
   }
 
-  if (f.owner !== null && f.owner !== undefined) {
-    clients = clients.filter((c) => Number(c.owner_id) === Number(f.owner));
-  }
-
   if (f.industry !== null && f.industry !== undefined) {
     clients = clients.filter((c) => (c.industry || '').trim() === f.industry);
   }
@@ -5327,14 +5304,6 @@ function renderCrmClients() {
 
   tbody.innerHTML = clients
     .map((c) => {
-      const owner = state.teamMembers.find((m) => Number(m.id) === Number(c.owner_id));
-      const ownerCell = owner
-        ? `<div class="flex items-center gap-2">
-             <div class="w-6 h-6 rounded-full ${avatarColor(owner.name)} flex items-center justify-center text-white text-[10px] font-semibold flex-shrink-0">${initials(owner.name)}</div>
-             <span>${escapeHtml(owner.name)}</span>
-           </div>`
-        : '—';
-
       const editBtn = admin
         ? `<button class="icon-btn" data-action="edit-client" data-id="${c.id}" title="Edit client">
              <i data-lucide="pencil" class="w-4 h-4"></i>
@@ -5361,7 +5330,6 @@ function renderCrmClients() {
           </td>
           <td class="px-5 py-3.5 text-sm text-gray-700">${labelize(c.client_type)}</td>
           <td class="px-5 py-3.5 text-sm text-gray-700">${escapeHtml(c.industry || '—')}</td>
-          <td class="px-5 py-3.5 text-sm text-gray-700">${ownerCell}</td>
           <td class="px-5 py-3.5">${renderStatusBadge(c.status)}</td>
           <td class="px-5 py-3.5 text-right">${actionsCell}</td>
         </tr>
@@ -6052,6 +6020,22 @@ function openClientDetails(id) {
   renderClientDetails();
 }
 
+// Sprint CRM-4.5B — shared safe-external-link builder for Company Details
+// (Website + Social Media). Prefixes bare domains/handles with https:// so
+// the browser doesn't treat them as a relative in-app path, and escapes the
+// result for safe use in both the href attribute and link text.
+function buildSafeExternalUrl(url) {
+  const trimmed = (url || '').trim();
+  if (!trimmed) return null;
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+}
+
+function renderExternalLink(url) {
+  const href = buildSafeExternalUrl(url);
+  if (!href) return '—';
+  return `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer" class="text-indigo-600 hover:underline break-all">${escapeHtml(url.trim())}</a>`;
+}
+
 function renderClientDetails() {
   const client = state.crmClients.find(c => Number(c.id) === Number(state.selectedClientId));
   if (!client) {
@@ -6061,7 +6045,6 @@ function renderClientDetails() {
     return;
   }
 
-  const owner = state.teamMembers.find(m => Number(m.id) === Number(client.owner_id));
   const status = (client.status || 'active').toLowerCase();
 
   const nameEl = $('#client-details-name');
@@ -6074,14 +6057,6 @@ function renderClientDetails() {
   if (statusEl) {
     statusEl.className = `badge badge-${status}`;
     statusEl.innerHTML = `<span class="dot"></span>${labelize(status)}`;
-  }
-
-  const ownerChip = $('#client-details-owner-chip');
-  if (ownerChip) {
-    ownerChip.innerHTML = owner
-      ? `<div class="w-6 h-6 rounded-full ${avatarColor(owner.name)} flex items-center justify-center text-white text-[10px] font-semibold">${initials(owner.name)}</div>
-         <span class="text-sm text-gray-700">${escapeHtml(owner.name)}</span>`
-      : '<span class="text-sm text-gray-400">No owner assigned</span>';
   }
 
   const editBtn = $('#client-details-edit-btn');
@@ -6104,10 +6079,42 @@ function renderClientDetails() {
   setText('client-details-phone',    client.phone);
   setText('client-details-whatsapp', client.whatsapp);
   setText('client-details-email',    client.email);
-  setText('client-details-website',  client.website);
   setText('client-details-address',  client.address);
   setText('client-details-source',   labelize(client.source));
   setText('client-details-notes',    client.notes || 'No notes yet.');
+
+  const websiteEl = $('#client-details-website');
+  if (websiteEl) websiteEl.innerHTML = renderExternalLink(client.website);
+
+  // Referred By — only shown when present (Sprint CRM-4.5B, Source = Referral).
+  const referredByCard = $('#client-details-referred-by-card');
+  if (referredByCard) {
+    const hasReferredBy = !!(client.referred_by || '').trim();
+    referredByCard.classList.toggle('hidden', !hasReferredBy);
+    if (hasReferredBy) setText('client-details-referred-by', client.referred_by);
+  }
+
+  // Social Media — the whole card is hidden when no social field is set.
+  const socialCard = $('#client-details-social');
+  const socialLinksEl = $('#client-details-social-links');
+  if (socialCard && socialLinksEl) {
+    const platforms = [
+      { label: 'Facebook', url: client.facebook_url },
+      { label: 'Instagram', url: client.instagram_url },
+      { label: 'LinkedIn', url: client.linkedin_url },
+      { label: 'TikTok', url: client.tiktok_url },
+      { label: 'Snapchat', url: client.snapchat_url },
+      { label: 'Other', url: client.other_social_url },
+    ].filter(p => (p.url || '').trim());
+
+    socialCard.classList.toggle('hidden', platforms.length === 0);
+    socialLinksEl.innerHTML = platforms
+      .map(p => {
+        const href = buildSafeExternalUrl(p.url);
+        return `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer" class="task-filter-chip text-indigo-600 hover:underline">${escapeHtml(p.label)}</a>`;
+      })
+      .join('');
+  }
 
   // Contacts
   const contacts = state.crmContacts.filter(c => Number(c.client_id) === Number(client.id) && !c.is_archived);
@@ -11919,13 +11926,35 @@ function ensureClientTypeOption(select, value) {
   }
 }
 
+// Sprint CRM-4.5B — Industry stays a free-text input (no lookup table), but
+// swaps which <datalist> of suggestions it points at based on Type, so
+// Company vs Individual get different suggested values without a second
+// input or any server-side change.
+function updateClientIndustryDatalist(typeValue) {
+  const input = $('#client-industry-input');
+  if (!input) return;
+  input.setAttribute('list', typeValue === 'individual' ? 'client-industry-datalist-individual' : 'client-industry-datalist-company');
+}
+
+// Sprint CRM-4.5B — Referred By is only relevant when Source = Referral;
+// clearing it when hidden avoids saving stale text from a previously
+// selected Source.
+function updateClientReferredByVisibility(sourceValue, form) {
+  const field = $('#client-referred-by-field');
+  if (!field) return;
+  const show = sourceValue === 'referral';
+  field.classList.toggle('hidden', !show);
+  if (!show && form?.referred_by) form.referred_by.value = '';
+}
+
 function openNewClientModal() {
   if (!isAdmin()) return;
   state.editingClientId = null;
   const form = $('#client-form');
   form.reset();
   resetLegacyClientTypeOptions(form.client_type);
-  populateClientOwnerSelect();
+  updateClientIndustryDatalist(form.client_type.value);
+  updateClientReferredByVisibility(form.source.value, form);
   $('#client-modal-title').textContent = 'New Company';
   const submitBtn = form.querySelector('button[type=submit]');
   if (submitBtn) submitBtn.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i> Create Company';
@@ -11940,11 +11969,11 @@ function openEditClientModal(id) {
   state.editingClientId = id;
   const form = $('#client-form');
   form.reset();
-  populateClientOwnerSelect();
   form.client_name.value = client.client_name || '';
   resetLegacyClientTypeOptions(form.client_type);
   ensureClientTypeOption(form.client_type, client.client_type);
   form.client_type.value = client.client_type || 'company';
+  updateClientIndustryDatalist(form.client_type.value);
   form.industry.value    = client.industry || '';
   form.website.value     = client.website || '';
   form.phone.value       = client.phone || '';
@@ -11952,7 +11981,14 @@ function openEditClientModal(id) {
   form.email.value       = client.email || '';
   form.address.value     = client.address || '';
   form.source.value      = client.source || 'unknown';
-  form.owner_id.value    = client.owner_id != null ? String(client.owner_id) : '';
+  updateClientReferredByVisibility(form.source.value, form);
+  form.referred_by.value    = client.referred_by || '';
+  form.facebook_url.value   = client.facebook_url || '';
+  form.instagram_url.value  = client.instagram_url || '';
+  form.linkedin_url.value   = client.linkedin_url || '';
+  form.tiktok_url.value     = client.tiktok_url || '';
+  form.snapchat_url.value   = client.snapchat_url || '';
+  form.other_social_url.value = client.other_social_url || '';
   form.status.value      = client.status || 'active';
   form.notes.value       = client.notes || '';
   $('#client-modal-title').textContent = 'Edit Company';
@@ -11975,8 +12011,6 @@ async function handleClientSubmit(e) {
   refreshIcons();
 
   const payload = normalizePayload(new FormData(form));
-
-  if (payload.owner_id) payload.owner_id = Number(payload.owner_id);
 
   let result = null;
   if (isEditing) {
@@ -15506,6 +15540,8 @@ if (action === 'convert-forecast-to-tx') {
   $('#task-form').addEventListener('submit', handleTaskSubmit);
   $('#lead-form')?.addEventListener('submit', handleLeadSubmit);
   $('#client-form')?.addEventListener('submit', handleClientSubmit);
+  $('#client-type-select')?.addEventListener('change', (e) => updateClientIndustryDatalist(e.target.value));
+  $('#client-source-select')?.addEventListener('change', (e) => updateClientReferredByVisibility(e.target.value, $('#client-form')));
   $('#contact-form')?.addEventListener('submit', handleContactSubmit);
   $('#deal-form')?.addEventListener('submit', handleDealSubmit);
   $('#deal-lead-id')?.addEventListener('change', handleDealLeadAutofill);
