@@ -5395,89 +5395,278 @@ function buildCrmTimeline(items) {
 }
 
 // ---------- CRM Dashboard Render ----------
+// Sprint CRM-4.5F — maps a KPI-card/quick-nav click target to the CRM
+// filter-state module it should write into. Only tabs whose header-filter
+// system is safe to drive from a single scalar field (see
+// HEADER_FILTER_MODULES) are listed here.
+const CRM_TAB_FILTER_MODULES = {
+  clients: 'crmClients',
+  leads: 'crmLeads',
+  deals: 'crmDeals',
+  activities: 'crmActivities',
+};
+
+// Currency-safe aggregation shared by the Pipeline Value KPI and the
+// Deals-by-Stage / Deals-by-Service-Type breakdowns. No FX conversion —
+// if a group spans more than one currency we refuse to sum them into one
+// number and surface "Mixed" instead (Sprint CRM-4.5F requirement).
+function crmCurrencySafeTotal(deals) {
+  const withValue = deals.filter(d => Number(d.value) > 0);
+  const currencies = [...new Set(withValue.map(d => d.currency || 'EGP'))];
+  const total = withValue.reduce((sum, d) => sum + Number(d.value), 0);
+
+  if (currencies.length === 0) return { display: '—', mixed: false };
+  if (currencies.length === 1) return { display: `${total.toLocaleString()} ${currencies[0]}`, mixed: false };
+
+  const byCurrency = {};
+  withValue.forEach(d => {
+    const c = d.currency || 'EGP';
+    byCurrency[c] = (byCurrency[c] || 0) + Number(d.value);
+  });
+  const grouped = Object.entries(byCurrency).map(([c, v]) => `${v.toLocaleString()} ${c}`).join(' · ');
+  return { display: 'Mixed currencies', mixed: true, grouped };
+}
+
+// Compact HTML bar list — used in place of a chart library for the
+// Sources / Service-Type breakdowns (Sprint CRM-4.5F: no external chart
+// dependency for the CRM dashboard).
+function renderCrmBarList(containerEl, rows, opts = {}) {
+  if (!containerEl) return;
+  if (!rows.length) {
+    containerEl.innerHTML = `<p class="text-sm text-gray-400 py-6 text-center">${escapeHtml(opts.emptyText || 'No data yet.')}</p>`;
+    return;
+  }
+  const max = Math.max(...rows.map(r => r.count), 1);
+  containerEl.innerHTML = rows.map(r => `
+    <div class="mb-2 last:mb-0">
+      <div class="flex items-center justify-between gap-2 mb-1">
+        <span class="text-sm text-gray-700 font-medium truncate">${escapeHtml(r.label)}</span>
+        <span class="text-xs text-gray-500 shrink-0">${r.count}${r.sub ? ` · ${escapeHtml(r.sub)}` : ''}</span>
+      </div>
+      <div class="w-full bg-gray-100 rounded-full h-1.5 overflow-hidden">
+        <div class="h-1.5 rounded-full ${opts.barColor || 'bg-indigo-500'}" style="width:${Math.max(4, Math.round(r.count / max * 100))}%"></div>
+      </div>
+    </div>
+  `).join('');
+}
+
 function renderCrmDashboard() {
   const now = new Date();
   now.setHours(0, 0, 0, 0);
+  const in7Days = new Date(now);
+  in7Days.setDate(in7Days.getDate() + 7);
 
-  const activeLeads   = state.crmLeads.filter(l => !l.is_archived);
-  const activeClients = state.crmClients.filter(c => !c.is_archived && (c.status || '').toLowerCase() === 'active');
-  const openDeals     = state.crmDeals.filter(d => !d.is_archived && d.stage !== 'won' && d.stage !== 'lost');
-  const wonDeals      = state.crmDeals.filter(d => !d.is_archived && d.stage === 'won');
-  const lostDeals     = state.crmDeals.filter(d => !d.is_archived && d.stage === 'lost');
-  const pipelineValue = openDeals.reduce((sum, d) => sum + (Number(d.value) || 0), 0);
-  // Sprint CRM-4.5A — open deals may not all share one currency; summing
-  // them as a single EGP figure would misrepresent the total, and this
-  // sprint explicitly excludes FX conversion. Show the total only when every
-  // open deal uses the same currency; otherwise flag it as mixed rather than
-  // guess.
-  const openDealCurrencies = [...new Set(openDeals.map(d => d.currency || 'EGP'))];
-  const pipelineValueDisplay = openDealCurrencies.length > 1
-    ? 'Mixed currencies'
-    : `${pipelineValue.toLocaleString()} ${openDealCurrencies[0] || 'EGP'}`;
-  const upcomingAct   = state.crmActivities.filter(a => !a.is_archived && a.status === 'planned' && a.activity_date && new Date(a.activity_date) >= now);
-  const overdueAct    = state.crmActivities.filter(a => !a.is_archived && a.status === 'planned' && a.activity_date && new Date(a.activity_date) < now);
+  const nonArchivedClients = state.crmClients.filter(c => !c.is_archived);
+  const activeClients = nonArchivedClients.filter(c => (c.status || '').toLowerCase() === 'active');
 
-  // Stats grid
+  const leadStatus = l => normalizeCrmLeadStatusForDisplay(l.status);
+  const nonArchivedLeads = state.crmLeads.filter(l => !l.is_archived);
+  const openLeads = nonArchivedLeads.filter(l => !['converted', 'disqualified'].includes(leadStatus(l)));
+  const convertedLeads = nonArchivedLeads.filter(l => leadStatus(l) === 'converted');
+
+  const nonArchivedDeals = state.crmDeals.filter(d => !d.is_archived);
+  const openDeals = nonArchivedDeals.filter(d => d.stage !== 'won' && d.stage !== 'lost');
+  const wonDeals  = nonArchivedDeals.filter(d => d.stage === 'won');
+  const pipeline = crmCurrencySafeTotal(openDeals);
+
+  const nonArchivedActivities = state.crmActivities.filter(a => !a.is_archived);
+  const plannedActivities = nonArchivedActivities.filter(a => a.status === 'planned' && a.activity_date);
+  const overdueAct  = plannedActivities.filter(a => new Date(a.activity_date) < now);
+  const dueTodayAct = plannedActivities.filter(a => {
+    const d = new Date(a.activity_date); d.setHours(0, 0, 0, 0);
+    return d.getTime() === now.getTime();
+  });
+  const next7Act = plannedActivities.filter(a => {
+    const d = new Date(a.activity_date); d.setHours(0, 0, 0, 0);
+    return d.getTime() > now.getTime() && d < in7Days;
+  });
+  const upcomingAct = plannedActivities.filter(a => new Date(a.activity_date) >= now);
+
+  // ---- KPI Cards ----
   const statsEl = $('#crm-dashboard-stats');
   if (statsEl) {
-    const stats = [
-      { label: 'Total Leads',          value: activeLeads.length,   icon: 'target',      color: 'text-indigo-600' },
-      { label: 'Active Companies',      value: activeClients.length, icon: 'building-2',  color: 'text-emerald-600' },
-      { label: 'Open Deals',            value: openDeals.length,     icon: 'handshake',   color: 'text-blue-600' },
-      { label: 'Won Deals',             value: wonDeals.length,      icon: 'trophy',      color: 'text-amber-600' },
-      { label: 'Lost Deals',            value: lostDeals.length,     icon: 'x-circle',    color: 'text-rose-600' },
-      { label: 'Pipeline Value',        value: pipelineValueDisplay, icon: 'trending-up', color: 'text-violet-600' },
-      { label: 'Upcoming Activities',   value: upcomingAct.length,   icon: 'calendar',    color: 'text-sky-600' },
-      { label: 'Overdue Activities',    value: overdueAct.length,    icon: 'clock',       color: overdueAct.length > 0 ? 'text-rose-600' : 'text-gray-400' },
+    const cards = [
+      { label: 'Active Companies',    value: activeClients.length, sub: `of ${nonArchivedClients.length} total`, icon: 'building-2',  color: 'emerald', tab: 'clients',    filters: 'status=active' },
+      { label: 'Open Leads',          value: openLeads.length,     sub: null, icon: 'target',      color: 'indigo',  tab: 'leads' },
+      { label: 'Converted Leads',     value: convertedLeads.length, sub: null, icon: 'user-check', color: 'teal',    tab: 'leads',      filters: 'status=converted' },
+      { label: 'Open Deals',          value: openDeals.length,     sub: null, icon: 'handshake',   color: 'blue',    tab: 'deals' },
+      { label: 'Won Deals',           value: wonDeals.length,      sub: null, icon: 'trophy',      color: 'amber',   tab: 'deals',      filters: 'stage=won' },
+      { label: 'Pipeline Value',      value: pipeline.display,     sub: pipeline.mixed ? pipeline.grouped : null, icon: 'trending-up', color: 'violet',  tab: 'deals' },
+      { label: 'Overdue Activities',  value: overdueAct.length,    sub: null, icon: 'clock',        color: overdueAct.length ? 'rose' : 'gray', tab: 'activities', filters: 'status=planned,date=past' },
+      { label: 'Upcoming Activities', value: upcomingAct.length,   sub: null, icon: 'calendar', color: 'sky', tab: 'activities', filters: 'status=planned,date=next_7_days' },
     ];
-    statsEl.innerHTML = stats.map(s => `
-      <div class="stat-card">
-        <div class="flex items-center gap-2 mb-2">
-          <i data-lucide="${s.icon}" class="w-4 h-4 ${s.color}"></i>
-          <p class="text-xs text-gray-500 font-medium">${s.label}</p>
+    statsEl.innerHTML = cards.map(c => `
+      <div class="stat-card kpi-card kpi-card--compact" data-action="crm-kpi-nav" data-crm-tab="${c.tab}" ${c.filters ? `data-crm-filters="${c.filters}"` : ''}>
+        <div class="kpi-card-top">
+          <div class="kpi-card-icon-wrap bg-${c.color}-50">
+            <i data-lucide="${c.icon}" class="w-4 h-4 text-${c.color}-500"></i>
+          </div>
         </div>
-        <p class="text-2xl font-bold text-gray-900">${s.value}</p>
+        <p class="kpi-card-label">${escapeHtml(c.label)}</p>
+        <p class="kpi-card-value text-${c.color}-600">${c.value}</p>
+        ${c.sub ? `<p class="text-[11px] text-gray-400 mt-0.5 truncate">${escapeHtml(c.sub)}</p>` : ''}
       </div>
     `).join('');
   }
 
-  // Pipeline breakdown
-  // Architecture note (Sprint CRM-2 investigation): the deal-form's Stage
-  // select only offers discovery/proposal/negotiation/won/lost — 'meeting'
-  // below is not a selectable value anywhere in the UI. Left as-is this
-  // sprint (documentation only, no stage values added/removed); flagged for
-  // normalization in a future sprint so this list matches the form exactly.
+  // ---- Deals by Stage & Value ----
+  // Architecture note (Sprint CRM-2 investigation, carried forward): the
+  // deal-form's Stage select only offers discovery/proposal/negotiation/won/
+  // lost — 'meeting' is not a selectable value anywhere in the UI, so it is
+  // excluded from this breakdown.
   const pipelineEl = $('#crm-dashboard-pipeline');
   if (pipelineEl) {
-    const stages = ['discovery', 'proposal', 'negotiation', 'meeting', 'won', 'lost'];
+    const stages = ['discovery', 'proposal', 'negotiation', 'won', 'lost'];
     const stageData = stages.map(stage => {
-      const items = state.crmDeals.filter(d => !d.is_archived && d.stage === stage);
-      const total = items.reduce((s, d) => s + (Number(d.value) || 0), 0);
-      return { stage, count: items.length, total };
-    }).filter(s => s.count > 0 || ['discovery', 'proposal'].includes(s.stage));
+      const items = nonArchivedDeals.filter(d => d.stage === stage);
+      return { stage, count: items.length, summary: crmCurrencySafeTotal(items) };
+    });
 
-    pipelineEl.innerHTML = `
-      <div class="overflow-x-auto">
-        <table class="w-full text-sm">
-          <thead>
-            <tr class="text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-b border-gray-100">
-              <th class="pb-3 pr-4">Stage</th>
-              <th class="pb-3 pr-4">Deals</th>
-              <th class="pb-3">Value (EGP)</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${stageData.map(s => `
-              <tr class="border-b border-gray-50">
-                <td class="py-2 pr-4 font-medium text-gray-800">${labelize(s.stage)}</td>
-                <td class="py-2 pr-4 text-gray-600">${s.count}</td>
-                <td class="py-2 text-gray-600">${s.total > 0 ? s.total.toLocaleString() : '—'}</td>
+    if (!nonArchivedDeals.length) {
+      pipelineEl.innerHTML = '<p class="text-sm text-gray-400 py-6 text-center">No deals yet.</p>';
+    } else {
+      pipelineEl.innerHTML = `
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-b border-gray-100">
+                <th class="pb-2 pr-4">Stage</th>
+                <th class="pb-2 pr-4">Deals</th>
+                <th class="pb-2">Value</th>
               </tr>
-            `).join('')}
-          </tbody>
-        </table>
-      </div>
-    `;
+            </thead>
+            <tbody>
+              ${stageData.map(s => `
+                <tr class="border-b border-gray-50">
+                  <td class="py-1.5 pr-4">${renderStatusBadge(s.stage)}</td>
+                  <td class="py-1.5 pr-4 text-gray-600">${s.count}</td>
+                  <td class="py-1.5 text-gray-600" title="${s.summary.mixed ? escapeHtml(s.summary.grouped) : ''}">${s.summary.display}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
+  }
+
+  // ---- Leads Funnel ----
+  const funnelEl = $('#crm-dashboard-funnel');
+  if (funnelEl) {
+    const funnelStages = ['new', 'contacted', 'qualified', 'proposal_sent', 'converted'];
+    const funnelData = funnelStages.map(s => ({
+      stage: s,
+      count: nonArchivedLeads.filter(l => leadStatus(l) === s).length,
+    }));
+    if (!nonArchivedLeads.length) {
+      funnelEl.innerHTML = '<p class="text-sm text-gray-400 py-6 text-center">No leads yet.</p>';
+    } else {
+      const max = Math.max(...funnelData.map(f => f.count), 1);
+      funnelEl.innerHTML = funnelData.map(f => `
+        <div class="mb-2 last:mb-0">
+          <div class="flex items-center justify-between gap-2 mb-1">
+            ${renderStatusBadge(f.stage)}
+            <span class="text-xs text-gray-500">${f.count}</span>
+          </div>
+          <div class="w-full bg-gray-100 rounded-full h-1.5 overflow-hidden">
+            <div class="h-1.5 rounded-full bg-indigo-500" style="width:${Math.max(4, Math.round(f.count / max * 100))}%"></div>
+          </div>
+        </div>
+      `).join('');
+    }
+  }
+
+  // ---- Leads by Source ----
+  const sourcesEl = $('#crm-dashboard-sources');
+  if (sourcesEl) {
+    const bySource = {};
+    nonArchivedLeads.forEach(l => {
+      const key = l.source || 'unknown';
+      bySource[key] = (bySource[key] || 0) + 1;
+    });
+    const rows = Object.entries(bySource)
+      .map(([source, count]) => ({ label: labelize(source), count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 8);
+    renderCrmBarList(sourcesEl, rows, { emptyText: 'No leads yet.', barColor: 'bg-blue-500' });
+  }
+
+  // ---- Deals by Service Type ----
+  const servicesEl = $('#crm-dashboard-services');
+  if (servicesEl) {
+    const byService = {};
+    nonArchivedDeals.forEach(d => {
+      const key = getCrmServiceTypeLabel(d.service_type_id) || 'Unspecified';
+      if (!byService[key]) byService[key] = [];
+      byService[key].push(d);
+    });
+    const rows = Object.entries(byService)
+      .map(([label, deals]) => {
+        const summary = crmCurrencySafeTotal(deals);
+        return { label, count: deals.length, sub: summary.display !== '—' ? summary.display : null };
+      })
+      .sort((a, b) => b.count - a.count);
+    renderCrmBarList(servicesEl, rows, { emptyText: 'No deals yet.', barColor: 'bg-violet-500' });
+  }
+
+  // ---- Activities Attention ----
+  const activitiesEl = $('#crm-dashboard-activities');
+  if (activitiesEl) {
+    const byDateAsc = (a, b) => new Date(a.activity_date) - new Date(b.activity_date);
+    const attention = [
+      ...[...overdueAct].sort(byDateAsc).map(a => ({ ...a, bucket: 'overdue' })),
+      ...[...dueTodayAct].sort(byDateAsc).map(a => ({ ...a, bucket: 'today' })),
+      ...[...next7Act].sort(byDateAsc).map(a => ({ ...a, bucket: 'next_7' })),
+    ];
+    const bucketLabel = { overdue: 'Overdue', today: 'Due Today', next_7: 'Next 7 Days' };
+    const bucketClass = { overdue: 'text-rose-600', today: 'text-amber-600', next_7: 'text-sky-600' };
+
+    if (!attention.length) {
+      activitiesEl.innerHTML = '<p class="text-sm text-gray-400 py-6 text-center">Nothing overdue or due soon.</p>';
+    } else {
+      const shown = attention.slice(0, 20);
+      activitiesEl.innerHTML = `
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-b border-gray-100">
+                <th class="pb-2 pr-4">When</th>
+                <th class="pb-2 pr-4">Activity</th>
+                <th class="pb-2 pr-4">Company</th>
+                <th class="pb-2 pr-4">Related</th>
+                <th class="pb-2 pr-4">Owner</th>
+                <th class="pb-2">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${shown.map(a => {
+                const client = a.client_id ? state.crmClients.find(c => Number(c.id) === Number(a.client_id)) : null;
+                const owner = a.owner_id ? state.teamMembers.find(m => Number(m.id) === Number(a.owner_id)) : null;
+                let related = '—';
+                if (a.deal_id) {
+                  const deal = state.crmDeals.find(d => Number(d.id) === Number(a.deal_id));
+                  if (deal) related = `<button class="text-indigo-600 hover:underline" data-action="open-deal-details" data-id="${deal.id}">${escapeHtml(deal.deal_name)}</button>`;
+                } else if (a.lead_id) {
+                  const lead = state.crmLeads.find(l => Number(l.id) === Number(a.lead_id));
+                  if (lead) related = `<button class="text-indigo-600 hover:underline" data-action="open-lead-details" data-id="${lead.id}">${escapeHtml(lead.lead_name)}</button>`;
+                }
+                return `
+                  <tr class="border-b border-gray-50">
+                    <td class="py-1.5 pr-4 font-medium ${bucketClass[a.bucket]}">${bucketLabel[a.bucket]}<br><span class="text-xs text-gray-400 font-normal">${fmtDate(a.activity_date)}</span></td>
+                    <td class="py-1.5 pr-4 text-gray-800">${escapeHtml(a.title || labelize(a.activity_type))}</td>
+                    <td class="py-1.5 pr-4 text-gray-600">${client ? `<button class="hover:underline hover:text-indigo-600" data-action="open-client-details" data-id="${client.id}">${escapeHtml(client.client_name)}</button>` : '—'}</td>
+                    <td class="py-1.5 pr-4 text-gray-600">${related}</td>
+                    <td class="py-1.5 pr-4 text-gray-600">${owner ? escapeHtml(owner.name) : '—'}</td>
+                    <td class="py-1.5">${renderStatusBadge(a.status || 'planned')}</td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+        ${attention.length > shown.length ? `<p class="text-xs text-gray-400 mt-3 text-center">+${attention.length - shown.length} more — view all in Activities</p>` : ''}
+      `;
+    }
   }
 
   refreshIcons();
@@ -15784,6 +15973,31 @@ if (action === 'archive-proposal') {
   const id = Number(trigger.dataset.id);
   const proposal = state.crmProposals.find(p => Number(p.id) === id);
   openConfirm('proposal_archive', id, proposal ? `”${proposal.proposal_title}”` : 'This proposal');
+  return;
+}
+
+if (action === 'crm-kpi-nav') {
+  const tab = trigger.dataset.crmTab;
+  const filtersAttr = trigger.dataset.crmFilters;
+  const moduleKey = CRM_TAB_FILTER_MODULES[tab];
+  if (moduleKey) {
+    const config = HEADER_FILTER_MODULES[moduleKey];
+    // Sprint CRM-4.5F fix pass — always reset to the module's own defaults
+    // first, even when this card carries no KPI-specific override (Open
+    // Leads/Open Deals/Pipeline Value). Previously a bare tab-switch left
+    // whatever filter a prior KPI click had set (e.g. Converted Leads'
+    // status=converted) still applied when Open Leads was clicked next.
+    Object.assign(state.filters[moduleKey], config.defaults);
+    closeHeaderFilterPopovers(moduleKey);
+    if (filtersAttr) {
+      filtersAttr.split(',').forEach(pair => {
+        const [key, value] = pair.split('=');
+        if (key && value !== undefined) state.filters[moduleKey][key] = value;
+      });
+    }
+    config.render();
+  }
+  if (tab) setCrmTab(tab);
   return;
 }
 

@@ -1377,18 +1377,46 @@
 
   <!-- ============ DASHBOARD TAB ============ -->
   <div id="crm-section-dashboard">
-    <div class="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-6">
+    <div class="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-4">
       <div>
         <h3 class="text-lg font-semibold text-gray-900">CRM Dashboard</h3>
         <p class="text-sm text-gray-500 mt-1">Overview of leads, companies, deals, and activities.</p>
       </div>
     </div>
-    <!-- Stats Grid -->
-    <div id="crm-dashboard-stats" class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8"></div>
-    <!-- Pipeline Summary -->
-    <div class="card">
-      <h4 class="text-sm font-semibold text-gray-700 mb-4">Deals Pipeline</h4>
-      <div id="crm-dashboard-pipeline"></div>
+    <!-- KPI Cards -->
+    <div id="crm-dashboard-stats" class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4"></div>
+
+    <!-- Deals by Stage / Pipeline Value by Stage -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+      <div class="crm-dash-card">
+        <h4 class="text-sm font-semibold text-gray-700 mb-2">Deals by Stage &amp; Value</h4>
+        <div id="crm-dashboard-pipeline"></div>
+      </div>
+      <div class="crm-dash-card">
+        <h4 class="text-sm font-semibold text-gray-700 mb-2">Leads Funnel</h4>
+        <div id="crm-dashboard-funnel"></div>
+      </div>
+    </div>
+
+    <!-- Leads by Source / Deals by Service Type -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+      <div class="crm-dash-card">
+        <h4 class="text-sm font-semibold text-gray-700 mb-2">Leads by Source</h4>
+        <div id="crm-dashboard-sources"></div>
+      </div>
+      <div class="crm-dash-card">
+        <h4 class="text-sm font-semibold text-gray-700 mb-2">Deals by Service Type</h4>
+        <div id="crm-dashboard-services"></div>
+      </div>
+    </div>
+
+    <!-- Activities Attention -->
+    <div class="crm-dash-card">
+      <div class="flex items-center justify-between mb-3">
+        <h4 class="text-sm font-semibold text-gray-700">Activities Attention</h4>
+        <button type="button" class="text-xs font-medium text-brand-600 hover:text-brand-700" data-action="crm-kpi-nav" data-crm-tab="activities">View all activities →</button>
+      </div>
+      <div id="crm-dashboard-activities"></div>
     </div>
   </div>
 

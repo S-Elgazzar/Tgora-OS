@@ -1019,6 +1019,37 @@ tbody tr:hover {
   margin-top: 0.375rem;
 }
 
+/* ============================================
+   CRM Dashboard — compact section card + KPI card
+   (Sprint CRM-4.5F fix pass). ".card" (used by the pre-existing Deals
+   Pipeline wrapper) has no CSS rule anywhere in this file, so it rendered
+   as an unstyled div — replaced by this real, deliberately compact card.
+   ============================================ */
+.crm-dash-card {
+  background-color: var(--tg-color-neutral-0);
+  border: 1px solid var(--tg-color-border-default);
+  border-radius: var(--tg-radius-xl);
+  padding: 0.875rem 1rem;
+  box-shadow: var(--tg-shadow-elevation-1);
+}
+.kpi-card--compact {
+  padding: 0.75rem 0.875rem;
+}
+.kpi-card--compact .kpi-card-top {
+  margin-bottom: 0.5rem;
+}
+.kpi-card--compact .kpi-card-icon-wrap {
+  width: 1.875rem;
+  height: 1.875rem;
+}
+.kpi-card--compact .kpi-card-value {
+  font-size: 1.125rem;
+  margin-top: 0.125rem;
+}
+.kpi-card--compact .kpi-card-label {
+  font-size: 0.6875rem;
+}
+
 /* Widget info icon (24px, used in dashboard widget headers) */
 .widget-info-icon {
   width: 1.5rem;
