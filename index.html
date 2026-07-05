@@ -1359,7 +1359,7 @@
     <div>
       <p class="text-xs font-medium text-brand-600 uppercase tracking-wider mb-1">Business</p>
       <h2 class="text-2xl sm:text-3xl font-semibold tracking-tight text-gray-900">CRM</h2>
-      <p class="text-sm text-gray-500 mt-1">Manage leads, clients, contacts, deals, activities, and proposals.</p>
+      <p class="text-sm text-gray-500 mt-1">Manage companies, contacts, leads, deals, activities, and proposals.</p>
     </div>
   </div>
 
@@ -1380,7 +1380,7 @@
     <div class="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-6">
       <div>
         <h3 class="text-lg font-semibold text-gray-900">CRM Dashboard</h3>
-        <p class="text-sm text-gray-500 mt-1">Overview of leads, clients, deals, and activities.</p>
+        <p class="text-sm text-gray-500 mt-1">Overview of leads, companies, deals, and activities.</p>
       </div>
     </div>
     <!-- Stats Grid -->
@@ -1405,6 +1405,9 @@
           <option value="active" selected>Active</option>
           <option value="archived">Archived</option>
         </select>
+        <button id="crm-leads-clear-filters" type="button" class="hidden h-9 px-3 inline-flex items-center gap-1.5 text-xs font-medium text-gray-500 hover:text-gray-700 border border-gray-200 rounded-lg transition">
+          <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i> Clear Filters
+        </button>
         <div data-button-mount="crm-new-lead"></div>
       </div>
     </div>
@@ -1418,8 +1421,14 @@
         <table class="w-full text-sm">
           <thead class="bg-gray-50 border-b border-gray-100">
             <tr class="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              <th class="px-5 py-3">Lead</th>
-              <th class="px-5 py-3">Company</th>
+              <th class="px-5 py-3 relative">
+                <button type="button" id="crm-leads-lead-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="crm-leads-lead-popover" data-filter-module="crmLeads">Lead <i data-lucide="chevron-down" class="w-3 h-3"></i></button>
+                <div id="crm-leads-lead-popover" class="task-th-popover hidden" data-filter-type="lead" data-filter-module="crmLeads"></div>
+              </th>
+              <th class="px-5 py-3 relative">
+                <button type="button" id="crm-leads-client-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="crm-leads-client-popover" data-filter-module="crmLeads">Company <i data-lucide="chevron-down" class="w-3 h-3"></i></button>
+                <div id="crm-leads-client-popover" class="task-th-popover hidden" data-filter-type="client" data-filter-module="crmLeads"></div>
+              </th>
               <th class="px-5 py-3 relative">
                 <button type="button" id="crm-leads-source-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="crm-leads-source-popover" data-filter-module="crmLeads">Source <i data-lucide="chevron-down" class="w-3 h-3"></i></button>
                 <div id="crm-leads-source-popover" class="task-th-popover hidden" data-filter-type="source" data-filter-module="crmLeads">
@@ -1451,7 +1460,16 @@
                 <button type="button" id="crm-leads-owner-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="crm-leads-owner-popover" data-filter-module="crmLeads">Owner <i data-lucide="chevron-down" class="w-3 h-3"></i></button>
                 <div id="crm-leads-owner-popover" class="task-th-popover hidden" data-filter-type="owner" data-filter-module="crmLeads"></div>
               </th>
-              <th class="px-5 py-3">Last Activity</th>
+              <th class="px-5 py-3 relative">
+                <button type="button" id="crm-leads-last-activity-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="crm-leads-last-activity-popover" data-filter-module="crmLeads">Last Activity <i data-lucide="chevron-down" class="w-3 h-3"></i></button>
+                <div id="crm-leads-last-activity-popover" class="task-th-popover hidden" data-filter-type="lastActivity" data-filter-module="crmLeads">
+                  <button type="button" class="task-th-popover-option" data-value="">All Activity</button>
+                  <button type="button" class="task-th-popover-option" data-value="past">Past</button>
+                  <button type="button" class="task-th-popover-option" data-value="today">Today</button>
+                  <button type="button" class="task-th-popover-option" data-value="next_7_days">Next 7 Days</button>
+                  <button type="button" class="task-th-popover-option" data-value="no_date">No Date</button>
+                </div>
+              </th>
               <th class="px-5 py-3 text-right">Actions</th>
             </tr>
           </thead>
@@ -1474,6 +1492,9 @@
           <option value="active" selected>Active</option>
           <option value="archived">Archived</option>
         </select>
+        <button id="crm-clients-clear-filters" type="button" class="hidden h-9 px-3 inline-flex items-center gap-1.5 text-xs font-medium text-gray-500 hover:text-gray-700 border border-gray-200 rounded-lg transition">
+          <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i> Clear Filters
+        </button>
         <div data-button-mount="crm-new-client"></div>
       </div>
     </div>
@@ -1487,23 +1508,22 @@
         <table class="w-full text-sm">
           <thead class="bg-gray-50 border-b border-gray-100">
             <tr class="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              <th class="px-5 py-3">Company</th>
+              <th class="px-5 py-3 relative">
+                <button type="button" id="crm-clients-company-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="crm-clients-company-popover" data-filter-module="crmClients">Company <i data-lucide="chevron-down" class="w-3 h-3"></i></button>
+                <div id="crm-clients-company-popover" class="task-th-popover hidden" data-filter-type="company" data-filter-module="crmClients"></div>
+              </th>
               <th class="px-5 py-3 relative">
                 <button type="button" id="crm-clients-type-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="crm-clients-type-popover" data-filter-module="crmClients">Type <i data-lucide="chevron-down" class="w-3 h-3"></i></button>
                 <div id="crm-clients-type-popover" class="task-th-popover hidden" data-filter-type="type" data-filter-module="crmClients">
                   <button type="button" class="task-th-popover-option" data-value="all">All Types</button>
-                  <button type="button" class="task-th-popover-option" data-value="individual">Individual</button>
                   <button type="button" class="task-th-popover-option" data-value="company">Company</button>
-                  <button type="button" class="task-th-popover-option" data-value="clinic">Clinic</button>
-                  <button type="button" class="task-th-popover-option" data-value="restaurant">Restaurant</button>
-                  <button type="button" class="task-th-popover-option" data-value="real_estate">Real Estate</button>
-                  <button type="button" class="task-th-popover-option" data-value="school">School</button>
-                  <button type="button" class="task-th-popover-option" data-value="store">Store</button>
-                  <button type="button" class="task-th-popover-option" data-value="charity">Charity</button>
-                  <button type="button" class="task-th-popover-option" data-value="other">Other</button>
+                  <button type="button" class="task-th-popover-option" data-value="individual">Individual</button>
                 </div>
               </th>
-              <th class="px-5 py-3">Industry</th>
+              <th class="px-5 py-3 relative">
+                <button type="button" id="crm-clients-industry-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="crm-clients-industry-popover" data-filter-module="crmClients">Industry <i data-lucide="chevron-down" class="w-3 h-3"></i></button>
+                <div id="crm-clients-industry-popover" class="task-th-popover hidden" data-filter-type="industry" data-filter-module="crmClients"></div>
+              </th>
               <th class="px-5 py-3 relative">
                 <button type="button" id="crm-clients-owner-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="crm-clients-owner-popover" data-filter-module="crmClients">Owner <i data-lucide="chevron-down" class="w-3 h-3"></i></button>
                 <div id="crm-clients-owner-popover" class="task-th-popover hidden" data-filter-type="owner" data-filter-module="crmClients"></div>
@@ -1530,7 +1550,7 @@
     <div class="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-4">
       <div>
         <h3 class="text-lg font-semibold text-gray-900">Contacts</h3>
-        <p class="text-sm text-gray-500 mt-1">People associated with your clients.</p>
+        <p class="text-sm text-gray-500 mt-1">People associated with your companies.</p>
       </div>
       <div class="flex items-center gap-2 flex-wrap">
         <input id="crm-contacts-search" type="search" placeholder="Search contacts…" class="h-9 px-3 text-sm bg-white border border-gray-200 rounded-lg focus:border-brand-500 focus:ring-2 focus:ring-brand-100 outline-none transition w-44 sm:w-56" />
@@ -1538,24 +1558,46 @@
           <option value="active" selected>Active</option>
           <option value="archived">Archived</option>
         </select>
+        <button id="crm-contacts-clear-filters" type="button" class="hidden h-9 px-3 inline-flex items-center gap-1.5 text-xs font-medium text-gray-500 hover:text-gray-700 border border-gray-200 rounded-lg transition">
+          <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i> Clear Filters
+        </button>
         <div data-button-mount="crm-new-contact"></div>
       </div>
     </div>
     <div id="crm-contacts-empty" class="stat-card flex flex-col items-center justify-center text-center py-16">
       <div class="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center mb-3"><i data-lucide="users" class="w-6 h-6 text-gray-400"></i></div>
       <h4 class="text-base font-semibold text-gray-900">No contacts yet</h4>
-      <p class="text-sm text-gray-500 mt-1 max-w-sm">Add contacts linked to your clients.</p>
+      <p class="text-sm text-gray-500 mt-1 max-w-sm">Add contacts linked to your companies.</p>
     </div>
     <div id="crm-contacts-table-wrapper" class="hidden bg-white rounded-xl border border-gray-200 shadow-card overflow-hidden">
       <div class="table-scroll-container">
         <table class="w-full text-sm">
           <thead class="bg-gray-50 border-b border-gray-100">
             <tr class="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              <th class="px-5 py-3">Name</th>
-              <th class="px-5 py-3">Client</th>
-              <th class="px-5 py-3">Phone</th>
-              <th class="px-5 py-3">Email</th>
-              <th class="px-5 py-3">Status</th>
+              <th class="px-5 py-3 relative">
+                <button type="button" id="crm-contacts-name-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="crm-contacts-name-popover" data-filter-module="crmContacts">Name <i data-lucide="chevron-down" class="w-3 h-3"></i></button>
+                <div id="crm-contacts-name-popover" class="task-th-popover hidden" data-filter-type="name" data-filter-module="crmContacts"></div>
+              </th>
+              <th class="px-5 py-3 relative">
+                <button type="button" id="crm-contacts-client-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="crm-contacts-client-popover" data-filter-module="crmContacts">Company <i data-lucide="chevron-down" class="w-3 h-3"></i></button>
+                <div id="crm-contacts-client-popover" class="task-th-popover hidden" data-filter-type="client" data-filter-module="crmContacts"></div>
+              </th>
+              <th class="px-5 py-3 relative">
+                <button type="button" id="crm-contacts-phone-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="crm-contacts-phone-popover" data-filter-module="crmContacts">Phone <i data-lucide="chevron-down" class="w-3 h-3"></i></button>
+                <div id="crm-contacts-phone-popover" class="task-th-popover hidden" data-filter-type="phone" data-filter-module="crmContacts"></div>
+              </th>
+              <th class="px-5 py-3 relative">
+                <button type="button" id="crm-contacts-email-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="crm-contacts-email-popover" data-filter-module="crmContacts">Email <i data-lucide="chevron-down" class="w-3 h-3"></i></button>
+                <div id="crm-contacts-email-popover" class="task-th-popover hidden" data-filter-type="email" data-filter-module="crmContacts"></div>
+              </th>
+              <th class="px-5 py-3 relative">
+                <button type="button" id="crm-contacts-status-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="crm-contacts-status-popover" data-filter-module="crmContacts">Status <i data-lucide="chevron-down" class="w-3 h-3"></i></button>
+                <div id="crm-contacts-status-popover" class="task-th-popover hidden" data-filter-type="status" data-filter-module="crmContacts">
+                  <button type="button" class="task-th-popover-option" data-value="all">All Statuses</button>
+                  <button type="button" class="task-th-popover-option" data-value="active">Active</button>
+                  <button type="button" class="task-th-popover-option" data-value="inactive">Inactive</button>
+                </div>
+              </th>
               <th class="px-5 py-3 text-right">Actions</th>
             </tr>
           </thead>
@@ -1578,6 +1620,9 @@
           <option value="active" selected>Active</option>
           <option value="archived">Archived</option>
         </select>
+        <button id="crm-deals-clear-filters" type="button" class="hidden h-9 px-3 inline-flex items-center gap-1.5 text-xs font-medium text-gray-500 hover:text-gray-700 border border-gray-200 rounded-lg transition">
+          <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i> Clear Filters
+        </button>
         <div data-button-mount="crm-new-deal"></div>
       </div>
     </div>
@@ -1591,12 +1636,50 @@
         <table class="w-full text-sm">
           <thead class="bg-gray-50 border-b border-gray-100">
             <tr class="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              <th class="px-5 py-3">Deal</th>
-              <th class="px-5 py-3">Client</th>
-              <th class="px-5 py-3">Stage</th>
-              <th class="px-5 py-3">Value</th>
-              <th class="px-5 py-3">Owner</th>
-              <th class="px-5 py-3">Close Date</th>
+              <th class="px-5 py-3 relative">
+                <button type="button" id="crm-deals-deal-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="crm-deals-deal-popover" data-filter-module="crmDeals">Deal <i data-lucide="chevron-down" class="w-3 h-3"></i></button>
+                <div id="crm-deals-deal-popover" class="task-th-popover hidden" data-filter-type="deal" data-filter-module="crmDeals"></div>
+              </th>
+              <th class="px-5 py-3 relative">
+                <button type="button" id="crm-deals-client-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="crm-deals-client-popover" data-filter-module="crmDeals">Client <i data-lucide="chevron-down" class="w-3 h-3"></i></button>
+                <div id="crm-deals-client-popover" class="task-th-popover hidden" data-filter-type="client" data-filter-module="crmDeals"></div>
+              </th>
+              <th class="px-5 py-3 relative">
+                <button type="button" id="crm-deals-stage-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="crm-deals-stage-popover" data-filter-module="crmDeals">Stage <i data-lucide="chevron-down" class="w-3 h-3"></i></button>
+                <div id="crm-deals-stage-popover" class="task-th-popover hidden" data-filter-type="stage" data-filter-module="crmDeals">
+                  <button type="button" class="task-th-popover-option" data-value="all">All Stages</button>
+                  <button type="button" class="task-th-popover-option" data-value="discovery">Discovery</button>
+                  <button type="button" class="task-th-popover-option" data-value="proposal">Proposal</button>
+                  <button type="button" class="task-th-popover-option" data-value="negotiation">Negotiation</button>
+                  <button type="button" class="task-th-popover-option" data-value="won">Won</button>
+                  <button type="button" class="task-th-popover-option" data-value="lost">Lost</button>
+                </div>
+              </th>
+              <th class="px-5 py-3 relative">
+                <button type="button" id="crm-deals-value-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="crm-deals-value-popover" data-filter-module="crmDeals">Value <i data-lucide="chevron-down" class="w-3 h-3"></i></button>
+                <div id="crm-deals-value-popover" class="task-th-popover hidden" data-filter-type="value" data-filter-module="crmDeals">
+                  <button type="button" class="task-th-popover-option" data-value="">All Values</button>
+                  <button type="button" class="task-th-popover-option" data-value="none">No Value</button>
+                  <button type="button" class="task-th-popover-option" data-value="under_10k">Under 10,000</button>
+                  <button type="button" class="task-th-popover-option" data-value="10k_50k">10,000 – 50,000</button>
+                  <button type="button" class="task-th-popover-option" data-value="50k_100k">50,000 – 100,000</button>
+                  <button type="button" class="task-th-popover-option" data-value="over_100k">100,000+</button>
+                </div>
+              </th>
+              <th class="px-5 py-3 relative">
+                <button type="button" id="crm-deals-owner-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="crm-deals-owner-popover" data-filter-module="crmDeals">Owner <i data-lucide="chevron-down" class="w-3 h-3"></i></button>
+                <div id="crm-deals-owner-popover" class="task-th-popover hidden" data-filter-type="owner" data-filter-module="crmDeals"></div>
+              </th>
+              <th class="px-5 py-3 relative">
+                <button type="button" id="crm-deals-close-date-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="crm-deals-close-date-popover" data-filter-module="crmDeals">Close Date <i data-lucide="chevron-down" class="w-3 h-3"></i></button>
+                <div id="crm-deals-close-date-popover" class="task-th-popover hidden" data-filter-type="closeDate" data-filter-module="crmDeals">
+                  <button type="button" class="task-th-popover-option" data-value="">All Close Dates</button>
+                  <button type="button" class="task-th-popover-option" data-value="past">Past</button>
+                  <button type="button" class="task-th-popover-option" data-value="today">Today</button>
+                  <button type="button" class="task-th-popover-option" data-value="next_7_days">Next 7 Days</button>
+                  <button type="button" class="task-th-popover-option" data-value="no_date">No Date</button>
+                </div>
+              </th>
               <th class="px-5 py-3 text-right">Actions</th>
             </tr>
           </thead>
@@ -1619,6 +1702,9 @@
           <option value="active" selected>Active</option>
           <option value="archived">Archived</option>
         </select>
+        <button id="crm-activities-clear-filters" type="button" class="hidden h-9 px-3 inline-flex items-center gap-1.5 text-xs font-medium text-gray-500 hover:text-gray-700 border border-gray-200 rounded-lg transition">
+          <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i> Clear Filters
+        </button>
         <div data-button-mount="crm-new-activity"></div>
       </div>
     </div>
@@ -1632,11 +1718,50 @@
         <table class="w-full text-sm">
           <thead class="bg-gray-50 border-b border-gray-100">
             <tr class="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              <th class="px-5 py-3">Activity</th>
-              <th class="px-5 py-3">Client</th>
-              <th class="px-5 py-3">Status</th>
-              <th class="px-5 py-3">Date</th>
-              <th class="px-5 py-3">Owner</th>
+              <th class="px-5 py-3 relative">
+                <button type="button" id="crm-activities-activity-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="crm-activities-activity-popover" data-filter-module="crmActivities">Activity <i data-lucide="chevron-down" class="w-3 h-3"></i></button>
+                <div id="crm-activities-activity-popover" class="task-th-popover hidden" data-filter-type="activity" data-filter-module="crmActivities"></div>
+              </th>
+              <th class="px-5 py-3 relative">
+                <button type="button" id="crm-activities-type-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="crm-activities-type-popover" data-filter-module="crmActivities">Type <i data-lucide="chevron-down" class="w-3 h-3"></i></button>
+                <div id="crm-activities-type-popover" class="task-th-popover hidden" data-filter-type="type" data-filter-module="crmActivities">
+                  <button type="button" class="task-th-popover-option" data-value="all">All Types</button>
+                  <button type="button" class="task-th-popover-option" data-value="call">Call</button>
+                  <button type="button" class="task-th-popover-option" data-value="meeting">Meeting</button>
+                  <button type="button" class="task-th-popover-option" data-value="email">Email</button>
+                  <button type="button" class="task-th-popover-option" data-value="whatsapp">WhatsApp</button>
+                  <button type="button" class="task-th-popover-option" data-value="visit">Visit</button>
+                  <button type="button" class="task-th-popover-option" data-value="follow_up">Follow Up</button>
+                  <button type="button" class="task-th-popover-option" data-value="other">Other</button>
+                </div>
+              </th>
+              <th class="px-5 py-3 relative">
+                <button type="button" id="crm-activities-client-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="crm-activities-client-popover" data-filter-module="crmActivities">Client <i data-lucide="chevron-down" class="w-3 h-3"></i></button>
+                <div id="crm-activities-client-popover" class="task-th-popover hidden" data-filter-type="client" data-filter-module="crmActivities"></div>
+              </th>
+              <th class="px-5 py-3 relative">
+                <button type="button" id="crm-activities-status-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="crm-activities-status-popover" data-filter-module="crmActivities">Status <i data-lucide="chevron-down" class="w-3 h-3"></i></button>
+                <div id="crm-activities-status-popover" class="task-th-popover hidden" data-filter-type="status" data-filter-module="crmActivities">
+                  <button type="button" class="task-th-popover-option" data-value="all">All Statuses</button>
+                  <button type="button" class="task-th-popover-option" data-value="planned">Planned</button>
+                  <button type="button" class="task-th-popover-option" data-value="completed">Completed</button>
+                  <button type="button" class="task-th-popover-option" data-value="cancelled">Cancelled</button>
+                </div>
+              </th>
+              <th class="px-5 py-3 relative">
+                <button type="button" id="crm-activities-date-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="crm-activities-date-popover" data-filter-module="crmActivities">Date <i data-lucide="chevron-down" class="w-3 h-3"></i></button>
+                <div id="crm-activities-date-popover" class="task-th-popover hidden" data-filter-type="date" data-filter-module="crmActivities">
+                  <button type="button" class="task-th-popover-option" data-value="">All Dates</button>
+                  <button type="button" class="task-th-popover-option" data-value="past">Past</button>
+                  <button type="button" class="task-th-popover-option" data-value="today">Today</button>
+                  <button type="button" class="task-th-popover-option" data-value="next_7_days">Next 7 Days</button>
+                  <button type="button" class="task-th-popover-option" data-value="no_date">No Date</button>
+                </div>
+              </th>
+              <th class="px-5 py-3 relative">
+                <button type="button" id="crm-activities-owner-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="crm-activities-owner-popover" data-filter-module="crmActivities">Owner <i data-lucide="chevron-down" class="w-3 h-3"></i></button>
+                <div id="crm-activities-owner-popover" class="task-th-popover hidden" data-filter-type="owner" data-filter-module="crmActivities"></div>
+              </th>
               <th class="px-5 py-3 text-right">Actions</th>
             </tr>
           </thead>
@@ -1659,6 +1784,9 @@
           <option value="active" selected>Active</option>
           <option value="archived">Archived</option>
         </select>
+        <button id="crm-proposals-clear-filters" type="button" class="hidden h-9 px-3 inline-flex items-center gap-1.5 text-xs font-medium text-gray-500 hover:text-gray-700 border border-gray-200 rounded-lg transition">
+          <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i> Clear Filters
+        </button>
         <div data-button-mount="crm-new-proposal"></div>
       </div>
     </div>
@@ -1672,12 +1800,50 @@
         <table class="w-full text-sm">
           <thead class="bg-gray-50 border-b border-gray-100">
             <tr class="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              <th class="px-5 py-3">Proposal</th>
-              <th class="px-5 py-3">Client</th>
-              <th class="px-5 py-3">Status</th>
-              <th class="px-5 py-3">Amount</th>
-              <th class="px-5 py-3">Sent Date</th>
-              <th class="px-5 py-3">Owner</th>
+              <th class="px-5 py-3 relative">
+                <button type="button" id="crm-proposals-proposal-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="crm-proposals-proposal-popover" data-filter-module="crmProposals">Proposal <i data-lucide="chevron-down" class="w-3 h-3"></i></button>
+                <div id="crm-proposals-proposal-popover" class="task-th-popover hidden" data-filter-type="proposal" data-filter-module="crmProposals"></div>
+              </th>
+              <th class="px-5 py-3 relative">
+                <button type="button" id="crm-proposals-client-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="crm-proposals-client-popover" data-filter-module="crmProposals">Company <i data-lucide="chevron-down" class="w-3 h-3"></i></button>
+                <div id="crm-proposals-client-popover" class="task-th-popover hidden" data-filter-type="client" data-filter-module="crmProposals"></div>
+              </th>
+              <th class="px-5 py-3 relative">
+                <button type="button" id="crm-proposals-status-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="crm-proposals-status-popover" data-filter-module="crmProposals">Status <i data-lucide="chevron-down" class="w-3 h-3"></i></button>
+                <div id="crm-proposals-status-popover" class="task-th-popover hidden" data-filter-type="status" data-filter-module="crmProposals">
+                  <button type="button" class="task-th-popover-option" data-value="all">All Statuses</button>
+                  <button type="button" class="task-th-popover-option" data-value="draft">Draft</button>
+                  <button type="button" class="task-th-popover-option" data-value="sent">Sent</button>
+                  <button type="button" class="task-th-popover-option" data-value="accepted">Accepted</button>
+                  <button type="button" class="task-th-popover-option" data-value="rejected">Rejected</button>
+                  <button type="button" class="task-th-popover-option" data-value="revised">Revised</button>
+                </div>
+              </th>
+              <th class="px-5 py-3 relative">
+                <button type="button" id="crm-proposals-amount-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="crm-proposals-amount-popover" data-filter-module="crmProposals">Amount <i data-lucide="chevron-down" class="w-3 h-3"></i></button>
+                <div id="crm-proposals-amount-popover" class="task-th-popover hidden" data-filter-type="amount" data-filter-module="crmProposals">
+                  <button type="button" class="task-th-popover-option" data-value="">All Amounts</button>
+                  <button type="button" class="task-th-popover-option" data-value="none">No Amount</button>
+                  <button type="button" class="task-th-popover-option" data-value="under_10k">Under 10,000</button>
+                  <button type="button" class="task-th-popover-option" data-value="10k_50k">10,000 – 50,000</button>
+                  <button type="button" class="task-th-popover-option" data-value="50k_100k">50,000 – 100,000</button>
+                  <button type="button" class="task-th-popover-option" data-value="over_100k">100,000+</button>
+                </div>
+              </th>
+              <th class="px-5 py-3 relative">
+                <button type="button" id="crm-proposals-sent-date-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="crm-proposals-sent-date-popover" data-filter-module="crmProposals">Sent Date <i data-lucide="chevron-down" class="w-3 h-3"></i></button>
+                <div id="crm-proposals-sent-date-popover" class="task-th-popover hidden" data-filter-type="sentDate" data-filter-module="crmProposals">
+                  <button type="button" class="task-th-popover-option" data-value="">All Sent Dates</button>
+                  <button type="button" class="task-th-popover-option" data-value="past">Past</button>
+                  <button type="button" class="task-th-popover-option" data-value="today">Today</button>
+                  <button type="button" class="task-th-popover-option" data-value="next_7_days">Next 7 Days</button>
+                  <button type="button" class="task-th-popover-option" data-value="no_date">Not Sent</button>
+                </div>
+              </th>
+              <th class="px-5 py-3 relative">
+                <button type="button" id="crm-proposals-owner-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="crm-proposals-owner-popover" data-filter-module="crmProposals">Owner <i data-lucide="chevron-down" class="w-3 h-3"></i></button>
+                <div id="crm-proposals-owner-popover" class="task-th-popover hidden" data-filter-type="owner" data-filter-module="crmProposals"></div>
+              </th>
               <th class="px-5 py-3 text-right">Actions</th>
             </tr>
           </thead>
@@ -3198,12 +3364,19 @@
           </div>
           <div><label class="form-label">Job Title</label><input name="title" type="text" class="form-input" placeholder="e.g. Marketing Director" /></div>
           <div>
-            <label class="form-label">Client</label>
-            <select name="client_id" id="contact-client-id" class="form-input"><option value="">No client</option></select>
+            <label class="form-label">Company</label>
+            <select name="client_id" id="contact-client-id" class="form-input"><option value="">No company</option></select>
           </div>
           <div><label class="form-label">Phone</label><input name="phone" type="tel" class="form-input" placeholder="+20 1xx xxx xxxx" /></div>
           <div><label class="form-label">WhatsApp</label><input name="whatsapp" type="tel" class="form-input" placeholder="+20 1xx xxx xxxx" /></div>
           <div class="sm:col-span-2"><label class="form-label">Email</label><input name="email" type="email" class="form-input" placeholder="contact@example.com" /></div>
+          <div>
+            <label class="form-label">Status</label>
+            <select name="status" class="form-input">
+              <option value="active" selected>Active</option>
+              <option value="inactive">Inactive</option>
+            </select>
+          </div>
           <div class="sm:col-span-2"><label class="form-label">Notes</label><textarea name="notes" rows="2" class="form-input" placeholder="Additional info…"></textarea></div>
         </div>
         <div class="flex items-center justify-end gap-2 pt-4 border-t border-gray-100">
@@ -3394,8 +3567,8 @@
       <form id="note-form" class="px-6 py-5 space-y-4">
         <input type="hidden" name="lead_id" id="note-lead-id-hidden" />
         <div>
-          <label class="form-label">Client</label>
-          <select name="client_id" id="note-client-id" class="form-input"><option value="">No client</option></select>
+          <label class="form-label">Company</label>
+          <select name="client_id" id="note-client-id" class="form-input"><option value="">No company</option></select>
         </div>
         <div>
           <label class="form-label">Note <span class="text-rose-500">*</span></label>
@@ -3424,8 +3597,8 @@
             <input name="proposal_title" type="text" class="form-input" placeholder="e.g. Q1 Social Media Package" required />
           </div>
           <div>
-            <label class="form-label">Client</label>
-            <select name="client_id" id="proposal-client-id" class="form-input"><option value="">No client</option></select>
+            <label class="form-label">Company</label>
+            <select name="client_id" id="proposal-client-id" class="form-input"><option value="">No company</option></select>
           </div>
           <div>
             <label class="form-label">Status</label>

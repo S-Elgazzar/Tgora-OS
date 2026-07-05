@@ -67,6 +67,9 @@ const state = {
       priority: 'all',
       status: 'all',
       owner: null,
+      client: null, // Sprint CRM-4.5A — Company filter
+      lead: null, // Sprint CRM-4.5A fix pass
+      lastActivity: null, // Sprint CRM-4.5A fix pass
     },
     crmClients: {
       archived: 'active',
@@ -74,11 +77,52 @@ const state = {
       type: 'all',
       status: 'all',
       owner: null,
+      industry: null, // Sprint CRM-4.5A
+      company: null, // Sprint CRM-4.5A fix pass
     },
-    crmContacts: { archived: 'active', search: '', status: 'all' },
-    crmDeals:    { archived: 'active', search: '', stage: 'all', status: 'all' },
-    crmActivities: { archived: 'active', search: '', type: 'all', status: 'all' },
-    crmProposals:  { archived: 'active', search: '', status: 'all' },
+    crmContacts: {
+      archived: 'active',
+      search: '',
+      status: 'all',
+      client: null,
+      name: null, // Sprint CRM-4.5A fix pass
+      phone: null, // Sprint CRM-4.5A fix pass
+      email: null, // Sprint CRM-4.5A fix pass
+    },
+    // Sprint CRM-4.5A — crm_deals has no `status` column; this field predates
+    // this sprint, is never set by any form, and is left untouched/unused
+    // rather than removed (out of scope: filter cleanup, not a data-model fix).
+    crmDeals: {
+      archived: 'active',
+      search: '',
+      stage: 'all',
+      status: 'all',
+      client: null,
+      owner: null,
+      deal: null, // Sprint CRM-4.5A fix pass
+      value: null, // Sprint CRM-4.5A fix pass
+      closeDate: null, // Sprint CRM-4.5A fix pass
+    },
+    crmActivities: {
+      archived: 'active',
+      search: '',
+      type: 'all',
+      status: 'all',
+      client: null,
+      owner: null,
+      activity: null, // Sprint CRM-4.5A fix pass
+      date: null, // Sprint CRM-4.5A fix pass
+    },
+    crmProposals: {
+      archived: 'active',
+      search: '',
+      status: 'all',
+      client: null,
+      proposal: null, // Sprint CRM-4.5A fix pass
+      amount: null, // Sprint CRM-4.5A fix pass
+      sentDate: null, // Sprint CRM-4.5A fix pass
+      owner: null, // Sprint CRM-4.5A fix pass
+    },
     financeTransactions: { search: '', type: 'all', account: '', archived: 'active' },
     financeAccounts:     { search: '' },
     financeForecasts:    { search: '', type: 'all', status: 'all', archived: 'active' },
@@ -1148,6 +1192,16 @@ function normalizeCrmLeadStatusForDisplay(status) {
   if (key === 'won') return 'converted';
   if (key === 'lost') return 'disqualified';
   return key;
+}
+
+// Sprint CRM-4.5A Fix Pass 2 — crm_contacts.status is nullable and the
+// New/Edit Contact form never wrote to it, so existing rows are null/empty.
+// The table badge already fell back to 'active' for display, but the status
+// filter compared the raw (unfallback'd) value, so it never matched — this
+// is the single source of truth both call sites now share. It never writes
+// back to the database; existing null rows stay null until edited/saved.
+function getCrmContactStatus(contact) {
+  return (contact?.status || 'active').toLowerCase();
 }
 
 async function fetchCrmLeads() {
@@ -3425,6 +3479,49 @@ function matchesDeadlineFilter(deadline, status, bucket, today) {
   return true;
 }
 
+// Sprint CRM-4.5A fix pass — generic date-bucket predicate for the new CRM
+// date header filters (Deals Close Date, Activities Date, Proposals Sent
+// Date, Leads Last Activity). These fields aren't deadlines tied to a
+// completion status, so this reuses the Past/Today/Next 7 Days/No Date
+// bucket vocabulary of matchesDeadlineFilter() above without its
+// overdue/not-completed exclusion — the smallest extension that keeps every
+// CRM date filter behaviorally consistent with one another.
+function matchesDateBucketFilter(dateValue, bucket, today) {
+  if (bucket === 'no_date') return !dateValue;
+  if (!dateValue) return false;
+
+  const d = new Date(dateValue);
+  d.setHours(0, 0, 0, 0);
+
+  if (bucket === 'past') return d < today;
+  if (bucket === 'today') return d.getTime() === today.getTime();
+
+  if (bucket === 'next_7_days') {
+    const weekFromNow = new Date(today);
+    weekFromNow.setDate(weekFromNow.getDate() + 7);
+    return d >= today && d < weekFromNow;
+  }
+
+  return true;
+}
+
+// Sprint CRM-4.5A fix pass — generic numeric-bucket predicate for the new CRM
+// amount header filters (Deals Value, Proposals Amount). Fixed thresholds,
+// not currency-aware — see the fix-pass delivery report for rationale/limits.
+function matchesAmountBucketFilter(amount, bucket) {
+  if (bucket === 'none') return amount === null || amount === undefined || amount === '';
+
+  const n = Number(amount);
+  if (Number.isNaN(n)) return false;
+
+  if (bucket === 'under_10k') return n < 10000;
+  if (bucket === '10k_50k') return n >= 10000 && n < 50000;
+  if (bucket === '50k_100k') return n >= 50000 && n < 100000;
+  if (bucket === 'over_100k') return n >= 100000;
+
+  return true;
+}
+
 function getFilteredProjects() {
   // getProjectViewBase() applies the archiveView filter (active/archived/all).
   // Other filter predicates are applied on top.
@@ -3805,9 +3902,12 @@ const HEADER_FILTER_MODULES = {
     stateKey: 'crmLeads',
     viewName: 'crm',
     popoverIds: [
+      'crm-leads-lead-popover',
       'crm-leads-source-popover',
       'crm-leads-status-popover',
       'crm-leads-owner-popover',
+      'crm-leads-client-popover',
+      'crm-leads-last-activity-popover',
     ],
     chipsContainerId: null,
     allDefaultFilters: ['source', 'status', 'priority'],
@@ -3818,6 +3918,9 @@ const HEADER_FILTER_MODULES = {
       priority: 'all',
       status: 'all',
       owner: null,
+      client: null,
+      lead: null,
+      lastActivity: null,
     },
     getChips: () => [],
     renderHeaderFilters: () => renderCrmLeadsHeaderFilters(),
@@ -3827,9 +3930,11 @@ const HEADER_FILTER_MODULES = {
     stateKey: 'crmClients',
     viewName: 'crm',
     popoverIds: [
+      'crm-clients-company-popover',
       'crm-clients-type-popover',
       'crm-clients-status-popover',
       'crm-clients-owner-popover',
+      'crm-clients-industry-popover',
     ],
     chipsContainerId: null,
     allDefaultFilters: ['type', 'status'],
@@ -3839,10 +3944,123 @@ const HEADER_FILTER_MODULES = {
       type: 'all',
       status: 'all',
       owner: null,
+      industry: null,
+      company: null,
     },
     getChips: () => [],
     renderHeaderFilters: () => renderCrmClientsHeaderFilters(),
     render: () => renderCrmClients(),
+  },
+  // Sprint CRM-4.5A — Contacts/Deals/Activities/Proposals join the same
+  // header-filter-popover system Leads/Clients already use, rather than a
+  // new filter UI pattern. This reuses buildHeaderFilterOptions(),
+  // resetModuleFilters(), and the generic popover click-delegation as-is.
+  crmContacts: {
+    stateKey: 'crmContacts',
+    viewName: 'crm',
+    popoverIds: [
+      'crm-contacts-name-popover',
+      'crm-contacts-client-popover',
+      'crm-contacts-phone-popover',
+      'crm-contacts-email-popover',
+      'crm-contacts-status-popover',
+    ],
+    chipsContainerId: null,
+    allDefaultFilters: ['status'],
+    defaults: {
+      archived: 'active',
+      search: '',
+      status: 'all',
+      client: null,
+      name: null,
+      phone: null,
+      email: null,
+    },
+    getChips: () => [],
+    renderHeaderFilters: () => renderCrmContactsHeaderFilters(),
+    render: () => renderCrmContacts(),
+  },
+  crmDeals: {
+    stateKey: 'crmDeals',
+    viewName: 'crm',
+    popoverIds: [
+      'crm-deals-deal-popover',
+      'crm-deals-client-popover',
+      'crm-deals-stage-popover',
+      'crm-deals-value-popover',
+      'crm-deals-owner-popover',
+      'crm-deals-close-date-popover',
+    ],
+    chipsContainerId: null,
+    allDefaultFilters: ['stage'],
+    defaults: {
+      archived: 'active',
+      search: '',
+      stage: 'all',
+      status: 'all',
+      client: null,
+      owner: null,
+      deal: null,
+      value: null,
+      closeDate: null,
+    },
+    getChips: () => [],
+    renderHeaderFilters: () => renderCrmDealsHeaderFilters(),
+    render: () => renderCrmDeals(),
+  },
+  crmActivities: {
+    stateKey: 'crmActivities',
+    viewName: 'crm',
+    popoverIds: [
+      'crm-activities-activity-popover',
+      'crm-activities-client-popover',
+      'crm-activities-type-popover',
+      'crm-activities-status-popover',
+      'crm-activities-date-popover',
+      'crm-activities-owner-popover',
+    ],
+    chipsContainerId: null,
+    allDefaultFilters: ['type', 'status'],
+    defaults: {
+      archived: 'active',
+      search: '',
+      type: 'all',
+      status: 'all',
+      client: null,
+      owner: null,
+      activity: null,
+      date: null,
+    },
+    getChips: () => [],
+    renderHeaderFilters: () => renderCrmActivitiesHeaderFilters(),
+    render: () => renderCrmActivities(),
+  },
+  crmProposals: {
+    stateKey: 'crmProposals',
+    viewName: 'crm',
+    popoverIds: [
+      'crm-proposals-proposal-popover',
+      'crm-proposals-client-popover',
+      'crm-proposals-status-popover',
+      'crm-proposals-amount-popover',
+      'crm-proposals-sent-date-popover',
+      'crm-proposals-owner-popover',
+    ],
+    chipsContainerId: null,
+    allDefaultFilters: ['status'],
+    defaults: {
+      archived: 'active',
+      search: '',
+      status: 'all',
+      client: null,
+      proposal: null,
+      amount: null,
+      sentDate: null,
+      owner: null,
+    },
+    getChips: () => [],
+    renderHeaderFilters: () => renderCrmProposalsHeaderFilters(),
+    render: () => renderCrmProposals(),
   },
 };
 
@@ -4228,40 +4446,168 @@ function getProjectDetailsActiveFilterChips() {
   return chips;
 }
 
+// Sprint CRM-4.5A — shared option lists for the "Company"/"Owner" header
+// filters now repeated across Leads/Contacts/Deals/Activities/Proposals.
+function crmOwnerFilterOptions() {
+  return state.teamMembers.map((m) => ({ value: m.id, label: m.name }));
+}
+function crmClientFilterOptions() {
+  return state.crmClients.filter((c) => !c.is_archived).map((c) => ({ value: c.id, label: c.client_name }));
+}
+
+// Sprint CRM-4.5A fix pass — generic distinct-value option builder for the
+// new text-column header filters (Company/Name/Phone/Email/Lead/Deal/
+// Activity/Proposal). Generalizes the distinct-value logic the Industry
+// filter already used, rather than repeating it per field.
+function crmDistinctFieldOptions(items, field) {
+  return [...new Set(items.map((item) => (item[field] || '').trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b))
+    .map((v) => ({ value: v, label: v }));
+}
+
+// Sprint CRM-4.5A — toggles a "Clear Filters" button's visibility based on
+// whether any filter (other than the archived/active toggle, which has its
+// own dedicated select and isn't considered a "filter" for this purpose —
+// matching the existing Tasks table convention) or the search box is active.
+function updateCrmClearFiltersVisibility(buttonId, filters, defaults) {
+  const btn = $(`#${buttonId}`);
+  if (!btn) return;
+  const hasActiveFilter = Object.keys(defaults).some((key) => {
+    if (key === 'archived') return false;
+    if (key === 'search') return !!filters.search;
+    return filters[key] !== defaults[key];
+  });
+  btn.classList.toggle('hidden', !hasActiveFilter);
+}
+
+// Sprint CRM-4.5A — CRM tables use their own dedicated search box per tab
+// (unlike Projects/Tasks, which share #global-search), so clearing a CRM
+// table's filters also needs to reset that box and the archived-view select
+// manually; resetModuleFilters() only knows about #global-search.
+function clearCrmModuleFilters(module, searchInputId, archivedSelectId) {
+  resetModuleFilters(module);
+  const searchEl = $(`#${searchInputId}`);
+  if (searchEl) searchEl.value = '';
+  const archivedEl = $(`#${archivedSelectId}`);
+  if (archivedEl) archivedEl.value = 'active';
+}
+
 function renderCrmLeadsHeaderFilters() {
   const f = state.filters.crmLeads;
 
+  $('#crm-leads-lead-th-filter')?.classList.toggle('active', f.lead !== null);
   $('#crm-leads-source-th-filter')?.classList.toggle('active', f.source !== 'all');
   $('#crm-leads-status-th-filter')?.classList.toggle('active', f.status !== 'all');
   $('#crm-leads-owner-th-filter')?.classList.toggle('active', f.owner !== null);
+  $('#crm-leads-client-th-filter')?.classList.toggle('active', f.client !== null);
+  $('#crm-leads-last-activity-th-filter')?.classList.toggle('active', f.lastActivity !== null);
 
+  buildHeaderFilterOptions('crm-leads-lead-popover', 'All Leads', crmDistinctFieldOptions(state.crmLeads, 'lead_name'), f.lead);
   syncHeaderFilterPopoverActive('crm-leads-source-popover', f.source);
   syncHeaderFilterPopoverActive('crm-leads-status-popover', f.status);
 
-  buildHeaderFilterOptions(
-    'crm-leads-owner-popover',
-    'All Owners',
-    state.teamMembers.map((m) => ({ value: m.id, label: m.name })),
-    f.owner
-  );
+  buildHeaderFilterOptions('crm-leads-owner-popover', 'All Owners', crmOwnerFilterOptions(), f.owner);
+  buildHeaderFilterOptions('crm-leads-client-popover', 'All Companies', crmClientFilterOptions(), f.client);
+  syncHeaderFilterPopoverActive('crm-leads-last-activity-popover', f.lastActivity);
+
+  updateCrmClearFiltersVisibility('crm-leads-clear-filters', f, HEADER_FILTER_MODULES.crmLeads.defaults);
 }
 
 function renderCrmClientsHeaderFilters() {
   const f = state.filters.crmClients;
 
+  $('#crm-clients-company-th-filter')?.classList.toggle('active', f.company !== null);
   $('#crm-clients-type-th-filter')?.classList.toggle('active', f.type !== 'all');
   $('#crm-clients-status-th-filter')?.classList.toggle('active', f.status !== 'all');
   $('#crm-clients-owner-th-filter')?.classList.toggle('active', f.owner !== null);
+  $('#crm-clients-industry-th-filter')?.classList.toggle('active', f.industry !== null);
 
+  buildHeaderFilterOptions('crm-clients-company-popover', 'All Companies', crmDistinctFieldOptions(state.crmClients, 'client_name'), f.company);
   syncHeaderFilterPopoverActive('crm-clients-type-popover', f.type);
   syncHeaderFilterPopoverActive('crm-clients-status-popover', f.status);
 
-  buildHeaderFilterOptions(
-    'crm-clients-owner-popover',
-    'All Owners',
-    state.teamMembers.map((m) => ({ value: m.id, label: m.name })),
-    f.owner
-  );
+  buildHeaderFilterOptions('crm-clients-owner-popover', 'All Owners', crmOwnerFilterOptions(), f.owner);
+  buildHeaderFilterOptions('crm-clients-industry-popover', 'All Industries', crmDistinctFieldOptions(state.crmClients, 'industry'), f.industry);
+
+  updateCrmClearFiltersVisibility('crm-clients-clear-filters', f, HEADER_FILTER_MODULES.crmClients.defaults);
+}
+
+function renderCrmContactsHeaderFilters() {
+  const f = state.filters.crmContacts;
+
+  $('#crm-contacts-name-th-filter')?.classList.toggle('active', f.name !== null);
+  $('#crm-contacts-status-th-filter')?.classList.toggle('active', f.status !== 'all');
+  $('#crm-contacts-client-th-filter')?.classList.toggle('active', f.client !== null);
+  $('#crm-contacts-phone-th-filter')?.classList.toggle('active', f.phone !== null);
+  $('#crm-contacts-email-th-filter')?.classList.toggle('active', f.email !== null);
+
+  buildHeaderFilterOptions('crm-contacts-name-popover', 'All Names', crmDistinctFieldOptions(state.crmContacts, 'contact_name'), f.name);
+  syncHeaderFilterPopoverActive('crm-contacts-status-popover', f.status);
+  buildHeaderFilterOptions('crm-contacts-client-popover', 'All Companies', crmClientFilterOptions(), f.client);
+  buildHeaderFilterOptions('crm-contacts-phone-popover', 'All Phones', crmDistinctFieldOptions(state.crmContacts, 'phone'), f.phone);
+  buildHeaderFilterOptions('crm-contacts-email-popover', 'All Emails', crmDistinctFieldOptions(state.crmContacts, 'email'), f.email);
+
+  updateCrmClearFiltersVisibility('crm-contacts-clear-filters', f, HEADER_FILTER_MODULES.crmContacts.defaults);
+}
+
+function renderCrmDealsHeaderFilters() {
+  const f = state.filters.crmDeals;
+
+  $('#crm-deals-deal-th-filter')?.classList.toggle('active', f.deal !== null);
+  $('#crm-deals-stage-th-filter')?.classList.toggle('active', f.stage !== 'all');
+  $('#crm-deals-client-th-filter')?.classList.toggle('active', f.client !== null);
+  $('#crm-deals-value-th-filter')?.classList.toggle('active', f.value !== null);
+  $('#crm-deals-owner-th-filter')?.classList.toggle('active', f.owner !== null);
+  $('#crm-deals-close-date-th-filter')?.classList.toggle('active', f.closeDate !== null);
+
+  buildHeaderFilterOptions('crm-deals-deal-popover', 'All Deals', crmDistinctFieldOptions(state.crmDeals, 'deal_name'), f.deal);
+  syncHeaderFilterPopoverActive('crm-deals-stage-popover', f.stage);
+  buildHeaderFilterOptions('crm-deals-client-popover', 'All Companies', crmClientFilterOptions(), f.client);
+  syncHeaderFilterPopoverActive('crm-deals-value-popover', f.value);
+  buildHeaderFilterOptions('crm-deals-owner-popover', 'All Owners', crmOwnerFilterOptions(), f.owner);
+  syncHeaderFilterPopoverActive('crm-deals-close-date-popover', f.closeDate);
+
+  updateCrmClearFiltersVisibility('crm-deals-clear-filters', f, HEADER_FILTER_MODULES.crmDeals.defaults);
+}
+
+function renderCrmActivitiesHeaderFilters() {
+  const f = state.filters.crmActivities;
+
+  $('#crm-activities-activity-th-filter')?.classList.toggle('active', f.activity !== null);
+  $('#crm-activities-type-th-filter')?.classList.toggle('active', f.type !== 'all');
+  $('#crm-activities-status-th-filter')?.classList.toggle('active', f.status !== 'all');
+  $('#crm-activities-client-th-filter')?.classList.toggle('active', f.client !== null);
+  $('#crm-activities-date-th-filter')?.classList.toggle('active', f.date !== null);
+  $('#crm-activities-owner-th-filter')?.classList.toggle('active', f.owner !== null);
+
+  buildHeaderFilterOptions('crm-activities-activity-popover', 'All Activities', crmDistinctFieldOptions(state.crmActivities, 'title'), f.activity);
+  syncHeaderFilterPopoverActive('crm-activities-type-popover', f.type);
+  syncHeaderFilterPopoverActive('crm-activities-status-popover', f.status);
+  buildHeaderFilterOptions('crm-activities-client-popover', 'All Companies', crmClientFilterOptions(), f.client);
+  syncHeaderFilterPopoverActive('crm-activities-date-popover', f.date);
+  buildHeaderFilterOptions('crm-activities-owner-popover', 'All Owners', crmOwnerFilterOptions(), f.owner);
+
+  updateCrmClearFiltersVisibility('crm-activities-clear-filters', f, HEADER_FILTER_MODULES.crmActivities.defaults);
+}
+
+function renderCrmProposalsHeaderFilters() {
+  const f = state.filters.crmProposals;
+
+  $('#crm-proposals-proposal-th-filter')?.classList.toggle('active', f.proposal !== null);
+  $('#crm-proposals-status-th-filter')?.classList.toggle('active', f.status !== 'all');
+  $('#crm-proposals-client-th-filter')?.classList.toggle('active', f.client !== null);
+  $('#crm-proposals-amount-th-filter')?.classList.toggle('active', f.amount !== null);
+  $('#crm-proposals-sent-date-th-filter')?.classList.toggle('active', f.sentDate !== null);
+  $('#crm-proposals-owner-th-filter')?.classList.toggle('active', f.owner !== null);
+
+  buildHeaderFilterOptions('crm-proposals-proposal-popover', 'All Proposals', crmDistinctFieldOptions(state.crmProposals, 'proposal_title'), f.proposal);
+  syncHeaderFilterPopoverActive('crm-proposals-status-popover', f.status);
+  buildHeaderFilterOptions('crm-proposals-client-popover', 'All Companies', crmClientFilterOptions(), f.client);
+  syncHeaderFilterPopoverActive('crm-proposals-amount-popover', f.amount);
+  syncHeaderFilterPopoverActive('crm-proposals-sent-date-popover', f.sentDate);
+  buildHeaderFilterOptions('crm-proposals-owner-popover', 'All Owners', crmOwnerFilterOptions(), f.owner);
+
+  updateCrmClearFiltersVisibility('crm-proposals-clear-filters', f, HEADER_FILTER_MODULES.crmProposals.defaults);
 }
 
 // ---------- Tasks View Rendering ----------
@@ -4811,6 +5157,8 @@ function renderCrmLeads() {
 
   const f = state.filters.crmLeads;
   const search = (f.search || '').toLowerCase();
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
 
   renderActiveFilterChips('crmLeads');
   renderHeaderFilters('crmLeads');
@@ -4824,6 +5172,10 @@ function renderCrmLeads() {
       [l.lead_name, l.company_name, l.contact_person, l.phone, l.email, l.referred_by]
         .some((v) => v && String(v).toLowerCase().includes(search))
     );
+  }
+
+  if (f.lead !== null && f.lead !== undefined) {
+    leads = leads.filter((l) => (l.lead_name || '').trim() === f.lead);
   }
 
   if (f.source && f.source !== 'all') {
@@ -4840,6 +5192,14 @@ function renderCrmLeads() {
 
   if (f.owner !== null && f.owner !== undefined) {
     leads = leads.filter((l) => Number(l.owner_id) === Number(f.owner));
+  }
+
+  if (f.client !== null && f.client !== undefined) {
+    leads = leads.filter((l) => Number(l.client_id) === Number(f.client));
+  }
+
+  if (f.lastActivity) {
+    leads = leads.filter((l) => matchesDateBucketFilter(l.updated_at, f.lastActivity, today));
   }
 
   if (leads.length === 0) {
@@ -4942,6 +5302,14 @@ function renderCrmClients() {
 
   if (f.owner !== null && f.owner !== undefined) {
     clients = clients.filter((c) => Number(c.owner_id) === Number(f.owner));
+  }
+
+  if (f.industry !== null && f.industry !== undefined) {
+    clients = clients.filter((c) => (c.industry || '').trim() === f.industry);
+  }
+
+  if (f.company !== null && f.company !== undefined) {
+    clients = clients.filter((c) => (c.client_name || '').trim() === f.company);
   }
 
   if (clients.length === 0) {
@@ -5062,6 +5430,15 @@ function renderCrmDashboard() {
   const wonDeals      = state.crmDeals.filter(d => !d.is_archived && d.stage === 'won');
   const lostDeals     = state.crmDeals.filter(d => !d.is_archived && d.stage === 'lost');
   const pipelineValue = openDeals.reduce((sum, d) => sum + (Number(d.value) || 0), 0);
+  // Sprint CRM-4.5A — open deals may not all share one currency; summing
+  // them as a single EGP figure would misrepresent the total, and this
+  // sprint explicitly excludes FX conversion. Show the total only when every
+  // open deal uses the same currency; otherwise flag it as mixed rather than
+  // guess.
+  const openDealCurrencies = [...new Set(openDeals.map(d => d.currency || 'EGP'))];
+  const pipelineValueDisplay = openDealCurrencies.length > 1
+    ? 'Mixed currencies'
+    : `${pipelineValue.toLocaleString()} ${openDealCurrencies[0] || 'EGP'}`;
   const upcomingAct   = state.crmActivities.filter(a => !a.is_archived && a.status === 'planned' && a.activity_date && new Date(a.activity_date) >= now);
   const overdueAct    = state.crmActivities.filter(a => !a.is_archived && a.status === 'planned' && a.activity_date && new Date(a.activity_date) < now);
 
@@ -5070,11 +5447,11 @@ function renderCrmDashboard() {
   if (statsEl) {
     const stats = [
       { label: 'Total Leads',          value: activeLeads.length,   icon: 'target',      color: 'text-indigo-600' },
-      { label: 'Active Clients',        value: activeClients.length, icon: 'building-2',  color: 'text-emerald-600' },
+      { label: 'Active Companies',      value: activeClients.length, icon: 'building-2',  color: 'text-emerald-600' },
       { label: 'Open Deals',            value: openDeals.length,     icon: 'handshake',   color: 'text-blue-600' },
       { label: 'Won Deals',             value: wonDeals.length,      icon: 'trophy',      color: 'text-amber-600' },
       { label: 'Lost Deals',            value: lostDeals.length,     icon: 'x-circle',    color: 'text-rose-600' },
-      { label: 'Pipeline Value (EGP)',  value: pipelineValue.toLocaleString(), icon: 'trending-up', color: 'text-violet-600' },
+      { label: 'Pipeline Value',        value: pipelineValueDisplay, icon: 'trending-up', color: 'text-violet-600' },
       { label: 'Upcoming Activities',   value: upcomingAct.length,   icon: 'calendar',    color: 'text-sky-600' },
       { label: 'Overdue Activities',    value: overdueAct.length,    icon: 'clock',       color: overdueAct.length > 0 ? 'text-rose-600' : 'text-gray-400' },
     ];
@@ -5141,6 +5518,9 @@ function renderCrmContacts() {
   const f = state.filters.crmContacts;
   const search = (f.search || '').toLowerCase();
 
+  renderActiveFilterChips('crmContacts');
+  renderHeaderFilters('crmContacts');
+
   let contacts = state.crmContacts.filter(c =>
     f.archived === 'archived' ? c.is_archived : !c.is_archived
   );
@@ -5150,7 +5530,19 @@ function renderCrmContacts() {
     );
   }
   if (f.status !== 'all') {
-    contacts = contacts.filter(c => (c.status || '').toLowerCase() === f.status);
+    contacts = contacts.filter(c => getCrmContactStatus(c) === f.status);
+  }
+  if (f.client !== null && f.client !== undefined) {
+    contacts = contacts.filter(c => Number(c.client_id) === Number(f.client));
+  }
+  if (f.name !== null && f.name !== undefined) {
+    contacts = contacts.filter(c => (c.contact_name || '').trim() === f.name);
+  }
+  if (f.phone !== null && f.phone !== undefined) {
+    contacts = contacts.filter(c => (c.phone || '').trim() === f.phone);
+  }
+  if (f.email !== null && f.email !== undefined) {
+    contacts = contacts.filter(c => (c.email || '').trim() === f.email);
   }
 
   if (contacts.length === 0) {
@@ -5175,7 +5567,7 @@ function renderCrmContacts() {
         <td class="px-5 py-3.5 text-sm text-gray-700">${client ? escapeHtml(client.client_name) : '—'}</td>
         <td class="px-5 py-3.5 text-sm text-gray-700">${escapeHtml(c.phone || '—')}</td>
         <td class="px-5 py-3.5 text-sm text-gray-700">${escapeHtml(c.email || '—')}</td>
-        <td class="px-5 py-3.5">${renderStatusBadge(c.status || 'active')}</td>
+        <td class="px-5 py-3.5">${renderStatusBadge(getCrmContactStatus(c))}</td>
         <td class="px-5 py-3.5 text-right">
           ${admin ? `<div class="inline-flex items-center gap-1">
             <button class="icon-btn" data-action="edit-contact" data-id="${c.id}" title="Edit contact"><i data-lucide="pencil" class="w-4 h-4"></i></button>
@@ -5197,6 +5589,11 @@ function renderCrmDeals() {
 
   const f = state.filters.crmDeals;
   const search = (f.search || '').toLowerCase();
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  renderActiveFilterChips('crmDeals');
+  renderHeaderFilters('crmDeals');
 
   let deals = state.crmDeals.filter(d =>
     f.archived === 'archived' ? d.is_archived : !d.is_archived
@@ -5206,8 +5603,23 @@ function renderCrmDeals() {
       [d.deal_name, d.notes].some(v => v && String(v).toLowerCase().includes(search))
     );
   }
+  if (f.deal !== null && f.deal !== undefined) {
+    deals = deals.filter(d => (d.deal_name || '').trim() === f.deal);
+  }
   if (f.stage !== 'all') deals = deals.filter(d => d.stage === f.stage);
   if (f.status !== 'all') deals = deals.filter(d => d.status === f.status);
+  if (f.client !== null && f.client !== undefined) {
+    deals = deals.filter(d => Number(d.client_id) === Number(f.client));
+  }
+  if (f.value) {
+    deals = deals.filter(d => matchesAmountBucketFilter(d.value, f.value));
+  }
+  if (f.owner !== null && f.owner !== undefined) {
+    deals = deals.filter(d => Number(d.owner_id) === Number(f.owner));
+  }
+  if (f.closeDate) {
+    deals = deals.filter(d => matchesDateBucketFilter(d.expected_close_date, f.closeDate, today));
+  }
 
   if (deals.length === 0) {
     tbody.innerHTML = '';
@@ -5257,6 +5669,11 @@ function renderCrmActivities() {
 
   const f = state.filters.crmActivities;
   const search = (f.search || '').toLowerCase();
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  renderActiveFilterChips('crmActivities');
+  renderHeaderFilters('crmActivities');
 
   let activities = state.crmActivities.filter(a =>
     f.archived === 'archived' ? a.is_archived : !a.is_archived
@@ -5266,8 +5683,20 @@ function renderCrmActivities() {
       [a.title, a.description, a.outcome].some(v => v && String(v).toLowerCase().includes(search))
     );
   }
+  if (f.activity !== null && f.activity !== undefined) {
+    activities = activities.filter(a => (a.title || '').trim() === f.activity);
+  }
   if (f.type !== 'all') activities = activities.filter(a => a.activity_type === f.type);
   if (f.status !== 'all') activities = activities.filter(a => a.status === f.status);
+  if (f.client !== null && f.client !== undefined) {
+    activities = activities.filter(a => Number(a.client_id) === Number(f.client));
+  }
+  if (f.date) {
+    activities = activities.filter(a => matchesDateBucketFilter(a.activity_date, f.date, today));
+  }
+  if (f.owner !== null && f.owner !== undefined) {
+    activities = activities.filter(a => Number(a.owner_id) === Number(f.owner));
+  }
 
   if (activities.length === 0) {
     tbody.innerHTML = '';
@@ -5287,8 +5716,8 @@ function renderCrmActivities() {
       <tr>
         <td class="px-5 py-3.5">
           <p class="text-sm font-medium text-gray-900">${escapeHtml(a.title)}</p>
-          <p class="text-xs text-gray-500">${labelize(a.activity_type)}</p>
         </td>
+        <td class="px-5 py-3.5 text-sm text-gray-700">${labelize(a.activity_type)}</td>
         <td class="px-5 py-3.5 text-sm text-gray-700">${client ? escapeHtml(client.client_name) : '—'}</td>
         <td class="px-5 py-3.5">${renderStatusBadge(a.status || 'planned')}</td>
         <td class="px-5 py-3.5 text-sm text-gray-500">${a.activity_date ? fmtDate(a.activity_date) : '—'}</td>
@@ -5314,6 +5743,11 @@ function renderCrmProposals() {
 
   const f = state.filters.crmProposals;
   const search = (f.search || '').toLowerCase();
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  renderActiveFilterChips('crmProposals');
+  renderHeaderFilters('crmProposals');
 
   let proposals = state.crmProposals.filter(p =>
     f.archived === 'archived' ? p.is_archived : !p.is_archived
@@ -5323,7 +5757,22 @@ function renderCrmProposals() {
       [p.proposal_title, p.notes].some(v => v && String(v).toLowerCase().includes(search))
     );
   }
+  if (f.proposal !== null && f.proposal !== undefined) {
+    proposals = proposals.filter(p => (p.proposal_title || '').trim() === f.proposal);
+  }
   if (f.status !== 'all') proposals = proposals.filter(p => p.status === f.status);
+  if (f.client !== null && f.client !== undefined) {
+    proposals = proposals.filter(p => Number(p.client_id) === Number(f.client));
+  }
+  if (f.amount) {
+    proposals = proposals.filter(p => matchesAmountBucketFilter(p.amount, f.amount));
+  }
+  if (f.sentDate) {
+    proposals = proposals.filter(p => matchesDateBucketFilter(p.sent_date, f.sentDate, today));
+  }
+  if (f.owner !== null && f.owner !== undefined) {
+    proposals = proposals.filter(p => Number(p.owner_id) === Number(f.owner));
+  }
 
   if (proposals.length === 0) {
     tbody.innerHTML = '';
@@ -11557,7 +12006,7 @@ async function handleClientSubmit(e) {
 function populateContactClientSelect() {
   const select = $('#contact-client-id');
   if (!select) return;
-  select.innerHTML = '<option value="">No client</option>' +
+  select.innerHTML = '<option value="">No company</option>' +
     state.crmClients.filter(c => !c.is_archived)
       .map(c => `<option value="${c.id}">${escapeHtml(c.client_name)}</option>`).join('');
 }
@@ -11590,6 +12039,7 @@ function openEditContactModal(id) {
   form.whatsapp.value = contact.whatsapp || '';
   form.email.value = contact.email || '';
   form.notes.value = contact.notes || '';
+  if (form.status) form.status.value = getCrmContactStatus(contact);
   const sel = $('#contact-client-id');
   if (sel) sel.value = contact.client_id != null ? String(contact.client_id) : '';
   $('#contact-modal-title').textContent = 'Edit Contact';
@@ -11610,6 +12060,7 @@ async function handleContactSubmit(e) {
   refreshIcons();
   const payload = normalizePayload(new FormData(form));
   if (payload.client_id) payload.client_id = Number(payload.client_id);
+  if (!payload.status) payload.status = 'active';
   let result = null;
   if (isEditing) { payload.updated_at = new Date().toISOString(); result = await updateCrmContact(state.editingContactId, payload); }
   else { result = await createCrmContact(payload); }
@@ -11929,7 +12380,7 @@ async function handleActivitySubmit(e) {
 function populateNoteClientSelect() {
   const select = $('#note-client-id');
   if (!select) return;
-  select.innerHTML = '<option value="">No client</option>' +
+  select.innerHTML = '<option value="">No company</option>' +
     state.crmClients.filter(c => !c.is_archived)
       .map(c => `<option value="${c.id}">${escapeHtml(c.client_name)}</option>`).join('');
 }
@@ -11979,7 +12430,7 @@ async function handleNoteSubmit(e) {
 function populateProposalClientSelect() {
   const select = $('#proposal-client-id');
   if (!select) return;
-  select.innerHTML = '<option value="">No client</option>' +
+  select.innerHTML = '<option value="">No company</option>' +
     state.crmClients.filter(c => !c.is_archived)
       .map(c => `<option value="${c.id}">${escapeHtml(c.client_name)}</option>`).join('');
 }
@@ -15076,6 +15527,9 @@ if (action === 'convert-forecast-to-tx') {
     state.filters.crmLeads.archived = e.target.value;
     renderCrmLeads();
   });
+  $('#crm-leads-clear-filters')?.addEventListener('click', () => {
+    clearCrmModuleFilters('crmLeads', 'crm-leads-search', 'crm-leads-status-filter');
+  });
 
   // CRM Clients filters
   $('#crm-clients-search')?.addEventListener('input', (e) => {
@@ -15087,6 +15541,9 @@ if (action === 'convert-forecast-to-tx') {
     renderCrmClients();
   });
   // crm-clients-type-filter listener removed — Type is now a table header filter
+  $('#crm-clients-clear-filters')?.addEventListener('click', () => {
+    clearCrmModuleFilters('crmClients', 'crm-clients-search', 'crm-clients-status-filter');
+  });
 
   // CRM Contacts filters
   $('#crm-contacts-search')?.addEventListener('input', (e) => {
@@ -15096,6 +15553,9 @@ if (action === 'convert-forecast-to-tx') {
   $('#crm-contacts-status-filter')?.addEventListener('change', (e) => {
     state.filters.crmContacts.archived = e.target.value;
     renderCrmContacts();
+  });
+  $('#crm-contacts-clear-filters')?.addEventListener('click', () => {
+    clearCrmModuleFilters('crmContacts', 'crm-contacts-search', 'crm-contacts-status-filter');
   });
 
   // CRM Deals filters
@@ -15107,6 +15567,9 @@ if (action === 'convert-forecast-to-tx') {
     state.filters.crmDeals.archived = e.target.value;
     renderCrmDeals();
   });
+  $('#crm-deals-clear-filters')?.addEventListener('click', () => {
+    clearCrmModuleFilters('crmDeals', 'crm-deals-search', 'crm-deals-status-filter');
+  });
 
   // CRM Activities filters
   $('#crm-activities-search')?.addEventListener('input', (e) => {
@@ -15117,6 +15580,9 @@ if (action === 'convert-forecast-to-tx') {
     state.filters.crmActivities.archived = e.target.value;
     renderCrmActivities();
   });
+  $('#crm-activities-clear-filters')?.addEventListener('click', () => {
+    clearCrmModuleFilters('crmActivities', 'crm-activities-search', 'crm-activities-status-filter');
+  });
 
   // CRM Proposals filters
   $('#crm-proposals-search')?.addEventListener('input', (e) => {
@@ -15126,6 +15592,9 @@ if (action === 'convert-forecast-to-tx') {
   $('#crm-proposals-status-filter')?.addEventListener('change', (e) => {
     state.filters.crmProposals.archived = e.target.value;
     renderCrmProposals();
+  });
+  $('#crm-proposals-clear-filters')?.addEventListener('click', () => {
+    clearCrmModuleFilters('crmProposals', 'crm-proposals-search', 'crm-proposals-status-filter');
   });
 
   // CRM Tab navigation
