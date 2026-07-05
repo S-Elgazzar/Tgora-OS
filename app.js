@@ -5200,6 +5200,12 @@ function renderCrmLeads() {
   tbody.innerHTML = leads
     .map((l) => {
       const owner = state.teamMembers.find((m) => Number(m.id) === Number(l.owner_id));
+      // Sprint CRM-4.5D — prefer relational Company/Contact data; fall back
+      // to legacy free-text columns for leads created before this sprint.
+      const linkedClient = l.client_id ? state.crmClients.find(c => Number(c.id) === Number(l.client_id)) : null;
+      const linkedContact = l.contact_id ? state.crmContacts.find(c => Number(c.id) === Number(l.contact_id)) : null;
+      const companyLabel = linkedClient ? linkedClient.client_name : l.company_name;
+      const emailLabel = linkedContact?.email || l.email;
       const ownerCell = owner
         ? `<div class="flex items-center gap-2">
              <div class="w-6 h-6 rounded-full ${avatarColor(owner.name)} flex items-center justify-center text-white text-[10px] font-semibold flex-shrink-0">${initials(owner.name)}</div>
@@ -5232,10 +5238,10 @@ function renderCrmLeads() {
                 data-action="open-lead-details"
                 data-id="${l.id}"
               >${escapeHtml(l.lead_name)}</button>
-              ${l.email ? `<p class="text-xs text-gray-500 truncate">${escapeHtml(l.email)}</p>` : ''}
+              ${emailLabel ? `<p class="text-xs text-gray-500 truncate">${escapeHtml(emailLabel)}</p>` : ''}
             </div>
           </td>
-          <td class="px-5 py-3.5 text-sm text-gray-700">${escapeHtml(l.company_name || '—')}</td>
+          <td class="px-5 py-3.5 text-sm text-gray-700">${escapeHtml(companyLabel || '—')}</td>
           <td class="px-5 py-3.5 text-sm text-gray-700">${labelize(l.source)}</td>
           <td class="px-5 py-3.5">${renderStatusBadge(normalizeCrmLeadStatusForDisplay(l.status))}</td>
           <td class="px-5 py-3.5 text-sm text-gray-700">${ownerCell}</td>
@@ -5780,11 +5786,14 @@ function renderCrmProposals() {
   refreshIcons();
 }
 
-// Sprint CRM-4 — a Lead qualifies at most one Deal (see openCreateDealFromLead()
-// and the duplicate-prevention check in handleDealSubmit()), so this always
-// returns zero or one result.
-function findDealForLead(leadId) {
-  return state.crmDeals.find(d => Number(d.lead_id) === Number(leadId) && !d.is_archived) || null;
+// Sprint CRM-4.5D Fix Pass 2 — a Lead may qualify multiple Deals (approved
+// business rule: one Lead can produce several Deals, e.g. Social Media +
+// Website + Video Production as separate engagements). Returns all active
+// (non-archived) Deals linked to the Lead, most-recent-first.
+function findDealsForLead(leadId) {
+  return state.crmDeals
+    .filter(d => Number(d.lead_id) === Number(leadId) && !d.is_archived)
+    .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
 }
 
 // ---------- Lead Details ----------
@@ -5835,11 +5844,28 @@ function renderLeadDetails() {
     if (el) el.textContent = val || '—';
   };
 
-  setText('lead-details-company',  lead.company_name);
-  setText('lead-details-contact',  lead.contact_person);
-  setText('lead-details-phone',    lead.phone);
-  setText('lead-details-whatsapp', lead.whatsapp);
-  setText('lead-details-email',    lead.email);
+  // Sprint CRM-4.5D — prefer relational Company/Contact data; fall back to
+  // legacy free-text columns for leads created before this sprint.
+  const linkedClient  = lead.client_id  ? state.crmClients.find(c => Number(c.id) === Number(lead.client_id)) : null;
+  const linkedContact = lead.contact_id ? state.crmContacts.find(c => Number(c.id) === Number(lead.contact_id)) : null;
+
+  const companyEl = $('#lead-details-company');
+  if (companyEl) {
+    companyEl.innerHTML = linkedClient
+      ? `<button class="text-indigo-600 hover:underline" data-action="open-client-details" data-id="${linkedClient.id}">${escapeHtml(linkedClient.client_name)}</button>`
+      : escapeHtml(lead.company_name) || '—';
+  }
+
+  const contactEl = $('#lead-details-contact');
+  if (contactEl) {
+    contactEl.innerHTML = linkedContact
+      ? `<button class="text-indigo-600 hover:underline" data-action="open-contact-details" data-id="${linkedContact.id}">${escapeHtml(linkedContact.contact_name)}</button>`
+      : escapeHtml(lead.contact_person) || '—';
+  }
+
+  setText('lead-details-phone',    linkedContact?.phone    || lead.phone);
+  setText('lead-details-whatsapp', linkedContact?.whatsapp || lead.whatsapp);
+  setText('lead-details-email',    linkedContact?.email    || lead.email);
   setText('lead-details-referred-by', lead.referred_by);
   setText('lead-details-service',  lead.service_interest);
   setText('lead-details-budget',   lead.expected_budget);
@@ -5852,56 +5878,42 @@ function renderLeadDetails() {
   // Related client chip
   const clientChipEl = $('#lead-details-client-chip');
   if (clientChipEl) {
-    if (lead.client_id) {
-      const linkedClient = state.crmClients.find(c => Number(c.id) === Number(lead.client_id));
-      clientChipEl.innerHTML = linkedClient
-        ? `<span class="text-xs text-gray-500">Linked Company:</span>
-           <button class="text-xs font-medium text-indigo-600 hover:underline" data-action="open-client-details" data-id="${linkedClient.id}">${escapeHtml(linkedClient.client_name)}</button>`
-        : '<span class="text-xs text-gray-400">Linked company not found</span>';
-    } else {
-      clientChipEl.innerHTML = '<span class="text-xs text-gray-400">No linked company</span>';
-    }
+    clientChipEl.innerHTML = linkedClient
+      ? `<span class="text-xs text-gray-500">Linked Company:</span>
+         <button class="text-xs font-medium text-indigo-600 hover:underline" data-action="open-client-details" data-id="${linkedClient.id}">${escapeHtml(linkedClient.client_name)}</button>`
+      : lead.client_id
+        ? '<span class="text-xs text-gray-400">Linked company not found</span>'
+        : '<span class="text-xs text-gray-400">No linked company</span>';
   }
 
-  // Convert button state
-  const convertBtn = $('#lead-details-convert-btn');
-  if (convertBtn) {
-    if (lead.client_id) {
-      convertBtn.disabled = true;
-      convertBtn.textContent = 'Already Converted';
-      convertBtn.classList.add('opacity-50', 'cursor-not-allowed');
-    } else {
-      convertBtn.disabled = false;
-      convertBtn.textContent = 'Convert to Company';
-      convertBtn.classList.remove('opacity-50', 'cursor-not-allowed');
-      convertBtn.dataset.id = lead.id;
-    }
-  }
-
-  // Related deal chip (Sprint CRM-4 — Lead -> Deal is user-controlled, never
-  // auto-created; see openCreateDealFromLead()). Exactly one of: a linked
-  // Deal, an explicit Create Deal action, or a reason it isn't available yet.
+  // Related deals chip (Sprint CRM-4.5D Fix Pass 2 — Lead -> Deal is
+  // user-controlled, never auto-created, and a Lead may now qualify multiple
+  // Deals). Shows every linked Deal (if any), plus a Create Deal action
+  // whenever the Lead is Converted — even when Deals already exist, since a
+  // Converted Lead can intentionally spawn more than one Deal.
   const dealChipEl = $('#lead-details-deal-chip');
   if (dealChipEl) {
-    const relatedDeal = findDealForLead(lead.id);
-    if (relatedDeal) {
-      dealChipEl.innerHTML = `
-        <button class="text-xs font-medium text-indigo-600 hover:underline" data-action="open-deal-details" data-id="${relatedDeal.id}">${escapeHtml(relatedDeal.deal_name)}</button>
-        ${renderStatusBadge(relatedDeal.stage || 'discovery')}
-      `;
-    } else if (status === 'converted') {
-      dealChipEl.innerHTML = `
-        <button
-          data-action="create-deal-from-lead"
-          data-id="${lead.id}"
-          class="h-8 px-3 inline-flex items-center gap-2 text-xs font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition"
-        >
-          <i data-lucide="briefcase" class="w-3.5 h-3.5"></i> Create Deal
-        </button>
-      `;
-    } else {
-      dealChipEl.innerHTML = '<span class="text-xs text-gray-400">Available once this lead is Converted</span>';
-    }
+    const relatedDeals = findDealsForLead(lead.id);
+    const listHtml = relatedDeals.length > 0
+      ? relatedDeals.map((d) => `
+          <div class="flex items-center justify-between gap-2">
+            <button class="text-xs font-medium text-indigo-600 hover:underline text-left" data-action="open-deal-details" data-id="${d.id}">${escapeHtml(d.deal_name)}</button>
+            ${renderStatusBadge(d.stage || 'discovery')}
+          </div>
+        `).join('')
+      : `<span class="text-xs text-gray-400">${status === 'converted' ? 'No related deals yet' : 'Available once this lead is Converted'}</span>`;
+
+    const createBtnHtml = status === 'converted'
+      ? `<button
+           data-action="create-deal-from-lead"
+           data-id="${lead.id}"
+           class="h-8 px-3 inline-flex items-center gap-2 text-xs font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition self-start"
+         >
+           <i data-lucide="briefcase" class="w-3.5 h-3.5"></i> Create Deal
+         </button>`
+      : '';
+
+    dealChipEl.innerHTML = `<div class="flex flex-col gap-2 w-full">${listHtml}${createBtnHtml}</div>`;
   }
 
   // Timeline
@@ -5929,69 +5941,6 @@ function renderLeadDetails() {
   }
 
   refreshIcons();
-}
-
-async function convertLeadToClient(leadId) {
-  if (!isAdmin()) return;
-  const lead = state.crmLeads.find(l => Number(l.id) === leadId);
-  if (!lead) { toast('Lead not found', 'error'); return; }
-  if (lead.client_id) { toast('Lead is already linked to a company', 'info'); return; }
-
-  const convertBtn = $('#lead-details-convert-btn');
-  if (convertBtn) { convertBtn.disabled = true; convertBtn.textContent = 'Converting…'; }
-
-  const now = new Date().toISOString();
-
-  // 1. Create client
-  const clientPayload = {
-    client_name: lead.company_name || lead.lead_name,
-    phone:        lead.phone || null,
-    whatsapp:     lead.whatsapp || null,
-    email:        lead.email || null,
-    source:       lead.source || 'unknown',
-    owner_id:     lead.owner_id || null,
-    status:       'active',
-    client_type:  'company',
-    is_archived:  false,
-    created_at:   now,
-    updated_at:   now,
-  };
-  const { data: clientData, error: clientError } = await supabaseClient.from('crm_clients').insert([clientPayload]).select().single();
-  if (clientError) {
-    console.error('convertLeadToClient: create client', clientError);
-    toast('Failed to create company', 'error');
-    if (convertBtn) { convertBtn.disabled = false; convertBtn.textContent = 'Convert to Company'; }
-    return;
-  }
-
-  // 2. Create primary contact
-  if (lead.contact_person || lead.email || lead.phone) {
-    const contactPayload = {
-      client_id:    clientData.id,
-      contact_name: lead.contact_person || lead.lead_name,
-      phone:        lead.phone || null,
-      whatsapp:     lead.whatsapp || null,
-      email:        lead.email || null,
-      is_archived:  false,
-      created_at:   now,
-      updated_at:   now,
-    };
-    const { error: contactError } = await supabaseClient.from('crm_contacts').insert([contactPayload]);
-    if (contactError) console.error('convertLeadToClient: create contact', contactError);
-  }
-
-  // 3. Link lead to client
-  const { error: linkError } = await supabaseClient.from('crm_leads').update({ client_id: clientData.id, updated_at: now }).eq('id', leadId);
-  if (linkError) {
-    console.error('convertLeadToClient: link lead', linkError);
-    toast('Company created but lead link failed', 'error');
-  } else {
-    toast('Lead converted to company', 'success');
-  }
-
-  await refreshDataAndRender();
-  setView('lead-details');
-  renderLeadDetails();
 }
 
 function openLeadDetails(id) {
@@ -6321,14 +6270,17 @@ function renderContactDetails() {
     }
   }
 
-  // Leads — indirect match only (crm_leads has no contact_id): a lead
-  // counts as related if its email matches this contact's email, or its
-  // free-text contact_person matches this contact's name and (when both
-  // are set) they share the same client_id.
+  // Leads — Sprint CRM-4.5D added contact_id to crm_leads, so leads created
+  // since then match directly. Older leads have no contact_id and fall back
+  // to the pre-4.5D heuristic (email equality, or matching free-text
+  // contact_person name gated by matching client_id when both are set),
+  // clearly labeled as a legacy match in the UI.
+  const directLeads = state.crmLeads.filter(l => !l.is_archived && l.contact_id != null && Number(l.contact_id) === Number(contact.id));
+
   const contactEmail = (contact.email || '').trim().toLowerCase();
   const contactName = (contact.contact_name || '').trim().toLowerCase();
-  const matchedLeads = state.crmLeads.filter(l => {
-    if (l.is_archived) return false;
+  const legacyLeads = state.crmLeads.filter(l => {
+    if (l.is_archived || l.contact_id != null) return false;
     const leadEmail = (l.email || '').trim().toLowerCase();
     if (contactEmail && leadEmail && leadEmail === contactEmail) return true;
     const leadContactName = (l.contact_person || '').trim().toLowerCase();
@@ -6338,14 +6290,22 @@ function renderContactDetails() {
     }
     return false;
   });
+
+  const matchedLeads = [
+    ...directLeads.map(l => ({ lead: l, legacy: false })),
+    ...legacyLeads.map(l => ({ lead: l, legacy: true })),
+  ];
   const leadsListEl = $('#contact-details-leads-list');
   if (leadsListEl) {
     leadsListEl.innerHTML = matchedLeads.length === 0
       ? '<p class="text-sm text-gray-400 py-2">No leads matched to this contact yet.</p>'
-      : matchedLeads.map(l => `
+      : matchedLeads.map(({ lead: l, legacy }) => `
           <div class="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
             <button class="text-sm font-medium text-gray-900 hover:text-indigo-600 text-left" data-action="open-lead-details" data-id="${l.id}">${escapeHtml(l.lead_name)}</button>
-            ${renderStatusBadge(normalizeCrmLeadStatusForDisplay(l.status))}
+            <div class="flex items-center gap-2">
+              ${legacy ? '<span class="text-[10px] text-gray-400 font-medium">Legacy match</span>' : ''}
+              ${renderStatusBadge(normalizeCrmLeadStatusForDisplay(l.status))}
+            </div>
           </div>
         `).join('');
   }
@@ -6377,8 +6337,16 @@ function openDealDetailsModal(id) {
 
   const setTxt = (elId, val) => { const el = $(`#${elId}`); if (el) el.textContent = val || '—'; };
   setTxt('deal-details-modal-name', deal.deal_name);
-  setTxt('deal-details-modal-client', client ? client.client_name : '—');
   setTxt('deal-details-modal-stage', labelize(deal.stage));
+
+  // Company — clickable link to Company Details when linked (Sprint CRM-4.5E),
+  // mirroring the Related Lead link pattern below.
+  const clientEl = $('#deal-details-modal-client');
+  if (clientEl) {
+    clientEl.innerHTML = client
+      ? `<button class="text-sm font-semibold text-indigo-600 hover:underline" data-action="open-client-details" data-id="${client.id}">${escapeHtml(client.client_name)}</button>`
+      : '—';
+  }
   setTxt('deal-details-modal-value', deal.value != null ? `${Number(deal.value).toLocaleString()} ${deal.currency || 'EGP'}` : '—');
   setTxt('deal-details-modal-owner', owner ? owner.name : '—');
   setTxt('deal-details-modal-service-type', deal.service_type_id ? (getCrmServiceTypeLabel(deal.service_type_id) || '—') : '—');
@@ -11940,8 +11908,75 @@ function populateLeadClientSelect() {
   const sel = $('#lead-client-id');
   if (!sel) return;
   const activeClients = state.crmClients.filter(c => !c.is_archived);
-  sel.innerHTML = '<option value="">-- No linked company --</option>' +
+  sel.innerHTML = '<option value="">-- Select a company --</option>' +
     activeClients.map(c => `<option value="${c.id}">${escapeHtml(c.client_name)}</option>`).join('');
+}
+
+// Sprint CRM-4.5D — Contact select is filtered to the Company chosen in
+// #lead-client-id. Passing selectedContactId re-selects it only if it still
+// belongs to clientId (used when editing a lead that already has a contact).
+function populateLeadContactSelect(clientId, selectedContactId) {
+  const sel = $('#lead-contact-id');
+  const hint = $('#lead-contact-empty-hint');
+  if (!sel) return;
+  if (!clientId) {
+    sel.innerHTML = '<option value="">-- Select a company first --</option>';
+    sel.disabled = true;
+    if (hint) hint.classList.add('hidden');
+    return;
+  }
+  const contacts = state.crmContacts.filter(c => !c.is_archived && Number(c.client_id) === Number(clientId));
+  sel.disabled = false;
+  sel.innerHTML = '<option value="">-- Select a contact --</option>' +
+    contacts.map(c => `<option value="${c.id}">${escapeHtml(c.contact_name)}</option>`).join('');
+  if (hint) hint.classList.toggle('hidden', contacts.length > 0);
+  if (selectedContactId != null && contacts.some(c => Number(c.id) === Number(selectedContactId))) {
+    sel.value = String(selectedContactId);
+  }
+}
+
+// Sprint CRM-4.5D — Fills the readonly Contact Info preview and the hidden
+// snapshot fields (company_name/contact_person/phone/whatsapp/email) that
+// legacy render code still reads. These are always derived here, never
+// typed by the user.
+function renderLeadContactPreview(contactId) {
+  const previewEl = $('#lead-contact-preview');
+  const contact = contactId ? state.crmContacts.find(c => Number(c.id) === Number(contactId)) : null;
+  if (previewEl) previewEl.classList.toggle('hidden', !contact);
+  const setPreview = (id, val) => { const el = $(`#${id}`); if (el) el.textContent = val || '—'; };
+  setPreview('lead-contact-preview-phone', contact?.phone);
+  setPreview('lead-contact-preview-whatsapp', contact?.whatsapp);
+  setPreview('lead-contact-preview-email', contact?.email);
+  setPreview('lead-contact-preview-title', contact?.title);
+
+  const form = $('#lead-form');
+  if (!form) return;
+  const clientSel = $('#lead-client-id');
+  const client = clientSel?.value ? state.crmClients.find(c => Number(c.id) === Number(clientSel.value)) : null;
+  if (form.company_name)   form.company_name.value   = client ? (client.client_name || '') : '';
+  if (form.contact_person) form.contact_person.value = contact ? (contact.contact_name || '') : '';
+  if (form.phone)           form.phone.value           = contact ? (contact.phone || '') : '';
+  if (form.whatsapp)        form.whatsapp.value        = contact ? (contact.whatsapp || '') : '';
+  if (form.email)           form.email.value           = contact ? (contact.email || '') : '';
+}
+
+// Sprint CRM-4.5D — Service Interest is now a select backed by active CRM
+// Service Types, storing service_name text in the existing service_interest
+// column (no service_type_id migration this sprint). If a lead's legacy
+// value doesn't match any active service type, it's kept as an extra
+// "(legacy)" option so editing the lead never silently discards it.
+function populateLeadServiceInterestSelect(currentValue) {
+  const sel = $('#lead-service-interest');
+  if (!sel) return;
+  const options = getActiveCrmServiceTypes();
+  let optionsHtml = '<option value="">-- No service type --</option>' +
+    options.map(s => `<option value="${escapeHtml(s.service_name)}">${escapeHtml(s.service_name)}</option>`).join('');
+  const matchesExisting = currentValue && options.some(s => s.service_name === currentValue);
+  if (currentValue && !matchesExisting) {
+    optionsHtml += `<option value="${escapeHtml(currentValue)}">${escapeHtml(currentValue)} (legacy)</option>`;
+  }
+  sel.innerHTML = optionsHtml;
+  sel.value = currentValue || '';
 }
 
 function openNewLeadModal() {
@@ -11951,6 +11986,9 @@ function openNewLeadModal() {
   form.reset();
   populateLeadOwnerSelect();
   populateLeadClientSelect();
+  populateLeadContactSelect(null);
+  populateLeadServiceInterestSelect('');
+  renderLeadContactPreview(null);
   $('#lead-modal-title').textContent = 'New Lead';
   const submitBtn = form.querySelector('button[type=submit]');
   if (submitBtn) submitBtn.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i> Create Lead';
@@ -11976,15 +12014,23 @@ function openEditLeadModal(id) {
   form.email.value             = lead.email || '';
   form.source.value            = lead.source || 'unknown';
   form.referred_by.value       = lead.referred_by || '';
-  form.service_interest.value  = lead.service_interest || '';
   form.expected_budget.value   = lead.expected_budget || '';
   form.priority.value          = lead.priority || 'medium';
   form.status.value            = normalizeCrmLeadStatusForDisplay(lead.status || 'new');
   form.owner_id.value          = lead.owner_id != null ? String(lead.owner_id) : '';
   form.next_follow_up.value    = lead.next_follow_up || '';
   form.notes.value             = lead.notes || '';
+  populateLeadServiceInterestSelect(lead.service_interest || '');
   const clientSel = $('#lead-client-id');
-  if (clientSel && lead.client_id != null) clientSel.value = String(lead.client_id);
+  if (clientSel) clientSel.value = lead.client_id != null ? String(lead.client_id) : '';
+  populateLeadContactSelect(lead.client_id, lead.contact_id);
+  // Legacy rows without contact_id keep their free-text snapshot values
+  // (set above) untouched until the user explicitly picks a Contact.
+  if (lead.contact_id) {
+    renderLeadContactPreview(lead.contact_id);
+  } else {
+    $('#lead-contact-preview')?.classList.add('hidden');
+  }
   $('#lead-modal-title').textContent = 'Edit Lead';
   const submitBtn = form.querySelector('button[type=submit]');
   if (submitBtn) submitBtn.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i> Update Lead';
@@ -12000,6 +12046,16 @@ async function handleLeadSubmit(e) {
   const submitBtn = form.querySelector('button[type=submit]');
   const isEditing = state.editingLeadId !== null;
 
+  // Company is a hard requirement (form.client_id is a required select).
+  // Contact is only required when the selected Company actually has
+  // contacts to choose from — companies with zero contacts (Scope C) must
+  // still be able to save a lead without one.
+  const contactSel = $('#lead-contact-id');
+  if (contactSel && !contactSel.disabled && contactSel.options.length > 1 && !contactSel.value) {
+    toast('Select a contact for this lead', 'error');
+    return;
+  }
+
   submitBtn.disabled = true;
   submitBtn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> ${isEditing ? 'Updating…' : 'Saving…'}`;
   refreshIcons();
@@ -12009,6 +12065,8 @@ async function handleLeadSubmit(e) {
   if (payload.owner_id) payload.owner_id = Number(payload.owner_id);
   if (payload.client_id) payload.client_id = Number(payload.client_id);
   else payload.client_id = null;
+  if (payload.contact_id) payload.contact_id = Number(payload.contact_id);
+  else payload.contact_id = null;
 
   let result = null;
   if (isEditing) {
@@ -12270,7 +12328,7 @@ async function handleContactSubmit(e) {
 function populateDealClientSelect() {
   const select = $('#deal-client-id');
   if (!select) return;
-  select.innerHTML = '<option value="">No client</option>' +
+  select.innerHTML = '<option value="">No company</option>' +
     state.crmClients.filter(c => !c.is_archived)
       .map(c => `<option value="${c.id}">${escapeHtml(c.client_name)}</option>`).join('');
 }
@@ -12293,13 +12351,69 @@ function populateDealServiceTypeSelect() {
       .map(s => `<option value="${s.id}">${escapeHtml(s.service_name)}</option>`).join('');
 }
 
-// Sprint CRM-2 — optional provenance link back to the originating Lead.
-function populateDealLeadSelect() {
+// Sprint CRM-4.5D Fix Pass 2 — Related Lead is filtered to the Company
+// selected in #deal-client-id (previously it listed every non-archived Lead
+// from every Company, which was the reported bug). Disabled with a neutral
+// placeholder until a Company is chosen — the safest UX, since Related Lead
+// is optional and an unfiltered list is exactly what we're removing.
+// selectedLeadId is always preserved/selected even when it doesn't belong to
+// the filtered list (legacy data, or a Lead with no linked Company), so
+// callers like openCreateDealFromLead()/openEditDealModal() never silently
+// lose a Lead link that was already explicitly set.
+function populateDealLeadSelect(clientId, selectedLeadId) {
   const select = $('#deal-lead-id');
   if (!select) return;
-  select.innerHTML = '<option value="">No linked lead</option>' +
-    state.crmLeads.filter(l => !l.is_archived)
-      .map(l => `<option value="${l.id}">${escapeHtml(l.lead_name)}</option>`).join('');
+
+  const selectedLead = selectedLeadId != null
+    ? state.crmLeads.find(l => Number(l.id) === Number(selectedLeadId))
+    : null;
+
+  if (!clientId) {
+    if (selectedLead) {
+      select.disabled = false;
+      select.innerHTML = `<option value="">No linked lead</option><option value="${selectedLead.id}">${escapeHtml(selectedLead.lead_name)}</option>`;
+      select.value = String(selectedLead.id);
+    } else {
+      select.innerHTML = '<option value="">-- Select a company first --</option>';
+      select.disabled = true;
+    }
+    return;
+  }
+
+  const leads = state.crmLeads.filter(l => !l.is_archived && Number(l.client_id) === Number(clientId));
+  select.disabled = false;
+  let optionsHtml = '<option value="">No linked lead</option>' +
+    leads.map(l => `<option value="${l.id}">${escapeHtml(l.lead_name)}</option>`).join('');
+
+  const alreadyIncluded = selectedLead && leads.some(l => Number(l.id) === Number(selectedLead.id));
+  if (selectedLead && !alreadyIncluded) {
+    optionsHtml += `<option value="${selectedLead.id}">${escapeHtml(selectedLead.lead_name)} (different company)</option>`;
+  }
+  select.innerHTML = optionsHtml;
+  if (selectedLead) select.value = String(selectedLead.id);
+}
+
+// Sprint CRM-4.5E — Probability is a 0–100 range slider; this keeps the
+// percentage label next to the field in sync with the slider position.
+function updateDealProbabilityDisplay() {
+  const input = $('#deal-probability');
+  const label = $('#deal-probability-value');
+  if (!input || !label) return;
+  label.textContent = `${input.value || 0}%`;
+}
+
+// Sprint CRM-4.5E — Expected Close Date is locked (disabled, value kept
+// visible and untouched) while the Deal is in a closed stage (Won/Lost).
+// Switching back to an open stage re-enables it. The value is never cleared
+// or replaced here; handleDealSubmit() re-includes the displayed value even
+// when the input is disabled, so what the user sees is what gets saved.
+function updateDealExpectedCloseLock() {
+  const form = $('#deal-form');
+  if (!form || !form.stage) return;
+  const closed = form.stage.value === 'won' || form.stage.value === 'lost';
+  const input = $('#deal-expected-close-date');
+  if (input) input.disabled = closed;
+  $('#deal-close-locked-note')?.classList.toggle('hidden', !closed);
 }
 
 // Sprint CRM-3B — selecting a Related Lead on the Deal form fills in only
@@ -12352,8 +12466,10 @@ function openNewDealModal(prefillClientId) {
   populateDealClientSelect();
   populateDealOwnerSelect();
   populateDealServiceTypeSelect();
-  populateDealLeadSelect();
   if (prefillClientId) { const sel = $('#deal-client-id'); if (sel) sel.value = prefillClientId; }
+  populateDealLeadSelect(prefillClientId || null, null);
+  updateDealProbabilityDisplay();
+  updateDealExpectedCloseLock();
   $('#deal-modal-title').textContent = 'New Deal';
   const submitBtn = form.querySelector('button[type=submit]');
   if (submitBtn) submitBtn.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i> Create Deal';
@@ -12361,21 +12477,21 @@ function openNewDealModal(prefillClientId) {
   openModal('deal-modal');
 }
 
-// Sprint CRM-4 — explicit, user-triggered "Create Deal" action from a
-// Converted Lead (see renderLeadDetails()'s Related Deal chip). Conversion
-// never auto-creates a Deal; this is the only path that does, and only when
-// the user clicks it. Reuses openNewDealModal()/handleDealLeadAutofill() so
+// Sprint CRM-4.5D Fix Pass 2 — explicit, user-triggered "Create Deal" action
+// from a Converted Lead (see renderLeadDetails()'s Related Deals chip).
+// Conversion never auto-creates a Deal; this is the only path that does,
+// and only when the user clicks it. A Lead may now qualify multiple Deals
+// (approved business rule), so this no longer blocks when a Deal already
+// exists for the Lead. Reuses openNewDealModal()/handleDealLeadAutofill() so
 // the same "only fill currently-empty, clearly-safe fields, never guess the
 // Deal name" behavior from Sprint CRM-3B applies here too.
 function openCreateDealFromLead(leadId) {
   if (!isAdmin()) return;
   const lead = state.crmLeads.find(l => Number(l.id) === Number(leadId));
   if (!lead) { toast('Lead not found', 'error'); return; }
-  if (findDealForLead(lead.id)) { toast('This lead already has a linked deal', 'info'); return; }
 
   openNewDealModal(lead.client_id != null ? lead.client_id : undefined);
-  const leadSel = $('#deal-lead-id');
-  if (leadSel) leadSel.value = String(lead.id);
+  populateDealLeadSelect(lead.client_id != null ? lead.client_id : null, lead.id);
   handleDealLeadAutofill();
   state.dealCreationSourceLeadId = lead.id;
   $('#deal-modal-title').textContent = 'Create Deal from Lead';
@@ -12392,18 +12508,22 @@ function openEditDealModal(id) {
   populateDealClientSelect();
   populateDealOwnerSelect();
   populateDealServiceTypeSelect();
-  populateDealLeadSelect();
   form.deal_name.value = deal.deal_name || '';
   form.stage.value = deal.stage || 'discovery';
   form.value.value = deal.value != null ? String(deal.value) : '';
   form.currency.value = deal.currency || 'EGP';
   form.expected_close_date.value = deal.expected_close_date || '';
-  form.probability.value = deal.probability != null ? String(deal.probability) : '';
+  // Range sliders can't be empty — a Deal without a probability sits at 0,
+  // which round-trips back to NULL on save (handleDealSubmit treats 0 as
+  // "no probability", same as the old empty textbox).
+  form.probability.value = deal.probability != null ? String(deal.probability) : '0';
   form.notes.value = deal.notes || '';
   const cSel = $('#deal-client-id'); if (cSel) cSel.value = deal.client_id != null ? String(deal.client_id) : '';
   const oSel = $('#deal-owner-id'); if (oSel) oSel.value = deal.owner_id != null ? String(deal.owner_id) : '';
   const sSel = $('#deal-service-type-id'); if (sSel) sSel.value = deal.service_type_id != null ? String(deal.service_type_id) : '';
-  const lSel = $('#deal-lead-id'); if (lSel) lSel.value = deal.lead_id != null ? String(deal.lead_id) : '';
+  populateDealLeadSelect(deal.client_id, deal.lead_id);
+  updateDealProbabilityDisplay();
+  updateDealExpectedCloseLock();
   $('#deal-modal-title').textContent = 'Edit Deal';
   const submitBtn = form.querySelector('button[type=submit]');
   if (submitBtn) submitBtn.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i> Update Deal';
@@ -12430,25 +12550,17 @@ async function handleDealSubmit(e) {
   else payload.lead_id = null;
   if (payload.probability) payload.probability = Number(payload.probability);
   else payload.probability = null;
-
-  // Sprint CRM-4 — one Lead qualifies at most one Deal. Enforced here (the
-  // single write path for both create and edit) rather than only at the
-  // "Create Deal" button, so picking an already-linked lead from the plain
-  // Deal form (or re-linking an existing deal to it) is blocked too.
-  if (payload.lead_id) {
-    const conflictingDeal = state.crmDeals.find(d =>
-      Number(d.lead_id) === payload.lead_id &&
-      !d.is_archived &&
-      Number(d.id) !== Number(state.editingDealId)
-    );
-    if (conflictingDeal) {
-      toast(`This lead is already linked to deal "${conflictingDeal.deal_name}"`, 'error');
-      submitBtn.disabled = false;
-      submitBtn.innerHTML = isEditing ? '<i data-lucide="check" class="w-4 h-4"></i> Update Deal' : '<i data-lucide="check" class="w-4 h-4"></i> Create Deal';
-      refreshIcons();
-      return;
-    }
+  // Sprint CRM-4.5E — a disabled input (Expected Close locked on Won/Lost)
+  // is excluded from FormData; re-include the displayed value so the saved
+  // date always matches what the form shows, without clearing or replacing.
+  const closeInput = $('#deal-expected-close-date');
+  if (closeInput && closeInput.disabled) {
+    payload.expected_close_date = closeInput.value || null;
   }
+
+  // Sprint CRM-4.5D Fix Pass 2 — a Lead may qualify multiple Deals (approved
+  // business rule), so linking more than one Deal to the same lead_id is no
+  // longer blocked here or anywhere else in this write path.
 
   let result = null;
   if (isEditing) { payload.updated_at = new Date().toISOString(); result = await updateCrmDeal(state.editingDealId, payload); }
@@ -12475,7 +12587,7 @@ async function handleDealSubmit(e) {
 function populateActivityClientSelect() {
   const select = $('#activity-client-id');
   if (!select) return;
-  select.innerHTML = '<option value="">No client</option>' +
+  select.innerHTML = '<option value="">No company</option>' +
     state.crmClients.filter(c => !c.is_archived)
       .map(c => `<option value="${c.id}">${escapeHtml(c.client_name)}</option>`).join('');
 }
@@ -12488,10 +12600,95 @@ function populateActivityOwnerSelect() {
       .map(m => `<option value="${m.id}">${escapeHtml(m.name)}</option>`).join('');
 }
 
-// Sprint CRM-4 — prefillLeadId/prefillDealId let a caller attach the new
-// Activity directly to a Lead or Deal via the form's hidden lead_id/deal_id
-// fields (crm_activities already has both columns — see
-// crm_base_schema_recovery_migration.sql — this just wires the UI to them).
+// Sprint CRM-4.5E — Related Lead on the Activity form, filtered to the
+// Company selected in #activity-client-id. Mirrors populateDealLeadSelect()
+// exactly: disabled with a neutral placeholder until a Company is chosen,
+// and an already-selected Lead is always preserved (with a suffix when it
+// falls outside the filtered list) so edit/context flows never silently
+// lose an existing lead link.
+function populateActivityLeadSelect(clientId, selectedLeadId) {
+  const select = $('#activity-lead-id');
+  if (!select) return;
+
+  const selectedLead = selectedLeadId != null
+    ? state.crmLeads.find(l => Number(l.id) === Number(selectedLeadId))
+    : null;
+
+  if (!clientId) {
+    if (selectedLead) {
+      select.disabled = false;
+      select.innerHTML = `<option value="">No linked lead</option><option value="${selectedLead.id}">${escapeHtml(selectedLead.lead_name)}</option>`;
+      select.value = String(selectedLead.id);
+    } else {
+      select.innerHTML = '<option value="">-- Select a company first --</option>';
+      select.disabled = true;
+    }
+    return;
+  }
+
+  const leads = state.crmLeads.filter(l => !l.is_archived && Number(l.client_id) === Number(clientId));
+  select.disabled = false;
+  let optionsHtml = '<option value="">No linked lead</option>' +
+    leads.map(l => `<option value="${l.id}">${escapeHtml(l.lead_name)}</option>`).join('');
+
+  const alreadyIncluded = selectedLead && leads.some(l => Number(l.id) === Number(selectedLead.id));
+  if (selectedLead && !alreadyIncluded) {
+    optionsHtml += `<option value="${selectedLead.id}">${escapeHtml(selectedLead.lead_name)} (different company)</option>`;
+  }
+  select.innerHTML = optionsHtml;
+  if (selectedLead) select.value = String(selectedLead.id);
+}
+
+// Sprint CRM-4.5E — Related Deal on the Activity form. Filtered to the
+// selected Company; when a Related Lead is also selected it narrows further
+// to Deals belonging to that Lead (approved optional refinement). Same
+// preserve-the-selection rule as the Lead select: a Deal that is already
+// linked stays selectable (suffixed) even when it falls outside the
+// filtered list, so legacy data and cross-flow edits are never dropped.
+function populateActivityDealSelect(clientId, leadId, selectedDealId) {
+  const select = $('#activity-deal-id');
+  if (!select) return;
+
+  const selectedDeal = selectedDealId != null
+    ? state.crmDeals.find(d => Number(d.id) === Number(selectedDealId))
+    : null;
+
+  if (!clientId) {
+    if (selectedDeal) {
+      select.disabled = false;
+      select.innerHTML = `<option value="">No linked deal</option><option value="${selectedDeal.id}">${escapeHtml(selectedDeal.deal_name)}</option>`;
+      select.value = String(selectedDeal.id);
+    } else {
+      select.innerHTML = '<option value="">-- Select a company first --</option>';
+      select.disabled = true;
+    }
+    return;
+  }
+
+  let deals = state.crmDeals.filter(d => !d.is_archived && Number(d.client_id) === Number(clientId));
+  if (leadId != null) deals = deals.filter(d => Number(d.lead_id) === Number(leadId));
+  select.disabled = false;
+  let optionsHtml = '<option value="">No linked deal</option>' +
+    deals.map(d => `<option value="${d.id}">${escapeHtml(d.deal_name)}</option>`).join('');
+
+  const alreadyIncluded = selectedDeal && deals.some(d => Number(d.id) === Number(selectedDeal.id));
+  if (selectedDeal && !alreadyIncluded) {
+    const suffix = Number(selectedDeal.client_id) === Number(clientId)
+      ? ' (not linked to this lead)'
+      : ' (different company)';
+    optionsHtml += `<option value="${selectedDeal.id}">${escapeHtml(selectedDeal.deal_name)}${suffix}</option>`;
+  }
+  select.innerHTML = optionsHtml;
+  if (selectedDeal) select.value = String(selectedDeal.id);
+}
+
+// Sprint CRM-4 (reworked in CRM-4.5E) — prefillLeadId/prefillDealId let a
+// caller attach the new Activity directly to a Lead or Deal. These are now
+// visible, Company-filtered selects (previously hidden fields), so the user
+// can see and adjust what the Activity relates to before saving. Context is
+// completed from the entity itself: opening from a Deal also prefills the
+// Deal's Company and Related Lead; opening from a Lead prefills the Lead's
+// Company.
 function openNewActivityModal(prefillClientId, prefillLeadId, prefillDealId) {
   if (!isAdmin()) return;
   state.editingActivityId = null;
@@ -12499,11 +12696,27 @@ function openNewActivityModal(prefillClientId, prefillLeadId, prefillDealId) {
   form.reset();
   populateActivityClientSelect();
   populateActivityOwnerSelect();
-  if (prefillClientId) { const sel = $('#activity-client-id'); if (sel) sel.value = prefillClientId; }
-  const leadHid = $('#activity-lead-id-hidden');
-  if (leadHid) leadHid.value = prefillLeadId || '';
-  const dealHid = $('#activity-deal-id-hidden');
-  if (dealHid) dealHid.value = prefillDealId || '';
+
+  let clientId = prefillClientId != null ? Number(prefillClientId) : null;
+  let leadId = prefillLeadId != null ? Number(prefillLeadId) : null;
+  const dealId = prefillDealId != null ? Number(prefillDealId) : null;
+  if (dealId != null) {
+    const deal = state.crmDeals.find(d => Number(d.id) === dealId);
+    if (deal) {
+      if (clientId == null && deal.client_id != null) clientId = Number(deal.client_id);
+      if (leadId == null && deal.lead_id != null) leadId = Number(deal.lead_id);
+    }
+  }
+  if (leadId != null && clientId == null) {
+    const lead = state.crmLeads.find(l => Number(l.id) === leadId);
+    if (lead && lead.client_id != null) clientId = Number(lead.client_id);
+  }
+
+  const cSel = $('#activity-client-id');
+  if (cSel) cSel.value = clientId != null ? String(clientId) : '';
+  populateActivityLeadSelect(clientId, leadId);
+  populateActivityDealSelect(clientId, leadId, dealId);
+
   $('#activity-modal-title').textContent = 'New Activity';
   const submitBtn = form.querySelector('button[type=submit]');
   if (submitBtn) submitBtn.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i> Create Activity';
@@ -12528,8 +12741,8 @@ function openEditActivityModal(id) {
   form.outcome.value = activity.outcome || '';
   const cSel = $('#activity-client-id'); if (cSel) cSel.value = activity.client_id != null ? String(activity.client_id) : '';
   const oSel = $('#activity-owner-id'); if (oSel) oSel.value = activity.owner_id != null ? String(activity.owner_id) : '';
-  const leadHid = $('#activity-lead-id-hidden'); if (leadHid) leadHid.value = activity.lead_id != null ? String(activity.lead_id) : '';
-  const dealHid = $('#activity-deal-id-hidden'); if (dealHid) dealHid.value = activity.deal_id != null ? String(activity.deal_id) : '';
+  populateActivityLeadSelect(activity.client_id, activity.lead_id);
+  populateActivityDealSelect(activity.client_id, activity.lead_id, activity.deal_id);
   $('#activity-modal-title').textContent = 'Edit Activity';
   const submitBtn = form.querySelector('button[type=submit]');
   if (submitBtn) submitBtn.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i> Update Activity';
@@ -15392,6 +15605,7 @@ if (action === 'delete-member') {
 
 if (action === 'open-lead-details') {
   const id = Number(trigger.dataset.id);
+  closeModal(); // link may be clicked from inside a details modal (e.g. Deal Details)
   openLeadDetails(id);
   return;
 }
@@ -15441,19 +15655,15 @@ if (action === 'archive-client') {
 
 if (action === 'open-client-details') {
   const id = Number(trigger.dataset.id);
+  closeModal(); // link may be clicked from inside a details modal (e.g. Deal Details)
   openClientDetails(id);
   return;
 }
 
 if (action === 'open-lead-details') {
   const id = Number(trigger.dataset.id);
+  closeModal(); // link may be clicked from inside a details modal (e.g. Deal Details)
   openLeadDetails(id);
-  return;
-}
-
-if (action === 'convert-lead-to-client') {
-  const id = Number(trigger.dataset.id);
-  convertLeadToClient(id);
   return;
 }
 
@@ -15717,7 +15927,51 @@ if (action === 'convert-forecast-to-tx') {
   $('#contact-client-id')?.addEventListener('change', (e) => updateContactCompanyHelper(e.target.value));
   $('#deal-form')?.addEventListener('submit', handleDealSubmit);
   $('#deal-lead-id')?.addEventListener('change', handleDealLeadAutofill);
+  // Sprint CRM-4.5D Fix Pass 2 — Related Lead is filtered to the selected
+  // Client/Company. Keep the current Related Lead selected only if it still
+  // belongs to the newly-selected Client; otherwise clear it.
+  $('#deal-client-id')?.addEventListener('change', (e) => {
+    const clientId = e.target.value ? Number(e.target.value) : null;
+    const leadSel = $('#deal-lead-id');
+    const currentLeadId = leadSel && leadSel.value ? Number(leadSel.value) : null;
+    const currentLead = currentLeadId != null ? state.crmLeads.find(l => Number(l.id) === currentLeadId) : null;
+    const stillValid = !!currentLead && clientId != null && Number(currentLead.client_id) === clientId;
+    populateDealLeadSelect(clientId, stillValid ? currentLeadId : null);
+  });
+  // Sprint CRM-4.5E — live percentage label + Expected Close lock on Won/Lost.
+  $('#deal-probability')?.addEventListener('input', updateDealProbabilityDisplay);
+  $('#deal-stage')?.addEventListener('change', updateDealExpectedCloseLock);
   $('#activity-form')?.addEventListener('submit', handleActivitySubmit);
+  // Sprint CRM-4.5E — Activity relations cascade: Company filters Related
+  // Lead and Related Deal; picking a Lead narrows Related Deal to that
+  // Lead's Deals. Current selections are kept only while they still belong
+  // to the newly-chosen Company/Lead (same rule as #deal-client-id above).
+  $('#activity-client-id')?.addEventListener('change', (e) => {
+    const clientId = e.target.value ? Number(e.target.value) : null;
+    const leadSel = $('#activity-lead-id');
+    const currentLeadId = leadSel && leadSel.value ? Number(leadSel.value) : null;
+    const currentLead = currentLeadId != null ? state.crmLeads.find(l => Number(l.id) === currentLeadId) : null;
+    const leadStillValid = !!currentLead && clientId != null && Number(currentLead.client_id) === clientId;
+    const keptLeadId = leadStillValid ? currentLeadId : null;
+    populateActivityLeadSelect(clientId, keptLeadId);
+    const dealSel = $('#activity-deal-id');
+    const currentDealId = dealSel && dealSel.value ? Number(dealSel.value) : null;
+    const currentDeal = currentDealId != null ? state.crmDeals.find(d => Number(d.id) === currentDealId) : null;
+    const dealStillValid = !!currentDeal && clientId != null && Number(currentDeal.client_id) === clientId
+      && (keptLeadId == null || Number(currentDeal.lead_id) === keptLeadId);
+    populateActivityDealSelect(clientId, keptLeadId, dealStillValid ? currentDealId : null);
+  });
+  $('#activity-lead-id')?.addEventListener('change', (e) => {
+    const leadId = e.target.value ? Number(e.target.value) : null;
+    const cSel = $('#activity-client-id');
+    const clientId = cSel && cSel.value ? Number(cSel.value) : null;
+    const dealSel = $('#activity-deal-id');
+    const currentDealId = dealSel && dealSel.value ? Number(dealSel.value) : null;
+    const currentDeal = currentDealId != null ? state.crmDeals.find(d => Number(d.id) === currentDealId) : null;
+    const dealStillValid = !!currentDeal && clientId != null && Number(currentDeal.client_id) === clientId
+      && (leadId == null || Number(currentDeal.lead_id) === leadId);
+    populateActivityDealSelect(clientId, leadId, dealStillValid ? currentDealId : null);
+  });
   $('#note-form')?.addEventListener('submit', handleNoteSubmit);
   $('#proposal-form')?.addEventListener('submit', handleProposalSubmit);
   $('#finance-account-form')?.addEventListener('submit', handleFinanceAccountSubmit);
@@ -15893,22 +16147,24 @@ if (action === 'convert-forecast-to-tx') {
   splitTotalInput?.addEventListener('input', updateSplitPt);
   splitSvcInput?.addEventListener('input',   updateSplitPt);
 
-  // Lead form: autofill from linked client
+  // Lead form: Company -> Contact filtering + owner/source autofill (Sprint CRM-4.5D)
   $('#lead-client-id')?.addEventListener('change', (e) => {
-    const clientId = Number(e.target.value);
+    const clientId = e.target.value ? Number(e.target.value) : null;
+    populateLeadContactSelect(clientId, null);
+    renderLeadContactPreview(null);
     if (!clientId) return;
     const client = state.crmClients.find(c => Number(c.id) === clientId);
     if (!client) return;
     const form = $('#lead-form');
     if (!form) return;
-    if (!form.company_name.value && client.client_name) form.company_name.value = client.client_name;
-    if (!form.phone.value && client.phone) form.phone.value = client.phone;
-    if (!form.whatsapp.value && client.whatsapp) form.whatsapp.value = client.whatsapp;
-    if (!form.email.value && client.email) form.email.value = client.email;
     if (!form.owner_id.value && client.owner_id) form.owner_id.value = String(client.owner_id);
     if (form.source && (form.source.value === '' || form.source.value === 'unknown') && client.source) {
       form.source.value = 'existing_client';
     }
+  });
+
+  $('#lead-contact-id')?.addEventListener('change', (e) => {
+    renderLeadContactPreview(e.target.value || null);
   });
 
 document.addEventListener('click', async (e) => {
