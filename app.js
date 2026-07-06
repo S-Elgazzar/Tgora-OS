@@ -1251,7 +1251,13 @@ async function updateCrmLead(id, payload) {
 async function archiveCrmLead(id) {
   return updateCrmLead(id, {
     is_archived: true,
-    status: 'archived',
+    updated_at: new Date().toISOString(),
+  });
+}
+
+async function restoreCrmLead(id) {
+  return updateCrmLead(id, {
+    is_archived: false,
     updated_at: new Date().toISOString(),
   });
 }
@@ -1309,6 +1315,14 @@ async function archiveCrmClient(id) {
   });
 }
 
+async function restoreCrmClient(id) {
+  return updateCrmClient(id, {
+    is_archived: false,
+    status: 'active',
+    updated_at: new Date().toISOString(),
+  });
+}
+
 // ---------- CRM Contacts Data Layer ----------
 async function fetchCrmContacts() {
   const { data, error } = await supabaseClient.from('crm_contacts').select('*').order('created_at', { ascending: false });
@@ -1329,6 +1343,9 @@ async function updateCrmContact(id, payload) {
 }
 async function archiveCrmContact(id) {
   return updateCrmContact(id, { is_archived: true, status: 'archived', updated_at: new Date().toISOString() });
+}
+async function restoreCrmContact(id) {
+  return updateCrmContact(id, { is_archived: false, status: 'active', updated_at: new Date().toISOString() });
 }
 
 // ---------- CRM Deals Data Layer ----------
@@ -1352,6 +1369,9 @@ async function updateCrmDeal(id, payload) {
 async function archiveCrmDeal(id) {
   return updateCrmDeal(id, { is_archived: true, updated_at: new Date().toISOString() });
 }
+async function restoreCrmDeal(id) {
+  return updateCrmDeal(id, { is_archived: false, updated_at: new Date().toISOString() });
+}
 
 // ---------- CRM Activities Data Layer ----------
 async function fetchCrmActivities() {
@@ -1373,6 +1393,9 @@ async function updateCrmActivity(id, payload) {
 }
 async function archiveCrmActivity(id) {
   return updateCrmActivity(id, { is_archived: true, updated_at: new Date().toISOString() });
+}
+async function restoreCrmActivity(id) {
+  return updateCrmActivity(id, { is_archived: false, updated_at: new Date().toISOString() });
 }
 
 // ---------- CRM Notes Data Layer ----------
@@ -1414,6 +1437,11 @@ async function updateCrmProposal(id, payload) {
 }
 async function archiveCrmProposal(id) {
   return updateCrmProposal(id, { is_archived: true, status: 'archived', updated_at: new Date().toISOString() });
+}
+async function restoreCrmProposal(id) {
+  // Safest default per existing edit-form fallback (openEditProposalModal
+  // already treats a missing status as 'draft' — see form.status.value there).
+  return updateCrmProposal(id, { is_archived: false, status: 'draft', updated_at: new Date().toISOString() });
 }
 
 // ---------- CRM Service Types Data Layer ----------
@@ -5225,8 +5253,14 @@ function renderCrmLeads() {
            </button>`
         : '';
 
+      const restoreBtn = admin && l.is_archived
+        ? `<button class="icon-btn text-emerald-600" data-action="restore-lead" data-id="${l.id}" title="Restore to Active">
+             <i data-lucide="rotate-ccw" class="w-4 h-4"></i>
+           </button>`
+        : '';
+
       const actionsCell = admin
-        ? `<div class="inline-flex items-center gap-1">${editBtn}${archiveBtn}</div>`
+        ? `<div class="inline-flex items-center gap-1">${editBtn}${archiveBtn}${restoreBtn}</div>`
         : '<span class="text-xs text-gray-400">View only</span>';
 
       return `
@@ -5323,8 +5357,14 @@ function renderCrmClients() {
            </button>`
         : '';
 
+      const restoreBtn = admin && c.is_archived
+        ? `<button class="icon-btn text-emerald-600" data-action="restore-client" data-id="${c.id}" title="Restore to Active">
+             <i data-lucide="rotate-ccw" class="w-4 h-4"></i>
+           </button>`
+        : '';
+
       const actionsCell = admin
-        ? `<div class="inline-flex items-center gap-1">${editBtn}${archiveBtn}</div>`
+        ? `<div class="inline-flex items-center gap-1">${editBtn}${archiveBtn}${restoreBtn}</div>`
         : '<span class="text-xs text-gray-400">View only</span>';
 
       return `
@@ -5735,7 +5775,7 @@ function renderCrmContacts() {
         <td class="px-5 py-3.5 text-right">
           ${admin ? `<div class="inline-flex items-center gap-1">
             <button class="icon-btn" data-action="edit-contact" data-id="${c.id}" title="Edit contact"><i data-lucide="pencil" class="w-4 h-4"></i></button>
-            ${!c.is_archived ? `<button class="icon-btn" data-action="archive-contact" data-id="${c.id}" title="Archive contact"><i data-lucide="archive" class="w-4 h-4"></i></button>` : ''}
+            ${!c.is_archived ? `<button class="icon-btn" data-action="archive-contact" data-id="${c.id}" title="Archive contact"><i data-lucide="archive" class="w-4 h-4"></i></button>` : `<button class="icon-btn text-emerald-600" data-action="restore-contact" data-id="${c.id}" title="Restore to Active"><i data-lucide="rotate-ccw" class="w-4 h-4"></i></button>`}
           </div>` : '<span class="text-xs text-gray-400">View only</span>'}
         </td>
       </tr>
@@ -5815,7 +5855,7 @@ function renderCrmDeals() {
         <td class="px-5 py-3.5 text-right">
           ${admin ? `<div class="inline-flex items-center gap-1">
             <button class="icon-btn" data-action="edit-deal" data-id="${d.id}" title="Edit deal"><i data-lucide="pencil" class="w-4 h-4"></i></button>
-            ${!d.is_archived ? `<button class="icon-btn" data-action="archive-deal" data-id="${d.id}" title="Archive deal"><i data-lucide="archive" class="w-4 h-4"></i></button>` : ''}
+            ${!d.is_archived ? `<button class="icon-btn" data-action="archive-deal" data-id="${d.id}" title="Archive deal"><i data-lucide="archive" class="w-4 h-4"></i></button>` : `<button class="icon-btn text-emerald-600" data-action="restore-deal" data-id="${d.id}" title="Restore to Active"><i data-lucide="rotate-ccw" class="w-4 h-4"></i></button>`}
           </div>` : '<span class="text-xs text-gray-400">View only</span>'}
         </td>
       </tr>
@@ -5889,7 +5929,7 @@ function renderCrmActivities() {
         <td class="px-5 py-3.5 text-right">
           ${admin ? `<div class="inline-flex items-center gap-1">
             <button class="icon-btn" data-action="edit-activity" data-id="${a.id}" title="Edit activity"><i data-lucide="pencil" class="w-4 h-4"></i></button>
-            ${!a.is_archived ? `<button class="icon-btn" data-action="archive-activity" data-id="${a.id}" title="Archive activity"><i data-lucide="archive" class="w-4 h-4"></i></button>` : ''}
+            ${!a.is_archived ? `<button class="icon-btn" data-action="archive-activity" data-id="${a.id}" title="Archive activity"><i data-lucide="archive" class="w-4 h-4"></i></button>` : `<button class="icon-btn text-emerald-600" data-action="restore-activity" data-id="${a.id}" title="Restore to Active"><i data-lucide="rotate-ccw" class="w-4 h-4"></i></button>`}
           </div>` : '<span class="text-xs text-gray-400">View only</span>'}
         </td>
       </tr>
@@ -5966,7 +6006,7 @@ function renderCrmProposals() {
         <td class="px-5 py-3.5 text-right">
           ${admin ? `<div class="inline-flex items-center gap-1">
             <button class="icon-btn" data-action="edit-proposal" data-id="${p.id}" title="Edit proposal"><i data-lucide="pencil" class="w-4 h-4"></i></button>
-            ${!p.is_archived ? `<button class="icon-btn" data-action="archive-proposal" data-id="${p.id}" title="Archive proposal"><i data-lucide="archive" class="w-4 h-4"></i></button>` : ''}
+            ${!p.is_archived ? `<button class="icon-btn" data-action="archive-proposal" data-id="${p.id}" title="Archive proposal"><i data-lucide="archive" class="w-4 h-4"></i></button>` : `<button class="icon-btn text-emerald-600" data-action="restore-proposal" data-id="${p.id}" title="Restore to Active"><i data-lucide="rotate-ccw" class="w-4 h-4"></i></button>`}
           </div>` : '<span class="text-xs text-gray-400">View only</span>'}
         </td>
       </tr>
@@ -12338,6 +12378,7 @@ function updateClientReferredByVisibility(sourceValue, form) {
 function openNewClientModal() {
   if (!isAdmin()) return;
   state.editingClientId = null;
+  state.clientEditReturnView = null;
   const form = $('#client-form');
   form.reset();
   resetLegacyClientTypeOptions(form.client_type);
@@ -12355,6 +12396,7 @@ function openEditClientModal(id) {
   const client = state.crmClients.find((c) => Number(c.id) === id);
   if (!client) { toast('Company not found', 'error'); return; }
   state.editingClientId = id;
+  state.clientEditReturnView = state.view;
   const form = $('#client-form');
   form.reset();
   form.client_name.value = client.client_name || '';
@@ -12417,11 +12459,18 @@ async function handleClientSubmit(e) {
   if (!result) return;
 
   toast(isEditing ? 'Company updated' : 'Company created', 'success');
+  const returnView = state.clientEditReturnView;
   state.editingClientId = null;
+  state.clientEditReturnView = null;
   form.reset();
   closeModal();
   await refreshDataAndRender();
-  setView('crm');
+  if (returnView === 'client-details' && state.selectedClientId) {
+    setView('client-details');
+    renderClientDetails();
+  } else {
+    setView('crm');
+  }
 }
 
 // ---------- Contact Modal Helpers ----------
@@ -13641,6 +13690,21 @@ async function confirmDelete() {
       renderProjectDetails();
     } else if (currentView === 'team-member' && state.selectedMemberId) {
       openMemberDetails(state.selectedMemberId);
+    } else if (currentView === 'client-details') {
+      state.selectedClientId = null;
+      localStorage.removeItem('tgora_selected_client_id');
+      setView('crm');
+      setCrmTab('clients');
+    } else if (currentView === 'contact-details') {
+      state.selectedContactId = null;
+      localStorage.removeItem('tgora_selected_contact_id');
+      setView('crm');
+      setCrmTab('contacts');
+    } else if (currentView === 'lead-details') {
+      state.selectedLeadId = null;
+      localStorage.removeItem('tgora_selected_lead_id');
+      setView('crm');
+      setCrmTab('leads');
     } else {
       setView(currentView || 'dashboard');
     }
@@ -15812,7 +15876,15 @@ if (action === 'open-lead-modal') {
 }
 
 if (action === 'edit-lead') {
-  const id = Number(trigger.dataset.id);
+  const rawId = trigger.dataset.id;
+  let id = rawId !== undefined && rawId !== '' ? Number(rawId) : NaN;
+  if ((!Number.isFinite(id) || id <= 0) && state.view === 'lead-details' && state.selectedLeadId) {
+    id = Number(state.selectedLeadId);
+  }
+  if (!Number.isFinite(id) || id <= 0) {
+    toast('Could not determine which lead to edit', 'error');
+    return;
+  }
   openEditLeadModal(id);
   return;
 }
@@ -15821,6 +15893,18 @@ if (action === 'archive-lead') {
   const id = Number(trigger.dataset.id);
   const lead = state.crmLeads.find((l) => Number(l.id) === id);
   openConfirm('lead_archive', id, lead ? `”${lead.lead_name}”` : 'This lead');
+  return;
+}
+
+if (action === 'restore-lead') {
+  const id = Number(trigger.dataset.id);
+  (async () => {
+    const result = await restoreCrmLead(id);
+    if (result) {
+      toast('Lead restored to Active.', 'success');
+      await refreshDataAndRender();
+    }
+  })();
   return;
 }
 
@@ -15839,6 +15923,18 @@ if (action === 'archive-client') {
   const id = Number(trigger.dataset.id);
   const client = state.crmClients.find((c) => Number(c.id) === id);
   openConfirm('client_archive', id, client ? `”${client.client_name}”` : 'This client');
+  return;
+}
+
+if (action === 'restore-client') {
+  const id = Number(trigger.dataset.id);
+  (async () => {
+    const result = await restoreCrmClient(id);
+    if (result) {
+      toast('Company restored to Active.', 'success');
+      await refreshDataAndRender();
+    }
+  })();
   return;
 }
 
@@ -15888,6 +15984,18 @@ if (action === 'archive-contact') {
   return;
 }
 
+if (action === 'restore-contact') {
+  const id = Number(trigger.dataset.id);
+  (async () => {
+    const result = await restoreCrmContact(id);
+    if (result) {
+      toast('Contact restored to Active.', 'success');
+      await refreshDataAndRender();
+    }
+  })();
+  return;
+}
+
 if (action === 'open-contact-details') {
   const id = Number(trigger.dataset.id);
   openContactDetails(id);
@@ -15914,6 +16022,7 @@ if (action === 'open-deal-details') {
 }
 
 if (action === 'edit-deal') {
+  closeModal(); // Deal Details is a modal — close it first so Edit Deal isn't stacked behind it
   openEditDealModal(Number(trigger.dataset.id));
   return;
 }
@@ -15922,6 +16031,18 @@ if (action === 'archive-deal') {
   const id = Number(trigger.dataset.id);
   const deal = state.crmDeals.find(d => Number(d.id) === id);
   openConfirm('deal_archive', id, deal ? `”${deal.deal_name}”` : 'This deal');
+  return;
+}
+
+if (action === 'restore-deal') {
+  const id = Number(trigger.dataset.id);
+  (async () => {
+    const result = await restoreCrmDeal(id);
+    if (result) {
+      toast('Deal restored to Active.', 'success');
+      await refreshDataAndRender();
+    }
+  })();
   return;
 }
 
@@ -15951,6 +16072,18 @@ if (action === 'archive-activity') {
   return;
 }
 
+if (action === 'restore-activity') {
+  const id = Number(trigger.dataset.id);
+  (async () => {
+    const result = await restoreCrmActivity(id);
+    if (result) {
+      toast('Activity restored to Active.', 'success');
+      await refreshDataAndRender();
+    }
+  })();
+  return;
+}
+
 if (action === 'open-note-modal') {
   const prefillClientId = trigger.dataset.clientId ? Number(trigger.dataset.clientId) : undefined;
   const prefillLeadId = trigger.dataset.leadId ? Number(trigger.dataset.leadId) : undefined;
@@ -15973,6 +16106,18 @@ if (action === 'archive-proposal') {
   const id = Number(trigger.dataset.id);
   const proposal = state.crmProposals.find(p => Number(p.id) === id);
   openConfirm('proposal_archive', id, proposal ? `”${proposal.proposal_title}”` : 'This proposal');
+  return;
+}
+
+if (action === 'restore-proposal') {
+  const id = Number(trigger.dataset.id);
+  (async () => {
+    const result = await restoreCrmProposal(id);
+    if (result) {
+      toast('Proposal restored to Active.', 'success');
+      await refreshDataAndRender();
+    }
+  })();
   return;
 }
 
