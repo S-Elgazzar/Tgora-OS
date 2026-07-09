@@ -154,6 +154,14 @@ const state = {
   // null by openNewDealModal()/openEditDealModal() so a cancelled or
   // unrelated deal creation never leaks a stale redirect target.
   dealCreationSourceLeadId: null,
+  // Sprint CRM-5 — set while the New Project modal is open in "Create
+  // Project from Deal" mode, so handleProjectSubmit() knows to attach
+  // deal_id to the new Project and return the user to that Deal's
+  // details instead of the generic Projects view. Always reset to null
+  // by openCreateProjectModal()/openEditProjectModal() and cleared after
+  // submit so a cancelled or unrelated project creation never leaks a
+  // stale link.
+  projectCreationSourceDealId: null,
   financeAccounts: [],
   financeCategories: [],
   financeTransactions: [],
@@ -6638,6 +6646,39 @@ function openDealDetailsModal(id) {
         `).join('');
   }
 
+  // Related Projects — Sprint CRM-5 (multi-project fix). A Won Deal may
+  // produce any number of Projects, so the Create Project button always
+  // stays available once Won, and every linked Project is listed below it.
+  const projectEl = $('#deal-details-modal-project');
+  if (projectEl) {
+    const linkedProjects = state.projects.filter(p => Number(p.deal_id) === id);
+    if (deal.stage !== 'won') {
+      projectEl.innerHTML = '<p class="text-sm text-gray-400">Available once this Deal is Won.</p>';
+    } else {
+      const createBtn = `
+        <button class="h-9 px-4 inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg shadow-sm" data-action="create-project-from-deal" data-id="${deal.id}">
+          <i data-lucide="folder-plus" class="w-4 h-4"></i> Create Project
+        </button>
+      `;
+      const list = linkedProjects.length === 0
+        ? '<p class="text-sm text-gray-400">No related projects yet.</p>'
+        : `<div class="space-y-2">${linkedProjects.map(p => {
+            const status = (p.status || 'planning').toLowerCase();
+            return `
+              <button class="w-full flex items-center justify-between gap-3 py-2 px-3 border border-gray-200 rounded-lg hover:bg-gray-50 transition text-left" data-action="open-project-details" data-id="${p.id}">
+                <span class="min-w-0">
+                  <span class="block text-sm font-semibold text-indigo-600 truncate">${escapeHtml(p.project_name || 'Untitled')}</span>
+                  <span class="block text-xs text-gray-500">${p.project_code ? escapeHtml(p.project_code) : '—'}</span>
+                </span>
+                <span class="badge badge-${status} shrink-0"><span class="dot"></span>${labelize(status)}</span>
+              </button>
+            `;
+          }).join('')}</div>`;
+      projectEl.innerHTML = `<div class="space-y-3">${createBtn}${list}</div>`;
+    }
+    refreshIcons();
+  }
+
   openModal('deal-details-modal');
 }
 
@@ -12053,6 +12094,7 @@ function normalizePayload(formData) {
 
 function openCreateProjectModal() {
   state.editingProjectId = null;
+  state.projectCreationSourceDealId = null;
 
   const form = $('#project-form');
 
@@ -12086,6 +12128,34 @@ function openCreateProjectModal() {
   openModal('project-modal');
 }
 
+// Sprint CRM-5 — explicit, user-triggered "Create Project" action from a Won
+// Deal (see the Related Projects section in openDealDetailsModal()). Project
+// creation is never automatic on stage change; this is the only path that
+// creates a Project from a Deal, and only when the user clicks it. Reuses
+// the existing New Project modal/handler rather than a separate form. A Deal
+// may produce multiple Projects, so the only guard is that the Deal must be
+// Won — re-checked in handleProjectSubmit() as the authoritative enforcement
+// point; this function's check only prevents the modal from opening in an
+// invalid state.
+function openCreateProjectFromDeal(dealId) {
+  if (!isAdmin()) return;
+  const deal = state.crmDeals.find(d => Number(d.id) === Number(dealId));
+  if (!deal) { toast('Deal not found', 'error'); return; }
+  if (deal.stage !== 'won') { toast('This Deal must be Won before creating a Project.', 'error'); return; }
+
+  openCreateProjectModal();
+
+  const client = state.crmClients.find(c => Number(c.id) === Number(deal.client_id));
+  const form = $('#project-form');
+  if (form?.client && client) {
+    form.client.value = client.client_name || '';
+  }
+
+  state.projectCreationSourceDealId = deal.id;
+  const title = $('#project-modal-title');
+  if (title) title.textContent = 'Create Project from Deal';
+}
+
 function openEditProjectModal(id) {
   const project = state.projects.find((p) => p.id === id);
 
@@ -12095,6 +12165,7 @@ function openEditProjectModal(id) {
   }
 
   state.editingProjectId = id;
+  state.projectCreationSourceDealId = null;
 
   const form = $('#project-form');
 
@@ -13298,6 +13369,24 @@ async function handleProjectSubmit(e) {
   const submitBtn = form.querySelector('button[type=submit]');
   const isEditing = state.editingProjectId !== null;
 
+  // Sprint CRM-5 — authoritative guard for Deal → Project conversion. The
+  // modal only opens in this state via openCreateProjectFromDeal(), which
+  // already checked this, but state can go stale (e.g. the Deal was edited
+  // in another tab while this modal sat open), so re-validate here as the
+  // real enforcement point rather than trusting the UI alone. A Deal may
+  // produce multiple Projects, so the only requirement is that it's Won.
+  let sourceDealId = null;
+  if (!isEditing && state.projectCreationSourceDealId != null) {
+    const deal = state.crmDeals.find(d => Number(d.id) === Number(state.projectCreationSourceDealId));
+    if (!deal || deal.stage !== 'won') {
+      toast('This Deal can no longer be converted to a Project. Please re-open it from Deal Details.', 'error');
+      state.projectCreationSourceDealId = null;
+      closeModal();
+      return;
+    }
+    sourceDealId = deal.id;
+  }
+
   submitBtn.disabled = true;
   submitBtn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> ${isEditing ? 'Updating…' : 'Saving…'}`;
   refreshIcons();
@@ -13307,6 +13396,7 @@ async function handleProjectSubmit(e) {
 
   if (!isEditing) {
     payload.project_code = generateProjectCode();
+    if (sourceDealId != null) payload.deal_id = sourceDealId;
   }
 
   let result = null;
@@ -13330,11 +13420,17 @@ async function handleProjectSubmit(e) {
     );
 
     state.editingProjectId = null;
+    state.projectCreationSourceDealId = null;
     form.reset();
     closeModal();
 
     await refreshDataAndRender();
-    setView('projects');
+
+    if (sourceDealId != null) {
+      openDealDetailsModal(Number(sourceDealId));
+    } else {
+      setView('projects');
+    }
   }
 }
 
@@ -13766,6 +13862,43 @@ function renderProjectDetails() {
 
   $('#details-priority').className = `badge priority-${priority}`;
   $('#details-priority').innerHTML = `<span class="dot"></span>${labelize(priority)}`;
+
+  // CRM Origin — Sprint CRM-5. Minimal, read-only provenance for Projects
+  // created via Deal → Project conversion. Hidden entirely for standalone
+  // Projects (deal_id null), which is every Project created before this
+  // sprint plus any manually created going forward.
+  const originEl = $('#project-details-crm-origin');
+  if (originEl) {
+    const originDeal = project.deal_id != null
+      ? state.crmDeals.find(d => Number(d.id) === Number(project.deal_id))
+      : null;
+    if (!originDeal) {
+      originEl.classList.add('hidden');
+    } else {
+      originEl.classList.remove('hidden');
+      const originClient = state.crmClients.find(c => Number(c.id) === Number(originDeal.client_id));
+      const originLead = originDeal.lead_id != null
+        ? state.crmLeads.find(l => Number(l.id) === Number(originDeal.lead_id))
+        : null;
+
+      $('#project-details-origin-deal').innerHTML =
+        `<button class="font-semibold text-indigo-600 hover:underline" data-action="open-deal-details" data-id="${originDeal.id}">${escapeHtml(originDeal.deal_name)}</button>`;
+
+      $('#project-details-origin-company').innerHTML = originClient
+        ? `<button class="font-semibold text-indigo-600 hover:underline" data-action="open-client-details" data-id="${originClient.id}">${escapeHtml(originClient.client_name)}</button>`
+        : '—';
+
+      const leadWrap = $('#project-details-origin-lead-wrap');
+      if (originLead) {
+        $('#project-details-origin-lead').innerHTML =
+          `<button class="font-semibold text-indigo-600 hover:underline" data-action="open-lead-details" data-id="${originLead.id}">${escapeHtml(originLead.lead_name)}</button>`;
+        leadWrap?.classList.remove('hidden');
+      } else {
+        leadWrap?.classList.add('hidden');
+      }
+      refreshIcons();
+    }
+  }
 
   const linkEl = $('#details-project-link');
 
@@ -16024,6 +16157,12 @@ if (action === 'open-deal-details') {
 if (action === 'edit-deal') {
   closeModal(); // Deal Details is a modal — close it first so Edit Deal isn't stacked behind it
   openEditDealModal(Number(trigger.dataset.id));
+  return;
+}
+
+if (action === 'create-project-from-deal') {
+  closeModal(); // Deal Details is a modal — close it first so the Project modal isn't stacked behind it
+  openCreateProjectFromDeal(Number(trigger.dataset.id));
   return;
 }
 

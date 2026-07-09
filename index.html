@@ -1224,6 +1224,15 @@
     </div>
   </div>
 
+  <div id="project-details-crm-origin" class="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm mb-6 hidden">
+    <p class="text-xs text-gray-500 font-medium mb-2">CRM Origin</p>
+    <div class="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+      <div><span class="text-gray-500">Deal:</span> <span id="project-details-origin-deal"></span></div>
+      <div><span class="text-gray-500">Company:</span> <span id="project-details-origin-company"></span></div>
+      <div id="project-details-origin-lead-wrap" class="hidden"><span class="text-gray-500">Lead:</span> <span id="project-details-origin-lead"></span></div>
+    </div>
+  </div>
+
 <div class="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm mb-6">
   <div class="flex items-center justify-between mb-3">
     <div>
@@ -3679,6 +3688,10 @@
         <div>
           <p class="text-xs text-gray-500 font-medium mb-2">Proposals</p>
           <div id="deal-details-modal-proposals-list"></div>
+        </div>
+        <div>
+          <p class="text-xs text-gray-500 font-medium mb-2">Related Projects</p>
+          <div id="deal-details-modal-project"></div>
         </div>
         <div class="pt-4 border-t border-gray-100 flex justify-end">
           <button id="deal-details-modal-edit-btn" data-action="edit-deal" data-id="" class="h-9 px-4 inline-flex items-center gap-2 text-sm font-medium text-gray-700 border border-gray-200 rounded-lg hover:bg-gray-50 transition">
