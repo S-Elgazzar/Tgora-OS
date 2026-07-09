@@ -25,6 +25,7 @@ const state = {
   editingMemberId: null,
   editingTaskId: null,
   editingProjectId: null,
+  editingPaymentScheduleItemId: null,
   filters: {
     projects: {
       status: 'all',
@@ -129,6 +130,8 @@ const state = {
     financeForecasts:    { search: '', type: 'all', status: 'all', archived: 'active' },
   },
   pendingDelete: null, // { type: 'project' | 'task', id }
+  projectCommercialTerms: [],
+  projectPaymentScheduleItems: [],
   crmLeads: [],
   crmClients: [],
   crmContacts: [],
@@ -1179,6 +1182,65 @@ async function fetchTeamMembers() {
   }
 
   return data || [];
+}
+
+// ---------- Project Commercial Data Layer (Sprint Project Commercial B) ----------
+// Admin-only, same fail-soft pattern as Finance: returns [] on error/no access
+// rather than throwing, so a missing table or a non-admin session never
+// blocks the rest of the app from loading.
+async function fetchProjectCommercialTerms() {
+  if (!isAdmin()) return [];
+  const { data, error } = await supabaseClient
+    .from('project_commercial_terms')
+    .select('*');
+  if (error) { console.error('fetchProjectCommercialTerms', error); return []; }
+  return data || [];
+}
+
+async function fetchProjectPaymentScheduleItems() {
+  if (!isAdmin()) return [];
+  const { data, error } = await supabaseClient
+    .from('project_payment_schedule_items')
+    .select('*')
+    .order('due_date', { ascending: true });
+  if (error) { console.error('fetchProjectPaymentScheduleItems', error); return []; }
+  return data || [];
+}
+
+async function createProjectCommercialTerms(payload) {
+  if (!isAdmin()) return null;
+  const { data, error } = await supabaseClient.from('project_commercial_terms').insert([payload]).select().single();
+  if (error) { console.error('createProjectCommercialTerms', error); toast(error.message || 'Failed to save commercial terms', 'error'); return null; }
+  return data;
+}
+
+async function updateProjectCommercialTerms(id, payload) {
+  if (!isAdmin()) return null;
+  const { data, error } = await supabaseClient.from('project_commercial_terms').update(payload).eq('id', id).select().single();
+  if (error) { console.error('updateProjectCommercialTerms', error); toast(error.message || 'Failed to update commercial terms', 'error'); return null; }
+  return data;
+}
+
+async function createProjectPaymentScheduleItem(payload) {
+  if (!isAdmin()) return null;
+  const { data, error } = await supabaseClient.from('project_payment_schedule_items').insert([payload]).select().single();
+  if (error) { console.error('createProjectPaymentScheduleItem', error); toast(error.message || 'Failed to add payment item', 'error'); return null; }
+  return data;
+}
+
+async function updateProjectPaymentScheduleItem(id, payload) {
+  if (!isAdmin()) return null;
+  const { data, error } = await supabaseClient.from('project_payment_schedule_items').update(payload).eq('id', id).select().single();
+  if (error) { console.error('updateProjectPaymentScheduleItem', error); toast(error.message || 'Failed to update payment item', 'error'); return null; }
+  return data;
+}
+
+async function cancelProjectPaymentScheduleItem(id) {
+  return updateProjectPaymentScheduleItem(id, { is_cancelled: true, updated_at: new Date().toISOString() });
+}
+
+async function restoreProjectPaymentScheduleItem(id) {
+  return updateProjectPaymentScheduleItem(id, { is_cancelled: false, updated_at: new Date().toISOString() });
 }
 
 // ---------- CRM Leads Data Layer ----------
@@ -6759,6 +6821,16 @@ async function refreshDataAndRender() {
     state.currentRole   = (rematched?.role_type || 'member').toLowerCase().trim();
   }
 
+  // Fetch admin-gated Commercial data only after the role above has been
+  // re-derived — these fetchers self-gate on isAdmin(), so running them
+  // before re-derivation would gate on the pre-refresh (possibly stale) role.
+  const [projectCommercialTerms, projectPaymentScheduleItems] = await Promise.all([
+    fetchProjectCommercialTerms(),
+    fetchProjectPaymentScheduleItems(),
+  ]);
+  state.projectCommercialTerms = projectCommercialTerms;
+  state.projectPaymentScheduleItems = projectPaymentScheduleItems;
+
   // If the role changed, the parallel-fetched notifications used the old
   // access level; re-fetch with the corrected role so the server-side
   // user_id filter matches the new permission boundary.
@@ -11520,6 +11592,232 @@ async function handleFinanceForecastSubmit(e) {
   }
 }
 
+// ---------- Project Commercial Terms / Payment Schedule Modals (Sprint Project Commercial B) ----------
+
+function openCommercialTermsModal() {
+  if (!isAdmin()) return;
+  const project = state.projects.find((p) => Number(p.id) === Number(state.selectedProjectId));
+  if (!project) return;
+
+  const form  = $('#commercial-terms-form');
+  const title = $('#commercial-terms-modal-title');
+  if (!form) return;
+  form.reset();
+
+  const terms = state.projectCommercialTerms.find((ct) => Number(ct.project_id) === Number(project.id)) || null;
+  if (title) title.textContent = terms ? 'Edit Commercial Terms' : 'Set Commercial Terms';
+
+  if (terms) {
+    form.elements['contract_value'].value = terms.contract_value ?? '';
+    form.elements['currency'].value       = terms.currency || 'EGP';
+    form.elements['notes'].value          = terms.notes || '';
+  } else {
+    form.elements['currency'].value = 'EGP';
+  }
+
+  openModal('commercial-terms-modal');
+}
+
+async function handleCommercialTermsSubmit(e) {
+  e.preventDefault();
+  if (!isAdmin()) return;
+
+  const project = state.projects.find((p) => Number(p.id) === Number(state.selectedProjectId));
+  if (!project) return;
+
+  const form = e.target;
+  const contractValue = Number(form.elements['contract_value'].value);
+  const currency = form.elements['currency'].value;
+
+  if (!Number.isFinite(contractValue) || contractValue < 0) {
+    toast('Contract Value must be 0 or greater.', 'error');
+    return;
+  }
+  if (!currency) {
+    toast('Currency is required.', 'error');
+    return;
+  }
+
+  const existing = state.projectCommercialTerms.find((ct) => Number(ct.project_id) === Number(project.id)) || null;
+
+  const payload = {
+    contract_value: contractValue,
+    currency,
+    notes: form.elements['notes'].value.trim() || null,
+    updated_at: new Date().toISOString(),
+  };
+
+  const btn = form.querySelector('[type="submit"]');
+  if (btn) btn.disabled = true;
+
+  let ok = false;
+  if (existing) {
+    ok = !!(await updateProjectCommercialTerms(existing.id, payload));
+  } else {
+    payload.project_id = project.id;
+    payload.created_by = state.currentUser?.id || null;
+    payload.created_at = new Date().toISOString();
+    ok = !!(await createProjectCommercialTerms(payload));
+  }
+
+  if (btn) btn.disabled = false;
+
+  if (ok) {
+    toast(existing ? 'Commercial terms updated.' : 'Commercial terms saved.', 'success');
+    closeModal();
+    state.projectCommercialTerms = await fetchProjectCommercialTerms();
+    renderProjectDetails();
+  }
+}
+
+function updateClientFundsPurposeRequiredIndicator() {
+  const form = $('#payment-item-form');
+  const indicator = $('#client-funds-purpose-required-indicator');
+  if (!form || !indicator) return;
+  const clientFundsAmount = Number(form.elements['client_funds_amount']?.value) || 0;
+  indicator.classList.toggle('hidden', !(clientFundsAmount > 0));
+}
+
+function openPaymentItemModal(id = null) {
+  if (!isAdmin()) return;
+  const project = state.projects.find((p) => Number(p.id) === Number(state.selectedProjectId));
+  if (!project) return;
+
+  const terms = state.projectCommercialTerms.find((ct) => Number(ct.project_id) === Number(project.id)) || null;
+  if (!terms) {
+    toast('Set Commercial Terms before adding a payment.', 'error');
+    return;
+  }
+
+  state.editingPaymentScheduleItemId = id;
+  const form  = $('#payment-item-form');
+  const title = $('#payment-item-modal-title');
+  if (!form) return;
+  form.reset();
+  if (title) title.textContent = id ? 'Edit Payment' : 'Add Payment';
+
+  if (id) {
+    const item = state.projectPaymentScheduleItems.find((i) => Number(i.id) === id);
+    if (item) {
+      form.elements['label'].value                = item.label || '';
+      form.elements['due_date'].value              = item.due_date?.slice(0, 10) || '';
+      form.elements['total_amount'].value          = item.total_amount ?? '';
+      form.elements['revenue_amount'].value        = item.revenue_amount ?? '';
+      form.elements['client_funds_amount'].value   = item.client_funds_amount ?? '';
+      form.elements['client_funds_purpose'].value  = item.client_funds_purpose || '';
+    }
+  }
+
+  updateClientFundsPurposeRequiredIndicator();
+  openModal('payment-item-modal');
+}
+
+async function handlePaymentItemSubmit(e) {
+  e.preventDefault();
+  if (!isAdmin()) return;
+
+  const project = state.projects.find((p) => Number(p.id) === Number(state.selectedProjectId));
+  if (!project) return;
+
+  const terms = state.projectCommercialTerms.find((ct) => Number(ct.project_id) === Number(project.id)) || null;
+  if (!terms) {
+    toast('Set Commercial Terms before adding a payment.', 'error');
+    return;
+  }
+
+  const form = e.target;
+  const id = state.editingPaymentScheduleItemId;
+
+  const dueDate = form.elements['due_date'].value;
+  const totalAmount = Number(form.elements['total_amount'].value);
+
+  // Revenue Amount and Client Funds Amount are optional composition fields —
+  // an empty input means 0, not "missing".
+  const revenueAmountRaw     = form.elements['revenue_amount'].value.trim();
+  const clientFundsAmountRaw = form.elements['client_funds_amount'].value.trim();
+  const revenueAmount        = revenueAmountRaw === '' ? 0 : Number(revenueAmountRaw);
+  const clientFundsAmount    = clientFundsAmountRaw === '' ? 0 : Number(clientFundsAmountRaw);
+
+  if (!dueDate) {
+    toast('Due Date is required.', 'error');
+    return;
+  }
+  if (![totalAmount, revenueAmount, clientFundsAmount].every((n) => Number.isFinite(n) && n >= 0)) {
+    toast('Total, Revenue, and Client Funds amounts must be 0 or greater.', 'error');
+    return;
+  }
+  // Compare in integer cents to avoid float rounding false-negatives.
+  if (Math.round((revenueAmount + clientFundsAmount) * 100) !== Math.round(totalAmount * 100)) {
+    toast('Total Amount must equal Revenue Amount + Client Funds Amount.', 'error');
+    return;
+  }
+
+  // Client Funds Purpose only applies when Client Funds Amount > 0 — clear
+  // any stale value (e.g. left over from editing an item down to 0) rather
+  // than persisting a purpose for a $0 component.
+  const clientFundsPurpose = clientFundsAmount > 0
+    ? (form.elements['client_funds_purpose'].value.trim() || null)
+    : null;
+
+  if (clientFundsAmount > 0 && !clientFundsPurpose) {
+    toast('Client Funds Purpose is required when Client Funds Amount is greater than 0.', 'error');
+    return;
+  }
+
+  const payload = {
+    label: form.elements['label'].value.trim() || null,
+    due_date: dueDate,
+    total_amount: totalAmount,
+    revenue_amount: revenueAmount,
+    client_funds_amount: clientFundsAmount,
+    client_funds_purpose: clientFundsPurpose,
+    updated_at: new Date().toISOString(),
+  };
+
+  const btn = form.querySelector('[type="submit"]');
+  if (btn) btn.disabled = true;
+
+  let ok = false;
+  if (id) {
+    ok = !!(await updateProjectPaymentScheduleItem(id, payload));
+  } else {
+    payload.commercial_terms_id = terms.id;
+    payload.created_by = state.currentUser?.id || null;
+    payload.created_at = new Date().toISOString();
+    ok = !!(await createProjectPaymentScheduleItem(payload));
+  }
+
+  if (btn) btn.disabled = false;
+
+  if (ok) {
+    toast(id ? 'Payment updated.' : 'Payment added.', 'success');
+    closeModal();
+    state.editingPaymentScheduleItemId = null;
+    state.projectPaymentScheduleItems = await fetchProjectPaymentScheduleItems();
+    renderProjectDetails();
+  }
+}
+
+async function handleCancelPaymentScheduleItem(id) {
+  if (!isAdmin()) return;
+  const result = await cancelProjectPaymentScheduleItem(id);
+  if (result) {
+    toast('Payment marked as cancelled.', 'success');
+    state.projectPaymentScheduleItems = await fetchProjectPaymentScheduleItems();
+    renderProjectDetails();
+  }
+}
+
+async function handleRestorePaymentScheduleItem(id) {
+  if (!isAdmin()) return;
+  const result = await restoreProjectPaymentScheduleItem(id);
+  if (result) {
+    toast('Payment restored.', 'success');
+    state.projectPaymentScheduleItems = await fetchProjectPaymentScheduleItems();
+    renderProjectDetails();
+  }
+}
+
 function applyMemberDashboardLayout() {
   const dashboard = $('#view-dashboard');
   if (!dashboard) return;
@@ -13824,6 +14122,138 @@ function resetProjectDetailsFiltersForProject(projectId) {
   }
 }
 
+// Project Commercial Summary + Payment Schedule (Sprint Project Commercial B).
+// Admin-only — hidden entirely for Manager/Member. Contract Value comes from
+// project_commercial_terms; Scheduled/Revenue/Client Funds Value and Schedule
+// Variance are derived (never stored) from non-cancelled payment schedule
+// items, per the approved Commercial Summary design.
+function renderProjectCommercialSection(project) {
+  const wrap = $('#project-details-commercial');
+  if (!wrap) return;
+
+  if (!isAdmin()) {
+    wrap.classList.add('hidden');
+    return;
+  }
+  wrap.classList.remove('hidden');
+
+  const terms = state.projectCommercialTerms.find(
+    (ct) => Number(ct.project_id) === Number(project.id)
+  ) || null;
+
+  const emptyEl      = $('#project-commercial-empty');
+  const summaryEl    = $('#project-commercial-summary');
+  const scheduleCard = $('#project-payment-schedule-card');
+
+  if (!terms) {
+    emptyEl?.classList.remove('hidden');
+    summaryEl?.classList.add('hidden');
+    scheduleCard?.classList.add('hidden');
+    refreshIcons();
+    return;
+  }
+
+  emptyEl?.classList.add('hidden');
+  summaryEl?.classList.remove('hidden');
+  scheduleCard?.classList.remove('hidden');
+
+  const items = state.projectPaymentScheduleItems.filter(
+    (i) => Number(i.commercial_terms_id) === Number(terms.id)
+  );
+  const activeItems = items.filter((i) => !i.is_cancelled);
+
+  const currency = terms.currency || 'EGP';
+  const contractValue    = Number(terms.contract_value) || 0;
+  const scheduledValue   = activeItems.reduce((sum, i) => sum + (Number(i.total_amount) || 0), 0);
+  const revenueValue     = activeItems.reduce((sum, i) => sum + (Number(i.revenue_amount) || 0), 0);
+  const clientFundsValue = activeItems.reduce((sum, i) => sum + (Number(i.client_funds_amount) || 0), 0);
+  const variance = Math.round((scheduledValue - contractValue) * 100) / 100;
+
+  $('#commercial-contract-value').textContent     = fmtMoney(contractValue, currency);
+  $('#commercial-scheduled-value').textContent    = fmtMoney(scheduledValue, currency);
+  $('#commercial-revenue-value').textContent      = fmtMoney(revenueValue, currency);
+  $('#commercial-client-funds-value').textContent = fmtMoney(clientFundsValue, currency);
+
+  const varianceEl = $('#commercial-schedule-variance');
+  if (varianceEl) {
+    if (variance === 0) {
+      varianceEl.textContent = 'Fully scheduled';
+      varianceEl.className = 'font-semibold text-emerald-600';
+    } else if (variance < 0) {
+      varianceEl.textContent = `Unscheduled: ${fmtMoney(Math.abs(variance), currency)}`;
+      varianceEl.className = 'font-semibold text-amber-600';
+    } else {
+      varianceEl.textContent = `Over scheduled: ${fmtMoney(variance, currency)}`;
+      varianceEl.className = 'font-semibold text-rose-600';
+    }
+  }
+
+  const notesEl = $('#commercial-notes');
+  if (notesEl) {
+    if (terms.notes) {
+      notesEl.textContent = terms.notes;
+      notesEl.classList.remove('hidden');
+    } else {
+      notesEl.classList.add('hidden');
+    }
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+  const body = $('#payment-schedule-body');
+  const emptyScheduleEl = $('#payment-schedule-empty');
+
+  if (items.length === 0) {
+    if (body) body.innerHTML = '';
+    emptyScheduleEl?.classList.remove('hidden');
+    refreshIcons();
+    return;
+  }
+  emptyScheduleEl?.classList.add('hidden');
+
+  const sortedItems = [...items].sort((a, b) => (a.due_date || '').localeCompare(b.due_date || ''));
+
+  if (body) {
+    body.innerHTML = sortedItems.map((item) => {
+      const isCancelled = !!item.is_cancelled;
+      const isOverdue = !isCancelled && item.due_date && item.due_date < today;
+      const statusLabel = isCancelled ? 'Cancelled' : isOverdue ? 'Overdue' : 'Upcoming';
+      const statusClass = isCancelled
+        ? 'badge bg-gray-100 text-gray-500'
+        : isOverdue
+        ? 'badge bg-rose-50 text-rose-600'
+        : 'badge bg-emerald-50 text-emerald-600';
+
+      return `
+        <tr class="hover:bg-gray-50 transition ${isCancelled ? 'opacity-50' : ''}">
+          <td class="px-5 py-3.5 text-sm text-gray-900">${escapeHtml(item.label || '—')}</td>
+          <td class="px-5 py-3.5 text-sm text-gray-700">${fmtDate(item.due_date)}</td>
+          <td class="px-5 py-3.5 text-sm text-gray-900">${fmtMoney(item.total_amount, currency)}</td>
+          <td class="px-5 py-3.5 text-sm text-gray-700">${fmtMoney(item.revenue_amount, currency)}</td>
+          <td class="px-5 py-3.5 text-sm text-gray-700">${fmtMoney(item.client_funds_amount, currency)}</td>
+          <td class="px-5 py-3.5"><span class="${statusClass}">${statusLabel}</span></td>
+          <td class="px-5 py-3.5 text-right">
+            <div class="flex items-center justify-end gap-2">
+              <button type="button" data-action="edit-payment-item" data-id="${item.id}" class="text-gray-400 hover:text-indigo-600" title="Edit payment">
+                <i data-lucide="pencil" class="w-4 h-4"></i>
+              </button>
+              ${isCancelled
+                ? `<button type="button" data-action="restore-payment-item" data-id="${item.id}" class="text-gray-400 hover:text-emerald-600" title="Restore payment">
+                     <i data-lucide="rotate-ccw" class="w-4 h-4"></i>
+                   </button>`
+                : `<button type="button" data-action="cancel-payment-item" data-id="${item.id}" class="text-gray-400 hover:text-rose-600" title="Cancel payment">
+                     <i data-lucide="x-circle" class="w-4 h-4"></i>
+                   </button>`
+              }
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  refreshIcons();
+}
+
 function renderProjectDetails() {
   const project = state.projects.find(
     (p) => Number(p.id) === Number(state.selectedProjectId)
@@ -13899,6 +14329,8 @@ function renderProjectDetails() {
       refreshIcons();
     }
   }
+
+  renderProjectCommercialSection(project);
 
   const linkEl = $('#details-project-link');
 
@@ -16410,6 +16842,27 @@ if (action === 'convert-forecast-to-tx') {
   convertForecastToTransaction(Number(trigger.dataset.id));
   return;
 }
+
+if (action === 'open-commercial-terms-modal') {
+  openCommercialTermsModal();
+  return;
+}
+if (action === 'open-payment-item-modal') {
+  openPaymentItemModal();
+  return;
+}
+if (action === 'edit-payment-item') {
+  openPaymentItemModal(Number(trigger.dataset.id));
+  return;
+}
+if (action === 'cancel-payment-item') {
+  handleCancelPaymentScheduleItem(Number(trigger.dataset.id));
+  return;
+}
+if (action === 'restore-payment-item') {
+  handleRestorePaymentScheduleItem(Number(trigger.dataset.id));
+  return;
+}
 });
 
   // Forms
@@ -16476,6 +16929,9 @@ if (action === 'convert-forecast-to-tx') {
   $('#finance-transaction-form')?.addEventListener('submit', handleFinanceTransactionSubmit);
   $('#split-receipt-form')?.addEventListener('submit', handleSplitReceiptSubmit);
   $('#finance-forecast-form')?.addEventListener('submit', handleFinanceForecastSubmit);
+  $('#commercial-terms-form')?.addEventListener('submit', handleCommercialTermsSubmit);
+  $('#payment-item-form')?.addEventListener('submit', handlePaymentItemSubmit);
+  $('#payment-item-form')?.elements['client_funds_amount']?.addEventListener('input', updateClientFundsPurposeRequiredIndicator);
   $('#confirm-delete-btn').addEventListener('click', confirmDelete);
 
   // CRM Leads filters
@@ -17402,7 +17858,7 @@ renderStaticButtonMounts();
     }
 
     await cleanupOldNotifications();
-    const [notifications, financeAccounts, financeCategories, financeTransactions, financeForecasts, financeSettings, financeFixedCosts, financeChartOfAccounts] = await Promise.all([
+    const [notifications, financeAccounts, financeCategories, financeTransactions, financeForecasts, financeSettings, financeFixedCosts, financeChartOfAccounts, projectCommercialTerms, projectPaymentScheduleItems] = await Promise.all([
       fetchNotifications(),
       fetchFinanceAccounts(),
       fetchFinanceCategories(),
@@ -17411,6 +17867,8 @@ renderStaticButtonMounts();
       fetchFinanceSettings(),
       fetchFinanceFixedCosts(),
       fetchFinanceChartOfAccounts(),
+      fetchProjectCommercialTerms(),
+      fetchProjectPaymentScheduleItems(),
     ]);
     state.notifications       = notifications;
     state.financeAccounts     = financeAccounts;
@@ -17420,6 +17878,8 @@ renderStaticButtonMounts();
     state.financeSettings     = financeSettings;
     state.financeFixedCosts   = financeFixedCosts;
     state.financeChartOfAccounts = financeChartOfAccounts;
+    state.projectCommercialTerms = projectCommercialTerms;
+    state.projectPaymentScheduleItems = projectPaymentScheduleItems;
     syncAccountingJournal(); // Sprint 4.5B — initial load: post every active transaction once
 
   } catch (err) {

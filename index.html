@@ -1233,6 +1233,97 @@
     </div>
   </div>
 
+  <!-- ============ PROJECT COMMERCIAL (Admin-only, Sprint Project Commercial B) ============ -->
+  <div id="project-details-commercial" class="hidden mb-6 space-y-6">
+
+    <!-- Commercial Summary Card -->
+    <div id="project-commercial-summary-card" class="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm">
+      <div id="project-commercial-empty" class="hidden text-center py-10">
+        <div class="w-12 h-12 mx-auto rounded-full bg-gray-100 flex items-center justify-center mb-3">
+          <i data-lucide="file-text" class="w-6 h-6 text-gray-400"></i>
+        </div>
+        <p class="text-sm font-medium text-gray-900">Commercial terms have not been set for this project.</p>
+        <button type="button" data-action="open-commercial-terms-modal" class="mt-4 inline-flex items-center gap-2 h-9 px-4 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg shadow-sm">
+          <i data-lucide="plus" class="w-4 h-4"></i> Set Commercial Terms
+        </button>
+      </div>
+
+      <div id="project-commercial-summary" class="hidden">
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <h3 class="text-lg font-semibold text-gray-900">Project Commercial Summary</h3>
+            <p class="text-sm text-gray-500">Admin-only. Contract terms and derived totals for this project.</p>
+          </div>
+          <button type="button" data-action="open-commercial-terms-modal" class="h-9 px-3 inline-flex items-center gap-1.5 text-sm font-medium text-gray-700 border border-gray-200 rounded-lg hover:bg-gray-50">
+            <i data-lucide="pencil" class="w-3.5 h-3.5"></i> Edit Terms
+          </button>
+        </div>
+
+        <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+          <div class="detail-card">
+            <p class="text-xs text-gray-500">Contract Value</p>
+            <p id="commercial-contract-value" class="font-semibold text-gray-900">—</p>
+          </div>
+          <div class="detail-card">
+            <p class="text-xs text-gray-500">Scheduled Value</p>
+            <p id="commercial-scheduled-value" class="font-semibold text-gray-900">—</p>
+          </div>
+          <div class="detail-card">
+            <p class="text-xs text-gray-500">Revenue Value</p>
+            <p id="commercial-revenue-value" class="font-semibold text-gray-900">—</p>
+          </div>
+          <div class="detail-card">
+            <p class="text-xs text-gray-500">Client Funds Value</p>
+            <p id="commercial-client-funds-value" class="font-semibold text-gray-900">—</p>
+          </div>
+          <div class="detail-card">
+            <p class="text-xs text-gray-500">Schedule Variance</p>
+            <p id="commercial-schedule-variance" class="font-semibold text-gray-900">—</p>
+          </div>
+        </div>
+
+        <p id="commercial-notes" class="hidden text-sm text-gray-500 mt-4"></p>
+      </div>
+    </div>
+
+    <!-- Payment Schedule Card -->
+    <div id="project-payment-schedule-card" class="hidden bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
+      <div class="flex items-center justify-between p-5 border-b border-gray-100">
+        <div>
+          <h2 class="font-semibold text-gray-900">Payment Schedule</h2>
+          <p class="text-sm text-gray-500">Installments linked to this project's commercial terms.</p>
+        </div>
+        <button type="button" data-action="open-payment-item-modal" class="btn-primary">
+          + Add Payment
+        </button>
+      </div>
+
+      <div class="table-scroll-container">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-50 border-b border-gray-100">
+            <tr class="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <th class="px-5 py-3">Label</th>
+              <th class="px-5 py-3">Due Date</th>
+              <th class="px-5 py-3">Total</th>
+              <th class="px-5 py-3">Revenue</th>
+              <th class="px-5 py-3">Client Funds</th>
+              <th class="px-5 py-3">Status</th>
+              <th class="px-5 py-3 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="payment-schedule-body" class="divide-y divide-gray-100">
+            <!-- Filled by JS -->
+          </tbody>
+        </table>
+      </div>
+
+      <div id="payment-schedule-empty" class="hidden px-5 py-14 text-center">
+        <p class="text-sm font-medium text-gray-900">No payment schedule items yet</p>
+        <p class="text-xs text-gray-500 mt-1">Add a payment item to start building this project's schedule.</p>
+      </div>
+    </div>
+  </div>
+
 <div class="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm mb-6">
   <div class="flex items-center justify-between mb-3">
     <div>
@@ -2953,6 +3044,103 @@
           <button type="submit" class="h-9 px-4 inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg shadow-sm">
             <i data-lucide="check" class="w-4 h-4"></i>
             Create project
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ============ COMMERCIAL TERMS MODAL (Sprint Project Commercial B) ============ -->
+  <div id="commercial-terms-modal" class="modal hidden">
+    <div class="modal-overlay" data-action="close-modal"></div>
+    <div class="modal-panel">
+      <div class="px-6 py-5 border-b border-gray-100 flex items-center justify-between">
+        <h3 id="commercial-terms-modal-title" class="text-lg font-semibold text-gray-900">Set Commercial Terms</h3>
+        <button data-action="close-modal" class="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center">
+          <i data-lucide="x" class="w-4 h-4 text-gray-500"></i>
+        </button>
+      </div>
+      <form id="commercial-terms-form" class="px-6 py-5 space-y-4">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="form-label">Contract Value <span class="text-rose-500">*</span></label>
+            <input name="contract_value" type="number" min="0" step="0.01" required class="form-input" placeholder="0.00" />
+          </div>
+          <div>
+            <label class="form-label">Currency <span class="text-rose-500">*</span></label>
+            <select name="currency" required class="form-input">
+              <option value="EGP">EGP</option>
+              <option value="USD">USD</option>
+              <option value="EUR">EUR</option>
+              <option value="SAR">SAR</option>
+              <option value="AED">AED</option>
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <label class="form-label">Notes</label>
+          <textarea name="notes" rows="3" class="form-input resize-none" placeholder="Optional notes"></textarea>
+        </div>
+
+        <div class="flex items-center justify-end gap-2 pt-4 border-t border-gray-100">
+          <button type="button" data-action="close-modal" class="h-9 px-4 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50">Cancel</button>
+          <button type="submit" class="h-9 px-4 inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg shadow-sm">
+            <i data-lucide="check" class="w-4 h-4"></i> Save Terms
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ============ PAYMENT SCHEDULE ITEM MODAL (Sprint Project Commercial B) ============ -->
+  <div id="payment-item-modal" class="modal hidden">
+    <div class="modal-overlay" data-action="close-modal"></div>
+    <div class="modal-panel">
+      <div class="px-6 py-5 border-b border-gray-100 flex items-center justify-between">
+        <h3 id="payment-item-modal-title" class="text-lg font-semibold text-gray-900">Add Payment</h3>
+        <button data-action="close-modal" class="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center">
+          <i data-lucide="x" class="w-4 h-4 text-gray-500"></i>
+        </button>
+      </div>
+      <form id="payment-item-form" class="px-6 py-5 space-y-4">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="form-label">Label</label>
+            <input name="label" type="text" class="form-input" placeholder="e.g. Milestone 1" />
+          </div>
+          <div>
+            <label class="form-label">Due Date <span class="text-rose-500">*</span></label>
+            <input name="due_date" type="date" required class="form-input" />
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div>
+            <label class="form-label">Total Amount <span class="text-rose-500">*</span></label>
+            <input name="total_amount" type="number" min="0" step="0.01" required class="form-input" placeholder="0.00" />
+          </div>
+          <div>
+            <label class="form-label">Revenue Amount</label>
+            <input name="revenue_amount" type="number" min="0" step="0.01" class="form-input" placeholder="0.00" />
+          </div>
+          <div>
+            <label class="form-label">Client Funds Amount</label>
+            <input name="client_funds_amount" type="number" min="0" step="0.01" class="form-input" placeholder="0.00" />
+          </div>
+        </div>
+
+        <p class="text-xs text-gray-500">Revenue Amount and Client Funds Amount are optional composition components (each defaults to 0) — Total Amount must equal Revenue Amount + Client Funds Amount.</p>
+
+        <div>
+          <label class="form-label" id="client-funds-purpose-label">Client Funds Purpose<span id="client-funds-purpose-required-indicator" class="text-rose-500 hidden"> *</span></label>
+          <input name="client_funds_purpose" type="text" class="form-input" placeholder="e.g. Ad spend held on client's behalf" />
+        </div>
+
+        <div class="flex items-center justify-end gap-2 pt-4 border-t border-gray-100">
+          <button type="button" data-action="close-modal" class="h-9 px-4 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50">Cancel</button>
+          <button type="submit" class="h-9 px-4 inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg shadow-sm">
+            <i data-lucide="check" class="w-4 h-4"></i> Save Payment
           </button>
         </div>
       </form>
