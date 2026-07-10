@@ -26,6 +26,7 @@ const state = {
   editingTaskId: null,
   editingProjectId: null,
   editingPaymentScheduleItemId: null,
+  reviewingPaymentScheduleItemId: null, // Sprint Project Commercial C2 — open Review Differences modal target
   filters: {
     projects: {
       status: 'all',
@@ -1241,6 +1242,57 @@ async function cancelProjectPaymentScheduleItem(id) {
 
 async function restoreProjectPaymentScheduleItem(id) {
   return updateProjectPaymentScheduleItem(id, { is_cancelled: false, updated_at: new Date().toISOString() });
+}
+
+// ---------- Forecast Schedule Linkage Data Layer (Sprint Project Commercial C2) ----------
+// Generates/synchronizes Finance Forecasts from Payment Schedule Items, on
+// top of the C1 linkage columns (payment_schedule_item_id, forecast_component,
+// generated_from_schedule, source_snapshot_*, generated_by). Deliberately
+// separate from createFinanceForecast()/updateFinanceForecast() (the manual
+// Forecast modal's data path), which remain untouched — see the C2
+// architecture amendment report for the reasoning.
+
+// One multi-row insert per call so a Mixed Payment Item's revenue + client
+// funds components are created atomically together (both succeed or neither
+// does), rather than as two independent single-row inserts.
+async function createFinanceForecastsBatch(payloads) {
+  if (!isAdmin()) return null;
+  if (!payloads || payloads.length === 0) return [];
+  const { data, error } = await supabaseClient.from('finance_forecasts').insert(payloads).select();
+  if (error) { console.error('createFinanceForecastsBatch', error); toast(error.message || 'Failed to generate forecast(s)', 'error'); return null; }
+  await Promise.all((data || []).map(d => insertFinanceAuditLog({ entityType: 'forecast', entityId: d.id, action: 'generated', newData: d })));
+  return data;
+}
+
+// Narrow write path for syncing a generated Forecast to its Payment Schedule
+// Item — touches only amount/expected_date/source_snapshot_* fields, never
+// probability, status, or any manually-owned field. Refuses to write to a
+// Received or transaction-linked Forecast (immutable from schedule), a
+// deleted Forecast, or a Forecast that was never generated from a schedule
+// in the first place. auditAction lets the caller distinguish a soft
+// "Update Forecast from Schedule" (Source Changed) from an explicit
+// "Reset Forecast to Schedule" (Source & Forecast Changed) in the audit log,
+// even though the underlying write is identical.
+async function updateGeneratedForecastFromSchedule(forecastId, item, component, auditAction) {
+  if (!isAdmin()) return null;
+  const fc = state.financeForecasts.find(f => Number(f.id) === forecastId);
+  if (!fc || !fc.generated_from_schedule || fc.is_deleted || fc.status === 'received' || fc.linked_transaction_id) return null;
+
+  const amount = getComponentAmount(item, component);
+  const payload = {
+    amount,
+    expected_date:              item.due_date,
+    source_snapshot_amount:     amount,
+    source_snapshot_due_date:   item.due_date,
+    // The snapshot timestamp records the Payment Schedule Item's own version
+    // time, not the moment of this sync — Forecast.updated_at already covers
+    // "when was this Forecast last synchronized/modified".
+    source_snapshot_updated_at: item.updated_at,
+    updated_at:                 new Date().toISOString(),
+  };
+  const result = await updateFinanceForecast(forecastId, payload);
+  if (result) await insertFinanceAuditLog({ entityType: 'forecast', entityId: forecastId, action: auditAction, oldData: fc, newData: result });
+  return result;
 }
 
 // ---------- CRM Leads Data Layer ----------
@@ -14122,6 +14174,158 @@ function resetProjectDetailsFiltersForProject(projectId) {
   }
 }
 
+// ---------- Forecast Schedule Linkage — State Model (Sprint Project Commercial C2) ----------
+// See the C2 architecture amendment report for the full state model and the
+// reasoning behind these rules. All functions in this section are pure
+// (read state.financeForecasts / state.projectPaymentScheduleItems / CRM
+// state only, no DB writes) so they can be reused by both the Payment
+// Schedule table badges and the Review Differences modal.
+
+// Client resolution mirrors the CRM Origin chain used elsewhere in Project
+// Details (Project -> Deal -> Deal.client_id -> crm_clients — see the
+// "CRM Origin" block in renderProjectDetails). A standalone Project (no
+// deal_id) or a Deal whose client_id can't be resolved to a live crm_clients
+// row both fall back to the Project's own text `client` field rather than
+// guessing at a client_id.
+function resolveGeneratedForecastClient(project) {
+  if (project.deal_id != null) {
+    const deal = state.crmDeals.find((d) => Number(d.id) === Number(project.deal_id));
+    if (deal && deal.client_id != null) {
+      const client = state.crmClients.find((c) => Number(c.id) === Number(deal.client_id));
+      if (client) {
+        return { client_id: client.id, client_name: client.client_name || project.client || null };
+      }
+    }
+  }
+  return { client_id: null, client_name: project.client || null };
+}
+
+const FORECAST_COMPONENT_TO_TYPE = { revenue: 'expected_income', client_funds: 'client_funds' };
+const FORECAST_COMPONENT_LABEL   = { revenue: 'Revenue', client_funds: 'Client Funds' };
+
+// A component is eligible for generation iff the Payment Schedule Item
+// actually allocates a non-zero amount to it — a Payment Item with only a
+// revenue_amount never gets a client_funds Forecast, and vice versa.
+function getEligibleForecastComponents(item) {
+  const components = [];
+  if (Number(item.revenue_amount) > 0) components.push('revenue');
+  if (Number(item.client_funds_amount) > 0) components.push('client_funds');
+  return components;
+}
+
+function getComponentAmount(item, component) {
+  return component === 'revenue' ? Number(item.revenue_amount) || 0 : Number(item.client_funds_amount) || 0;
+}
+
+function findActiveGeneratedForecast(item, component) {
+  return state.financeForecasts.find((f) =>
+    Number(f.payment_schedule_item_id) === Number(item.id) &&
+    f.forecast_component === component &&
+    f.generated_from_schedule === true &&
+    !f.is_deleted &&
+    f.status !== 'cancelled'
+  ) || null;
+}
+
+function buildGeneratedForecastPayload(project, item, component, terms) {
+  const amount = getComponentAmount(item, component);
+  const client = resolveGeneratedForecastClient(project);
+  const now = new Date().toISOString();
+  return {
+    forecast_date:               now.slice(0, 10),
+    expected_date:                item.due_date,
+    forecast_type:                FORECAST_COMPONENT_TO_TYPE[component],
+    client_id:                    client.client_id,
+    client_name:                  client.client_name,
+    project_name:                  project.project_name || null,
+    amount,
+    currency:                     terms.currency || 'EGP',
+    probability:                  100,
+    status:                       'expected',
+    description:                  `Generated from Payment Schedule: ${item.label || `Payment #${item.id}`} (${FORECAST_COMPONENT_LABEL[component]})`,
+    payment_schedule_item_id:     item.id,
+    forecast_component:           component,
+    generated_from_schedule:      true,
+    source_snapshot_amount:       amount,
+    source_snapshot_due_date:     item.due_date,
+    source_snapshot_updated_at:   item.updated_at,
+    generated_by:                  state.currentUser?.id || null,
+    created_by:                    state.currentUser?.id || null,
+    created_at:                    now,
+    updated_at:                    now,
+  };
+}
+
+// Per-component drift detection against the Forecast's own snapshot. Amounts
+// compare in integer cents to avoid float rounding false-positives; dates
+// compare as YYYY-MM-DD strings.
+function computeComponentForecastState(item, component) {
+  const forecast = findActiveGeneratedForecast(item, component);
+  if (!forecast) {
+    return { component, forecast: null, generated: false, sourceDrift: false, forecastDrift: false, adjusted: false, immutable: false };
+  }
+
+  const amtEq  = (a, b) => Math.round((Number(a) || 0) * 100) === Math.round((Number(b) || 0) * 100);
+  const dateEq = (a, b) => (a ? String(a).slice(0, 10) : null) === (b ? String(b).slice(0, 10) : null);
+
+  const liveAmt = getComponentAmount(item, component);
+  const liveDue = item.due_date;
+  const snapAmt = forecast.source_snapshot_amount;
+  const snapDue = forecast.source_snapshot_due_date;
+
+  const sourceDrift   = !amtEq(liveAmt, snapAmt) || !dateEq(liveDue, snapDue);
+  const forecastDrift = !amtEq(forecast.amount, snapAmt) || !dateEq(forecast.expected_date, snapDue);
+  const immutable = forecast.status === 'received' || forecast.linked_transaction_id != null;
+
+  // Forecast-only drift (source still matches its snapshot) is never treated
+  // as an error — it's an intentional operational adjustment, surfaced only
+  // as a secondary "Adjusted" indicator, never as Review Needed.
+  return { component, forecast, generated: true, sourceDrift, forecastDrift, adjusted: !sourceDrift && forecastDrift, immutable };
+}
+
+// Item-level roll-up. Precedence: Source Cancelled > Review Needed >
+// Generated > Partially Generated > Not Generated. Determined from
+// component completeness and source drift ONLY — a solo Forecast-side
+// adjustment never demotes/blocks Generated, it only sets the `adjusted`
+// flag alongside whatever state completeness already produced (e.g. a Mixed
+// item with one adjusted-but-generated component and one ungenerated
+// component is "Partially Generated + Adjusted", not "Generated + Adjusted").
+function computePaymentItemForecastState(item) {
+  const components = getEligibleForecastComponents(item);
+  const componentStates = components.map((c) => computeComponentForecastState(item, c));
+  const hasActiveGenerated = componentStates.some((cs) => cs.forecast != null);
+
+  if (item.is_cancelled) {
+    return {
+      state: hasActiveGenerated ? 'source_cancelled' : 'not_applicable',
+      reason: null,
+      adjusted: false,
+      components: componentStates,
+    };
+  }
+
+  const anySourceDrift  = componentStates.some((cs) => cs.sourceDrift);
+  const generatedCount  = componentStates.filter((cs) => cs.generated).length;
+  const adjusted        = componentStates.some((cs) => cs.adjusted);
+
+  let state;
+  let reason = null;
+  if (anySourceDrift) {
+    state = 'review_needed';
+    reason = componentStates.some((cs) => cs.sourceDrift && cs.forecastDrift)
+      ? 'source_and_forecast_changed'
+      : 'source_changed';
+  } else if (generatedCount === components.length && components.length > 0) {
+    state = 'generated';
+  } else if (generatedCount > 0) {
+    state = 'partially_generated';
+  } else {
+    state = 'not_generated';
+  }
+
+  return { state, reason, adjusted, components: componentStates };
+}
+
 // Project Commercial Summary + Payment Schedule (Sprint Project Commercial B).
 // Admin-only — hidden entirely for Manager/Member. Contract Value comes from
 // project_commercial_terms; Scheduled/Revenue/Client Funds Value and Schedule
@@ -14223,6 +14427,10 @@ function renderProjectCommercialSection(project) {
         ? 'badge bg-rose-50 text-rose-600'
         : 'badge bg-emerald-50 text-emerald-600';
 
+      const fcState = computePaymentItemForecastState(item);
+      const canGenerate = !isCancelled && fcState.components.length > 0 && (fcState.state === 'not_generated' || fcState.state === 'partially_generated');
+      const canReview   = fcState.components.some((cs) => cs.forecast != null);
+
       return `
         <tr class="hover:bg-gray-50 transition ${isCancelled ? 'opacity-50' : ''}">
           <td class="px-5 py-3.5 text-sm text-gray-900">${escapeHtml(item.label || '—')}</td>
@@ -14231,8 +14439,21 @@ function renderProjectCommercialSection(project) {
           <td class="px-5 py-3.5 text-sm text-gray-700">${fmtMoney(item.revenue_amount, currency)}</td>
           <td class="px-5 py-3.5 text-sm text-gray-700">${fmtMoney(item.client_funds_amount, currency)}</td>
           <td class="px-5 py-3.5"><span class="${statusClass}">${statusLabel}</span></td>
+          <td class="px-5 py-3.5">${renderPaymentItemForecastBadge(fcState)}</td>
           <td class="px-5 py-3.5 text-right">
             <div class="flex items-center justify-end gap-2">
+              ${canGenerate
+                ? `<button type="button" data-action="generate-payment-item-forecasts" data-id="${item.id}" class="text-gray-400 hover:text-indigo-600" title="Generate Forecast from Schedule">
+                     <i data-lucide="sparkles" class="w-4 h-4"></i>
+                   </button>`
+                : ''
+              }
+              ${canReview
+                ? `<button type="button" data-action="open-forecast-schedule-review" data-id="${item.id}" class="text-gray-400 hover:text-indigo-600" title="Review Forecast vs Schedule">
+                     <i data-lucide="git-compare" class="w-4 h-4"></i>
+                   </button>`
+                : ''
+              }
               <button type="button" data-action="edit-payment-item" data-id="${item.id}" class="text-gray-400 hover:text-indigo-600" title="Edit payment">
                 <i data-lucide="pencil" class="w-4 h-4"></i>
               </button>
@@ -14252,6 +14473,208 @@ function renderProjectCommercialSection(project) {
   }
 
   refreshIcons();
+}
+
+// Renders the Forecast-state badge (+ secondary Adjusted indicator) shown in
+// the Payment Schedule table's Forecast column and computed from
+// computePaymentItemForecastState().
+function renderPaymentItemForecastBadge(fcState) {
+  if (fcState.state === 'not_applicable') return '<span class="text-xs text-gray-300">—</span>';
+
+  const STATE_META = {
+    not_generated:       { label: 'Not Generated',       cls: 'badge bg-gray-100 text-gray-500' },
+    partially_generated: { label: 'Partially Generated', cls: 'badge bg-amber-50 text-amber-600' },
+    generated:            { label: 'Generated',            cls: 'badge bg-emerald-50 text-emerald-600' },
+    review_needed:        { label: 'Review Needed',        cls: 'badge bg-rose-50 text-rose-600' },
+    source_cancelled:     { label: 'Source Cancelled',     cls: 'badge bg-gray-100 text-gray-400' },
+  };
+  const REASON_LABEL = {
+    source_changed: 'Source Changed',
+    source_and_forecast_changed: 'Source & Forecast Changed',
+  };
+
+  const meta = STATE_META[fcState.state];
+  const reasonSuffix = fcState.reason ? ` · ${REASON_LABEL[fcState.reason]}` : '';
+  const adjustedTag = fcState.adjusted
+    ? ' <span class="badge bg-indigo-50 text-indigo-600">Adjusted</span>'
+    : '';
+  return `<span class="${meta.cls}">${meta.label}${reasonSuffix}</span>${adjustedTag}`;
+}
+
+// ---------- Forecast Schedule Linkage — Actions (Sprint Project Commercial C2) ----------
+
+async function handleGeneratePaymentItemForecasts(itemId) {
+  if (!isAdmin()) return;
+  const item = state.projectPaymentScheduleItems.find((i) => Number(i.id) === itemId);
+  if (!item || item.is_cancelled) return;
+  const project = state.projects.find((p) => Number(p.id) === Number(state.selectedProjectId));
+  const terms = project ? state.projectCommercialTerms.find((ct) => Number(ct.id) === Number(item.commercial_terms_id)) : null;
+  if (!project || !terms) return;
+
+  const missing = getEligibleForecastComponents(item).filter((c) => !findActiveGeneratedForecast(item, c));
+  if (missing.length === 0) {
+    toast('All eligible components are already generated for this payment.', 'error');
+    return;
+  }
+
+  const payloads = missing.map((c) => buildGeneratedForecastPayload(project, item, c, terms));
+  const result = await createFinanceForecastsBatch(payloads);
+  if (result) {
+    toast(`Generated ${result.length} forecast${result.length === 1 ? '' : 's'}.`, 'success');
+    state.financeForecasts = await fetchFinanceForecasts();
+    renderProjectDetails();
+  }
+}
+
+// Creation-only, project-scoped. Skips already-generated components and
+// cancelled Payment Items, continues past per-item failures, and never
+// touches an existing Forecast row (no update/resolve/cancel/restore calls
+// anywhere in this function).
+async function handleGenerateAllEligibleForecasts() {
+  if (!isAdmin()) return;
+  const project = state.projects.find((p) => Number(p.id) === Number(state.selectedProjectId));
+  if (!project) return;
+  const terms = state.projectCommercialTerms.find((ct) => Number(ct.project_id) === Number(project.id));
+  if (!terms) return;
+
+  const items = state.projectPaymentScheduleItems.filter(
+    (i) => Number(i.commercial_terms_id) === Number(terms.id) && !i.is_cancelled
+  );
+
+  let createdCount = 0;
+  let itemsTouched = 0;
+  let failedCount = 0;
+
+  for (const item of items) {
+    const missing = getEligibleForecastComponents(item).filter((c) => !findActiveGeneratedForecast(item, c));
+    if (missing.length === 0) continue;
+    const payloads = missing.map((c) => buildGeneratedForecastPayload(project, item, c, terms));
+    const result = await createFinanceForecastsBatch(payloads);
+    if (result) {
+      createdCount += result.length;
+      itemsTouched += 1;
+    } else {
+      failedCount += 1;
+    }
+  }
+
+  if (createdCount === 0 && failedCount === 0) {
+    toast('No eligible payments to generate — everything is already generated.', 'error');
+    return;
+  }
+
+  state.financeForecasts = await fetchFinanceForecasts();
+  renderProjectDetails();
+  toast(
+    failedCount > 0
+      ? `Generated ${createdCount} forecast(s) across ${itemsTouched} item(s). ${failedCount} item(s) failed.`
+      : `Generated ${createdCount} forecast(s) across ${itemsTouched} item(s).`,
+    failedCount > 0 ? 'error' : 'success'
+  );
+}
+
+function openForecastScheduleReviewModal(itemId) {
+  if (!isAdmin()) return;
+  const item = state.projectPaymentScheduleItems.find((i) => Number(i.id) === itemId);
+  if (!item) return;
+  const terms = state.projectCommercialTerms.find((ct) => Number(ct.id) === Number(item.commercial_terms_id));
+  if (!terms) return;
+
+  state.reviewingPaymentScheduleItemId = itemId;
+
+  const titleEl = $('#forecast-schedule-review-title');
+  if (titleEl) titleEl.textContent = `Review — ${item.label || `Payment #${item.id}`}`;
+
+  const currency = terms.currency || 'EGP';
+  const componentStates = getEligibleForecastComponents(item).map((c) => computeComponentForecastState(item, c));
+
+  const bodyEl = $('#forecast-schedule-review-body');
+  if (bodyEl) {
+    bodyEl.innerHTML = componentStates.map((cs) => renderForecastReviewComponentCard(item, cs, currency)).join('');
+  }
+
+  openModal('forecast-schedule-review-modal');
+  refreshIcons();
+}
+
+function renderForecastReviewComponentCard(item, cs, currency) {
+  const label = FORECAST_COMPONENT_LABEL[cs.component];
+
+  if (!cs.forecast) {
+    return `
+      <div class="border border-gray-200 rounded-xl p-4">
+        <p class="font-semibold text-gray-900 mb-1">${label}</p>
+        <p class="text-sm text-gray-500">Not generated yet.</p>
+      </div>`;
+  }
+
+  const fc = cs.forecast;
+  const reasonLabel = cs.sourceDrift
+    ? (cs.forecastDrift ? 'Source & Forecast Changed' : 'Source Changed')
+    : (cs.adjusted ? 'Adjusted' : 'In Sync');
+  const reasonClass = cs.sourceDrift
+    ? 'badge bg-rose-50 text-rose-600'
+    : cs.adjusted
+    ? 'badge bg-indigo-50 text-indigo-600'
+    : 'badge bg-emerald-50 text-emerald-600';
+
+  const liveAmt = getComponentAmount(item, cs.component);
+
+  let actionHtml = '';
+  if (cs.immutable) {
+    actionHtml = `<p class="text-xs text-gray-400 mt-3">Received / linked to a transaction — immutable from schedule.</p>`;
+  } else if (cs.sourceDrift && !cs.forecastDrift) {
+    actionHtml = `
+      <button type="button" data-action="update-forecast-from-schedule" data-id="${fc.id}"
+        class="mt-3 h-8 px-3 inline-flex items-center gap-1.5 text-xs font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg">
+        <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Update Forecast from Schedule
+      </button>`;
+  } else if (cs.sourceDrift && cs.forecastDrift) {
+    actionHtml = `
+      <div data-reset-zone="${fc.id}">
+        <button type="button" data-action="request-reset-forecast-from-schedule" data-id="${fc.id}"
+          class="mt-3 h-8 px-3 inline-flex items-center gap-1.5 text-xs font-medium text-white bg-rose-600 hover:bg-rose-700 rounded-lg">
+          <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i> Reset Forecast to Schedule
+        </button>
+      </div>`;
+  } else if (cs.adjusted) {
+    actionHtml = `<p class="text-xs text-indigo-500 mt-3">This Forecast was manually adjusted and no longer matches its snapshot. This is expected — no action needed.</p>`;
+  }
+
+  return `
+    <div class="border border-gray-200 rounded-xl p-4">
+      <div class="flex items-center justify-between">
+        <p class="font-semibold text-gray-900">${label}</p>
+        <span class="${reasonClass}">${reasonLabel}</span>
+      </div>
+      <table class="w-full text-xs mt-3">
+        <thead>
+          <tr class="text-left text-gray-400 uppercase tracking-wide">
+            <th class="py-1 font-medium">—</th>
+            <th class="py-1 font-medium text-right">Amount</th>
+            <th class="py-1 font-medium text-right">Date</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-100">
+          <tr>
+            <td class="py-1.5 text-gray-500">Snapshot</td>
+            <td class="py-1.5 text-right">${fmtMoney(fc.source_snapshot_amount, currency)}</td>
+            <td class="py-1.5 text-right">${fmtDate(fc.source_snapshot_due_date)}</td>
+          </tr>
+          <tr>
+            <td class="py-1.5 text-gray-500">Live Schedule</td>
+            <td class="py-1.5 text-right ${cs.sourceDrift ? 'text-rose-600 font-semibold' : ''}">${fmtMoney(liveAmt, currency)}</td>
+            <td class="py-1.5 text-right ${cs.sourceDrift ? 'text-rose-600 font-semibold' : ''}">${fmtDate(item.due_date)}</td>
+          </tr>
+          <tr>
+            <td class="py-1.5 text-gray-500">Current Forecast</td>
+            <td class="py-1.5 text-right ${cs.forecastDrift ? 'text-indigo-600 font-semibold' : ''}">${fmtMoney(fc.amount, currency)}</td>
+            <td class="py-1.5 text-right ${cs.forecastDrift ? 'text-indigo-600 font-semibold' : ''}">${fmtDate(fc.expected_date)}</td>
+          </tr>
+        </tbody>
+      </table>
+      ${actionHtml}
+    </div>`;
 }
 
 function renderProjectDetails() {
@@ -16861,6 +17284,70 @@ if (action === 'cancel-payment-item') {
 }
 if (action === 'restore-payment-item') {
   handleRestorePaymentScheduleItem(Number(trigger.dataset.id));
+  return;
+}
+
+if (action === 'generate-payment-item-forecasts') {
+  handleGeneratePaymentItemForecasts(Number(trigger.dataset.id));
+  return;
+}
+if (action === 'generate-all-eligible-forecasts') {
+  handleGenerateAllEligibleForecasts();
+  return;
+}
+if (action === 'open-forecast-schedule-review') {
+  openForecastScheduleReviewModal(Number(trigger.dataset.id));
+  return;
+}
+if (action === 'update-forecast-from-schedule') {
+  const id = Number(trigger.dataset.id);
+  (async () => {
+    const fc = state.financeForecasts.find((f) => Number(f.id) === id);
+    const item = fc ? state.projectPaymentScheduleItems.find((i) => Number(i.id) === Number(fc.payment_schedule_item_id)) : null;
+    if (!fc || !item) return;
+    const result = await updateGeneratedForecastFromSchedule(id, item, fc.forecast_component, 'updated_from_schedule');
+    if (result) {
+      toast('Forecast updated from schedule.', 'success');
+      state.financeForecasts = await fetchFinanceForecasts();
+      renderProjectDetails();
+      closeModal();
+    }
+  })();
+  return;
+}
+if (action === 'request-reset-forecast-from-schedule') {
+  const id = Number(trigger.dataset.id);
+  const zone = document.querySelector(`[data-reset-zone="${id}"]`);
+  if (zone) {
+    zone.innerHTML = `
+      <div class="mt-3 p-3 bg-rose-50 border border-rose-200 rounded-lg">
+        <p class="text-xs text-rose-700 mb-2">This will discard the manual adjustment and overwrite the Forecast's amount and date with the current Payment Schedule values. This cannot be undone.</p>
+        <div class="flex gap-2">
+          <button type="button" data-action="confirm-reset-forecast-from-schedule" data-id="${id}" class="h-7 px-3 text-xs font-medium text-white bg-rose-600 hover:bg-rose-700 rounded-lg">Confirm Reset</button>
+          <button type="button" data-action="cancel-reset-forecast-from-schedule" class="h-7 px-3 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50">Cancel</button>
+        </div>
+      </div>`;
+  }
+  return;
+}
+if (action === 'cancel-reset-forecast-from-schedule') {
+  if (state.reviewingPaymentScheduleItemId != null) openForecastScheduleReviewModal(state.reviewingPaymentScheduleItemId);
+  return;
+}
+if (action === 'confirm-reset-forecast-from-schedule') {
+  const id = Number(trigger.dataset.id);
+  (async () => {
+    const fc = state.financeForecasts.find((f) => Number(f.id) === id);
+    const item = fc ? state.projectPaymentScheduleItems.find((i) => Number(i.id) === Number(fc.payment_schedule_item_id)) : null;
+    if (!fc || !item) return;
+    const result = await updateGeneratedForecastFromSchedule(id, item, fc.forecast_component, 'reset_to_schedule');
+    if (result) {
+      toast('Forecast reset to schedule.', 'success');
+      state.financeForecasts = await fetchFinanceForecasts();
+      renderProjectDetails();
+      closeModal();
+    }
+  })();
   return;
 }
 });
