@@ -2440,7 +2440,7 @@
   <!-- Dashboard Tab -->
   <div id="finance-section-dashboard">
 
-    <!-- Top stat cards (9) -->
+    <!-- Top stat cards (10) -->
     <div id="finance-dashboard-stats" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 mb-4"></div>
 
     <!-- Forecast pipeline (2 cards) -->
@@ -2641,6 +2641,19 @@
           <option value="deleted">Trash</option>
           <option value="all">All</option>
         </select>
+        <select id="finance-forecast-source-filter" class="form-input h-9 text-sm w-36">
+          <option value="all">All Sources</option>
+          <option value="manual">Manual</option>
+          <option value="schedule">Payment Schedule</option>
+        </select>
+        <select id="finance-forecast-component-filter" class="form-input h-9 text-sm w-32">
+          <option value="all">All Components</option>
+          <option value="revenue">Revenue</option>
+          <option value="client_funds">Client Funds</option>
+        </select>
+        <button id="finance-forecast-clear-filters" data-action="clear-finance-forecast-filters" class="hidden h-9 px-3 inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700">
+          <i data-lucide="x" class="w-3.5 h-3.5"></i> Clear Filters
+        </button>
       </div>
       <button data-action="open-finance-forecast-modal" class="h-9 px-4 inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg shadow-sm">
         <i data-lucide="plus" class="w-4 h-4"></i> New Forecast
@@ -2659,6 +2672,7 @@
               <th class="px-4 py-3 text-xs font-medium text-gray-400 uppercase text-right">Amount</th>
               <th class="px-4 py-3 text-xs font-medium text-gray-400 uppercase text-center">Probability</th>
               <th class="px-4 py-3 text-xs font-medium text-gray-400 uppercase">Status</th>
+              <th class="px-4 py-3 text-xs font-medium text-gray-400 uppercase">Source</th>
               <th class="px-4 py-3 text-xs font-medium text-gray-400 uppercase text-right">Actions</th>
             </tr>
           </thead>

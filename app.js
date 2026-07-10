@@ -128,7 +128,7 @@ const state = {
     },
     financeTransactions: { search: '', type: 'all', account: '', archived: 'active' },
     financeAccounts:     { search: '' },
-    financeForecasts:    { search: '', type: 'all', status: 'all', archived: 'active' },
+    financeForecasts:    { search: '', type: 'all', status: 'all', archived: 'active', source: 'all', component: 'all' },
   },
   pendingDelete: null, // { type: 'project' | 'task', id }
   projectCommercialTerms: [],
@@ -8451,6 +8451,30 @@ function getFinanceForecastForPeriod(dr) {
   return { expectedIncomeThisMonth, expectedExpensesThisMonth, expectedNetCashflow, weightedIncome, overdueCount };
 }
 
+// Sprint Project Commercial C3 — Forecasted Client Funds. Deliberately kept
+// separate from getFinanceForecastForPeriod(): that function's revenueImpact/
+// expenseImpact sums must never include client_funds (FINANCE_RULES.forecast.
+// clientFunds has revenueImpact:0/businessHealthImpact:[]), so this total is
+// computed independently rather than folded into an existing field. No FX
+// conversion — mirrors crmCurrencySafeTotal's "refuse to sum, show grouped
+// breakdown instead" rule for any period that spans more than one currency.
+function getForecastedClientFundsForPeriod(dr) {
+  const active = state.financeForecasts.filter(f =>
+    !f.is_archived && !f.is_deleted && !['cancelled', 'received'].includes(f.status) &&
+    f.forecast_type === 'client_funds' && isInDateRange(f.expected_date, dr)
+  );
+  const byCurrency = {};
+  active.forEach(f => {
+    const c = f.currency || 'EGP';
+    byCurrency[c] = (byCurrency[c] || 0) + Number(f.amount);
+  });
+  const currencies = Object.keys(byCurrency);
+  const value = active.reduce((s, f) => s + Number(f.amount), 0);
+  const mixed = currencies.length > 1;
+  const display = currencies.length === 0 ? fmtMoney(0) : mixed ? 'Mixed currencies' : fmtMoney(value, currencies[0]);
+  return { value, display, mixed, byCurrency, rows: active };
+}
+
 function getFinanceDateRangeLabel() {
   return getFinanceDateRange().label;
 }
@@ -8588,6 +8612,7 @@ function buildFinanceEngine(options = {}) {
   const periodSummary = getFinancePeriodSummary(dr);
   const cashFlow       = getCashFlowForPeriod(dr);
   const forecast         = getFinanceForecastForPeriod(dr);
+  const forecastedClientFunds = getForecastedClientFundsForPeriod(dr);
 
   const summary = {
     totalCapital:           rawSummary.totalCapital,
@@ -8601,6 +8626,9 @@ function buildFinanceEngine(options = {}) {
     cashFlowPeriod:         cashFlow.netMovement,
     weightedExpectedIncome: forecast.weightedIncome,
     overdueForecasts:       forecast.overdueCount,
+    // Object (not a plain number) — value/display/mixed/byCurrency — never
+    // consumed by getBusinessHealthMetrics or any revenue/profit calculation.
+    forecastedClientFunds:  forecastedClientFunds,
   };
 
   const breakEvenTarget = fixedCostTotal;
@@ -9081,6 +9109,28 @@ const FINANCE_KPI_CONFIG = {
           { label: '= Closing Balance', value: fmtMoney(cf.closingBalance),  color: pos ? 'emerald' : 'rose' },
           { label: 'Net Movement',      value: `${pos ? '+' : ''}${fmtMoney(cf.netMovement)}`, color: pos ? 'emerald' : 'rose', bold: true },
         ],
+      };
+    },
+  },
+  // Sprint Project Commercial C3. Deliberately excluded from every revenue/
+  // profit/business-health list above — see getForecastedClientFundsForPeriod
+  // and FINANCE_RULES.forecast.clientFunds (revenueImpact:0, businessHealthImpact:[]).
+  forecastedClientFunds: {
+    label: 'Forecasted Client Funds', icon: 'calendar-clock', color: 'cyan',
+    tooltip: 'Expected future client pass-through receipts due in the selected period. Not revenue — separate from Client Funds Held.',
+    formulaLines: ['SUM(', '  Client Funds forecasts', '  Due in selected period', '  · Not Cancelled', '  · Not Received', ')'],
+    excludedList: ['Projected Revenue', 'Weighted Expected Income', 'Net Profit', 'Business Health', 'Received', 'Cancelled', 'Deleted', 'Archived'],
+    insight: 'Client Funds forecasts represent expected pass-through receipts for client spending (e.g. ad budgets) — never company revenue. They are excluded from Projected Revenue, Weighted Expected Income, and Net Profit, and are distinct from Client Funds Held, which reflects cash already received.',
+    navAction: { tab: 'forecast', typeFilter: 'client_funds' },
+    periodFiltered: true,
+    getData() {
+      const dr = getFinanceDateRange();
+      const s = getForecastedClientFundsForPeriod(dr);
+      return {
+        value: s.value,
+        displayValue: s.display,
+        breakdown: s.mixed ? Object.entries(s.byCurrency).map(([c, v]) => ({ label: c, value: fmtMoney(v, c), color: 'cyan' })) : undefined,
+        rows: s.rows.map(f => ({ date: f.expected_date, txNum: '', desc: f.description || '', amount: Number(f.amount), positive: true, client: f.client_name || '', project: f.project_name || '', category: getCategoryName(f.category_id) || '', ref: '' })),
       };
     },
   },
@@ -9610,8 +9660,13 @@ function openWidgetDrilldown(widgetKey) {
           <tbody>
             ${overdue.map(f => {
               const daysOver = Math.floor((Date.now() - new Date(f.expected_date).getTime()) / 86400000);
-              const typeLabel = f.forecast_type === 'expected_income' ? 'Income' : 'Expense';
-              const amtColor  = f.forecast_type === 'expected_income' ? 'text-emerald-600' : 'text-rose-600';
+              // Sprint Project Commercial C3 fix: was a binary Income/Expense
+              // check that mislabeled overdue Client Funds forecasts as
+              // "Expense". Uses the same label map as the Forecast table's
+              // Type badge instead of re-deriving a label here.
+              const typeLabel = FINANCE_FORECAST_TYPE_LABELS[f.forecast_type] || f.forecast_type;
+              const amtColor  = f.forecast_type === 'expected_income' ? 'text-emerald-600'
+                : f.forecast_type === 'client_funds' ? 'text-amber-600' : 'text-rose-600';
               return `<tr class="kpi-tr">
                 <td class="kpi-td whitespace-nowrap">
                   <span class="text-rose-600 font-medium">${fmtDate(f.expected_date)}</span>
@@ -9886,7 +9941,7 @@ function renderFinanceDashboard() {
   // === 0. Sync global period bar ===
   renderFinanceGlobalPeriodBar();
 
-  // === 1. Top stat cards (9) ===
+  // === 1. Top stat cards (10) ===
   const statsEl = $('#finance-dashboard-stats');
   if (statsEl) {
     const netColor = summary.netProfit >= 0 ? 'emerald' : 'rose';
@@ -9903,6 +9958,7 @@ function renderFinanceDashboard() {
       { kpiKey: 'forecastIncoming',  label: 'Forecast Incoming',   value: fmtMoney(summary.forecastIncoming),                                         icon: 'calendar-check',  color: 'teal',    period: periodChip },
       { kpiKey: 'forecastOutgoing',  label: 'Forecast Outgoing',   value: fmtMoney(summary.forecastOutgoing),                                         icon: 'calendar-x',      color: 'orange',  period: periodChip },
       { kpiKey: 'cashFlowThisMonth', label: 'Cash Flow — Period',  value: `${cashFlow.netMovement >= 0 ? '+' : ''}${fmtMoney(cashFlow.netMovement)}`, icon: 'activity',        color: cfColor,   period: periodChip },
+      { kpiKey: 'forecastedClientFunds', label: 'Forecasted Client Funds', value: summary.forecastedClientFunds.display,                              icon: 'calendar-clock',  color: 'cyan',    period: periodChip },
     ];
     statsEl.innerHTML = cards.map(c => {
       const cfg = FINANCE_KPI_CONFIG[c.kpiKey];
@@ -10289,6 +10345,21 @@ function openAccountLedgerModal(accountId) {
   openModal('account-ledger-modal');
 }
 
+// Sprint Project Commercial C3 — shared default shape for the Forecast tab's
+// filters (used both to seed state.filters.financeForecasts and to reset it
+// on Clear Filters / KPI-nav, matching the CRM reset-before-apply idiom).
+const FINANCE_FORECAST_FILTER_DEFAULTS = { search: '', type: 'all', status: 'all', archived: 'active', source: 'all', component: 'all' };
+
+// Mirrors updateCrmClearFiltersVisibility's convention: 'archived' has its
+// own dedicated select and isn't counted as an active "filter".
+function updateFinanceForecastClearFiltersVisibility() {
+  const btn = $('#finance-forecast-clear-filters');
+  if (!btn) return;
+  const f = state.filters.financeForecasts;
+  const hasActive = !!f.search || f.type !== 'all' || f.status !== 'all' || f.source !== 'all' || f.component !== 'all';
+  btn.classList.toggle('hidden', !hasActive);
+}
+
 function renderFinanceForecast() {
   const f = state.filters.financeForecasts;
   let forecasts = state.financeForecasts;
@@ -10298,6 +10369,9 @@ function renderFinanceForecast() {
   if (f.archived === 'deleted')  forecasts = forecasts.filter(fc =>  fc.is_deleted);
   if (f.type   && f.type   !== 'all') forecasts = forecasts.filter(fc => fc.forecast_type === f.type);
   if (f.status && f.status !== 'all') forecasts = forecasts.filter(fc => fc.status === f.status);
+  if (f.source === 'manual')   forecasts = forecasts.filter(fc => !fc.generated_from_schedule);
+  if (f.source === 'schedule') forecasts = forecasts.filter(fc =>  fc.generated_from_schedule);
+  if (f.component && f.component !== 'all') forecasts = forecasts.filter(fc => fc.forecast_component === f.component);
   if (f.search) {
     const q = f.search.toLowerCase();
     forecasts = forecasts.filter(fc =>
@@ -10310,6 +10384,7 @@ function renderFinanceForecast() {
 
   const tbody = $('#finance-forecast-table-body');
   const empty  = $('#finance-forecast-empty');
+  updateFinanceForecastClearFiltersVisibility();
   if (!forecasts.length) {
     if (tbody) tbody.innerHTML = '';
     if (empty) empty.classList.remove('hidden');
@@ -10324,6 +10399,7 @@ function renderFinanceForecast() {
       const isOverdue    = !isConverted && !fc.is_deleted && fc.status === 'expected' && new Date(fc.expected_date) < now;
       const displayStatus = isOverdue ? 'overdue' : fc.status;
       const clientOrProj = fc.client_name || getCrmClientName(fc.client_id) || fc.project_name || '—';
+      const sourceCellHtml = renderFinanceForecastSourceCell(fc);
       return `<tr class="hover:bg-gray-50 ${fc.is_deleted ? 'opacity-50 bg-rose-50' : fc.is_archived ? 'opacity-60' : ''}">
         <td class="px-4 py-2 text-sm whitespace-nowrap ${isOverdue ? 'text-rose-600 font-medium' : 'text-gray-600'}">${fmtDate(fc.expected_date)}</td>
         <td class="px-4 py-2 text-sm">${forecastTypeBadge(fc.forecast_type)}</td>
@@ -10332,6 +10408,7 @@ function renderFinanceForecast() {
         <td class="px-4 py-2 text-sm font-medium text-right whitespace-nowrap">${fmtMoney(fc.amount)}</td>
         <td class="px-4 py-2 text-sm text-center text-gray-500">${Number(fc.probability).toFixed(0)}%</td>
         <td class="px-4 py-2 text-sm">${forecastStatusBadge(displayStatus)}</td>
+        <td class="px-4 py-2 text-sm">${sourceCellHtml}</td>
         <td class="px-4 py-2 text-right whitespace-nowrap">
           ${fc.is_deleted ? `
             <button class="icon-btn text-emerald-600" data-action="restore-finance-forecast" data-id="${fc.id}" title="Restore"><i data-lucide="rotate-ccw" class="w-4 h-4"></i></button>
@@ -14501,6 +14578,80 @@ function renderPaymentItemForecastBadge(fcState) {
   return `<span class="${meta.cls}">${meta.label}${reasonSuffix}</span>${adjustedTag}`;
 }
 
+// ---------- Forecast Schedule Linkage — Finance-side visibility (Sprint Project Commercial C3) ----------
+// Reuses computeComponentForecastState() (C2) rather than re-deriving drift
+// logic — a per-Forecast-row view of the same state model the Payment
+// Schedule badges already use, just entered from the Forecast side instead
+// of the Payment Item side.
+
+const FORECAST_SYNC_STATE_META = {
+  in_sync:                     { label: 'In Sync',                     cls: 'badge bg-emerald-50 text-emerald-600' },
+  adjusted:                    { label: 'Adjusted',                    cls: 'badge bg-indigo-50 text-indigo-600'   },
+  source_changed:               { label: 'Source Changed',              cls: 'badge bg-amber-50 text-amber-600'     },
+  source_and_forecast_changed:  { label: 'Source & Forecast Changed',   cls: 'badge bg-rose-50 text-rose-600'       },
+  source_cancelled:             { label: 'Source Cancelled',            cls: 'badge bg-gray-100 text-gray-400'      },
+  source_missing:                { label: 'Source Missing',              cls: 'badge bg-rose-50 text-rose-600'       },
+  received:                     { label: 'Received',                    cls: 'badge bg-emerald-50 text-emerald-600' },
+};
+
+// Returns null for manual forecasts (no schedule source to reconcile against)
+// or for a schedule-generated row that's been superseded by a newer active
+// forecast for the same component (nothing left to reconcile on this row).
+// 'Source Missing' is a warning state, never a crash, even if the linked
+// Payment Item was hard-deleted out from under an existing Forecast row.
+function computeForecastSyncStatus(fc) {
+  if (!fc.generated_from_schedule || !fc.payment_schedule_item_id) return null;
+  if (fc.status === 'received' || fc.linked_transaction_id) return { status: 'received' };
+
+  const item = state.projectPaymentScheduleItems.find((i) => Number(i.id) === Number(fc.payment_schedule_item_id));
+  if (!item) return { status: 'source_missing' };
+  if (item.is_cancelled) return { status: 'source_cancelled' };
+
+  const cs = computeComponentForecastState(item, fc.forecast_component);
+  if (!cs.forecast || Number(cs.forecast.id) !== Number(fc.id)) return null;
+  if (cs.sourceDrift) return { status: cs.forecastDrift ? 'source_and_forecast_changed' : 'source_changed' };
+  if (cs.adjusted) return { status: 'adjusted' };
+  return { status: 'in_sync' };
+}
+
+// Forecast.payment_schedule_item_id -> Payment Item -> Commercial Terms ->
+// Project. No project_id is stored directly on the Forecast row (see
+// buildGeneratedForecastPayload), so this chain is the only resolution path.
+// Returns null (never throws) if any link is missing.
+function resolveForecastSourceProject(fc) {
+  if (!fc.generated_from_schedule || !fc.payment_schedule_item_id) return null;
+  const item = state.projectPaymentScheduleItems.find((i) => Number(i.id) === Number(fc.payment_schedule_item_id));
+  if (!item) return null;
+  const terms = state.projectCommercialTerms.find((ct) => Number(ct.id) === Number(item.commercial_terms_id));
+  if (!terms) return null;
+  return state.projects.find((p) => Number(p.id) === Number(terms.project_id)) || null;
+}
+
+// Compact Source cell for the Finance Forecast table: Manual forecasts show
+// a subdued label; schedule-generated ones show the "Schedule Generated"
+// badge, which component it represents (Revenue/Client Funds — never the
+// raw forecast_component value), its sync-state badge, and either a link
+// back to the source Project or a Source Missing warning.
+function renderFinanceForecastSourceCell(fc) {
+  if (!fc.generated_from_schedule) {
+    return '<span class="text-xs text-gray-300">Manual</span>';
+  }
+  const componentLabel = FORECAST_COMPONENT_LABEL[fc.forecast_component] || '';
+  const sync = computeForecastSyncStatus(fc);
+  const syncMeta = sync ? FORECAST_SYNC_STATE_META[sync.status] : null;
+  const project = resolveForecastSourceProject(fc);
+  const projectLinkHtml = project
+    ? `<button type="button" class="text-[11px] text-brand-600 hover:underline text-left" data-action="open-project-details" data-id="${project.id}">Open Project</button>`
+    : (sync?.status === 'source_missing' ? '<span class="text-[11px] text-rose-500">Source Missing</span>' : '');
+  return `
+    <div class="flex flex-col items-start gap-1">
+      <span class="badge bg-indigo-50 text-indigo-600">Schedule Generated</span>
+      ${componentLabel ? `<span class="text-[11px] text-gray-400">${escapeHtml(componentLabel)}</span>` : ''}
+      ${syncMeta ? `<span class="${syncMeta.cls}">${syncMeta.label}</span>` : ''}
+      ${projectLinkHtml}
+    </div>`;
+}
+
 // ---------- Forecast Schedule Linkage — Actions (Sprint Project Commercial C2) ----------
 
 async function handleGeneratePaymentItemForecasts(itemId) {
@@ -17172,9 +17323,45 @@ if (action === 'kpi-nav-to') {
       if (typeEl) typeEl.value = newType;
       renderFinanceTransactions();
     }
+    if (tab === 'forecast') {
+      // Sprint Project Commercial C3 — always reset Forecast filters to their
+      // defaults first, mirroring the CRM KPI-nav reset-before-apply fix
+      // (see the 'crm-kpi-nav' handler above), so a filter left over from
+      // browsing the table manually never leaks into a KPI's target view.
+      Object.assign(state.filters.financeForecasts, FINANCE_FORECAST_FILTER_DEFAULTS);
+      if (typeFilter) state.filters.financeForecasts.type = typeFilter;
+      const searchEl    = $('#finance-forecast-search');
+      const typeEl       = $('#finance-forecast-type-filter');
+      const statusEl      = $('#finance-forecast-status-filter');
+      const archivedEl    = $('#finance-forecast-archived-filter');
+      const sourceEl       = $('#finance-forecast-source-filter');
+      const componentEl    = $('#finance-forecast-component-filter');
+      if (searchEl)    searchEl.value    = '';
+      if (typeEl)       typeEl.value      = state.filters.financeForecasts.type;
+      if (statusEl)      statusEl.value    = state.filters.financeForecasts.status;
+      if (archivedEl)    archivedEl.value  = state.filters.financeForecasts.archived;
+      if (sourceEl)       sourceEl.value    = state.filters.financeForecasts.source;
+      if (componentEl)    componentEl.value = state.filters.financeForecasts.component;
+      renderFinanceForecast();
+    }
     setFinanceTab(tab);
   }
   closeModal();
+  return;
+}
+if (action === 'clear-finance-forecast-filters') {
+  Object.assign(state.filters.financeForecasts, FINANCE_FORECAST_FILTER_DEFAULTS);
+  const searchEl    = $('#finance-forecast-search');
+  const typeEl       = $('#finance-forecast-type-filter');
+  const statusEl      = $('#finance-forecast-status-filter');
+  const sourceEl       = $('#finance-forecast-source-filter');
+  const componentEl    = $('#finance-forecast-component-filter');
+  if (searchEl)    searchEl.value    = '';
+  if (typeEl)       typeEl.value      = 'all';
+  if (statusEl)      statusEl.value    = 'all';
+  if (sourceEl)       sourceEl.value    = 'all';
+  if (componentEl)    componentEl.value = 'all';
+  renderFinanceForecast();
   return;
 }
 if (action === 'open-account-ledger') {
@@ -17551,6 +17738,14 @@ if (action === 'confirm-reset-forecast-from-schedule') {
   });
   $('#finance-forecast-archived-filter')?.addEventListener('change', (e) => {
     state.filters.financeForecasts.archived = e.target.value;
+    renderFinanceForecast();
+  });
+  $('#finance-forecast-source-filter')?.addEventListener('change', (e) => {
+    state.filters.financeForecasts.source = e.target.value;
+    renderFinanceForecast();
+  });
+  $('#finance-forecast-component-filter')?.addEventListener('change', (e) => {
+    state.filters.financeForecasts.component = e.target.value;
     renderFinanceForecast();
   });
 
