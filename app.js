@@ -1483,12 +1483,27 @@ async function fetchCrmDeals() {
 }
 async function createCrmDeal(payload) {
   if (!isAdmin()) return null;
+  // A Deal must always have a Company — mirrors the same hard requirement
+  // already enforced on Lead. A create always represents the full intended
+  // row, so this is a plain presence check.
+  if (!payload.client_id) {
+    toast('Select a company before creating this deal.', 'error');
+    return null;
+  }
   const { data, error } = await supabaseClient.from('crm_deals').insert([payload]).select().single();
   if (error) { console.error('createCrmDeal', error); toast(error.message || 'Failed to create deal', 'error'); return null; }
   return data;
 }
 async function updateCrmDeal(id, payload) {
   if (!isAdmin()) return null;
+  // Same requirement as createCrmDeal, but an update payload can legitimately
+  // omit client_id entirely (e.g. archiveCrmDeal/restoreCrmDeal below only
+  // touch is_archived) — only block when the caller explicitly tries to save
+  // the Deal with no Company, not every partial update.
+  if ('client_id' in payload && !payload.client_id) {
+    toast('A deal must have a company — this cannot be cleared.', 'error');
+    return null;
+  }
   const { data, error } = await supabaseClient.from('crm_deals').update(payload).eq('id', id).select().single();
   if (error) { console.error('updateCrmDeal', error); toast(error.message || 'Failed to update deal', 'error'); return null; }
   return data;
@@ -13711,7 +13726,7 @@ async function handleContactSubmit(e) {
 function populateDealClientSelect() {
   const select = $('#deal-client-id');
   if (!select) return;
-  select.innerHTML = '<option value="">No company</option>' +
+  select.innerHTML = '<option value="">-- Select a company --</option>' +
     state.crmClients.filter(c => !c.is_archived)
       .map(c => `<option value="${c.id}">${escapeHtml(c.client_name)}</option>`).join('');
 }
@@ -13920,11 +13935,21 @@ async function handleDealSubmit(e) {
   const form = e.target;
   const submitBtn = form.querySelector('button[type=submit]');
   const isEditing = state.editingDealId !== null;
+
+  // Company is a hard requirement — mirrors the same check already done for
+  // Lead (form.client_id is also now a required select; this is the
+  // explicit JS backstop, same pattern as Lead's contact check above).
+  if (!form.client_id.value) {
+    toast('Select a company before saving this deal.', 'error');
+    return;
+  }
+
   submitBtn.disabled = true;
   submitBtn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> ${isEditing ? 'Updating…' : 'Saving…'}`;
   refreshIcons();
   const payload = normalizePayload(new FormData(form));
   if (payload.client_id) payload.client_id = Number(payload.client_id);
+  else payload.client_id = null;
   if (payload.owner_id) payload.owner_id = Number(payload.owner_id);
   if (payload.value) payload.value = Number(payload.value);
   if (payload.service_type_id) payload.service_type_id = Number(payload.service_type_id);
