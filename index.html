@@ -1254,9 +1254,14 @@
             <h3 class="text-lg font-semibold text-gray-900">Project Commercial Summary</h3>
             <p class="text-sm text-gray-500">Admin-only. Contract terms and derived totals for this project.</p>
           </div>
-          <button type="button" data-action="open-commercial-terms-modal" class="h-9 px-3 inline-flex items-center gap-1.5 text-sm font-medium text-gray-700 border border-gray-200 rounded-lg hover:bg-gray-50">
-            <i data-lucide="pencil" class="w-3.5 h-3.5"></i> Edit Terms
-          </button>
+          <div class="flex items-center gap-2">
+            <button type="button" id="commercial-delete-btn" data-action="delete-project-commercial-data" data-id="" class="h-9 px-3 inline-flex items-center gap-1.5 text-sm font-medium text-red-700 border border-red-200 rounded-lg hover:bg-red-50">
+              <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Delete Commercial Data
+            </button>
+            <button type="button" data-action="open-commercial-terms-modal" class="h-9 px-3 inline-flex items-center gap-1.5 text-sm font-medium text-gray-700 border border-gray-200 rounded-lg hover:bg-gray-50">
+              <i data-lucide="pencil" class="w-3.5 h-3.5"></i> Edit Terms
+            </button>
+          </div>
         </div>
 
         <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-4">
@@ -1495,6 +1500,9 @@
     <button data-crm-tab="services"   class="px-4 py-2 text-sm font-medium rounded-lg whitespace-nowrap transition text-gray-500">Services</button>
   </div>
 
+  <!-- CRM Bulk Actions Toolbar — shown only when rows are selected on the active tab -->
+  <div id="crm-bulk-toolbar" class="hidden mb-4 flex items-center gap-3 bg-brand-50 border border-brand-100 rounded-xl px-4 py-2.5 flex-wrap"></div>
+
   <!-- ============ DASHBOARD TAB ============ -->
   <div id="crm-section-dashboard">
     <div class="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-4">
@@ -1569,6 +1577,7 @@
         <table class="w-full text-sm">
           <thead class="bg-gray-50 border-b border-gray-100">
             <tr class="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <th class="px-4 py-3 w-10"><span id="crm-leads-select-all-mount"></span></th>
               <th class="px-5 py-3 relative">
                 <button type="button" id="crm-leads-lead-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="crm-leads-lead-popover" data-filter-module="crmLeads">Lead <i data-lucide="chevron-down" class="w-3 h-3"></i></button>
                 <div id="crm-leads-lead-popover" class="task-th-popover hidden" data-filter-type="lead" data-filter-module="crmLeads"></div>
@@ -1656,6 +1665,7 @@
         <table class="w-full text-sm">
           <thead class="bg-gray-50 border-b border-gray-100">
             <tr class="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <th class="px-4 py-3 w-10"><span id="crm-clients-select-all-mount"></span></th>
               <th class="px-5 py-3 relative">
                 <button type="button" id="crm-clients-company-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="crm-clients-company-popover" data-filter-module="crmClients">Company <i data-lucide="chevron-down" class="w-3 h-3"></i></button>
                 <div id="crm-clients-company-popover" class="task-th-popover hidden" data-filter-type="company" data-filter-module="crmClients"></div>
@@ -1718,6 +1728,7 @@
         <table class="w-full text-sm">
           <thead class="bg-gray-50 border-b border-gray-100">
             <tr class="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <th class="px-4 py-3 w-10"><span id="crm-contacts-select-all-mount"></span></th>
               <th class="px-5 py-3 relative">
                 <button type="button" id="crm-contacts-name-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="crm-contacts-name-popover" data-filter-module="crmContacts">Name <i data-lucide="chevron-down" class="w-3 h-3"></i></button>
                 <div id="crm-contacts-name-popover" class="task-th-popover hidden" data-filter-type="name" data-filter-module="crmContacts"></div>
@@ -1780,6 +1791,7 @@
         <table class="w-full text-sm">
           <thead class="bg-gray-50 border-b border-gray-100">
             <tr class="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <th class="px-4 py-3 w-10"><span id="crm-deals-select-all-mount"></span></th>
               <th class="px-5 py-3 relative">
                 <button type="button" id="crm-deals-deal-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="crm-deals-deal-popover" data-filter-module="crmDeals">Deal <i data-lucide="chevron-down" class="w-3 h-3"></i></button>
                 <div id="crm-deals-deal-popover" class="task-th-popover hidden" data-filter-type="deal" data-filter-module="crmDeals"></div>
@@ -1862,6 +1874,7 @@
         <table class="w-full text-sm">
           <thead class="bg-gray-50 border-b border-gray-100">
             <tr class="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <th class="px-4 py-3 w-10"><span id="crm-activities-select-all-mount"></span></th>
               <th class="px-5 py-3 relative">
                 <button type="button" id="crm-activities-activity-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="crm-activities-activity-popover" data-filter-module="crmActivities">Activity <i data-lucide="chevron-down" class="w-3 h-3"></i></button>
                 <div id="crm-activities-activity-popover" class="task-th-popover hidden" data-filter-type="activity" data-filter-module="crmActivities"></div>
@@ -1944,6 +1957,7 @@
         <table class="w-full text-sm">
           <thead class="bg-gray-50 border-b border-gray-100">
             <tr class="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <th class="px-4 py-3 w-10"><span id="crm-proposals-select-all-mount"></span></th>
               <th class="px-5 py-3 relative">
                 <button type="button" id="crm-proposals-proposal-th-filter" class="task-th-filter task-th-filter-btn" data-th-popover-toggle="crm-proposals-proposal-popover" data-filter-module="crmProposals">Proposal <i data-lucide="chevron-down" class="w-3 h-3"></i></button>
                 <div id="crm-proposals-proposal-popover" class="task-th-popover hidden" data-filter-type="proposal" data-filter-module="crmProposals"></div>
@@ -3937,7 +3951,10 @@
           <p class="text-xs text-gray-500 font-medium mb-2">Related Projects</p>
           <div id="deal-details-modal-project"></div>
         </div>
-        <div class="pt-4 border-t border-gray-100 flex justify-end">
+        <div class="pt-4 border-t border-gray-100 flex justify-end gap-2">
+          <button id="deal-details-modal-delete-btn" data-action="permanent-delete-deal" data-id="" class="h-9 px-4 inline-flex items-center gap-2 text-sm font-medium text-red-700 border border-red-200 rounded-lg hover:bg-red-50 transition">
+            <i data-lucide="trash-2" class="w-4 h-4"></i> Delete Permanently
+          </button>
           <button id="deal-details-modal-edit-btn" data-action="edit-deal" data-id="" class="h-9 px-4 inline-flex items-center gap-2 text-sm font-medium text-gray-700 border border-gray-200 rounded-lg hover:bg-gray-50 transition">
             <i data-lucide="pencil" class="w-4 h-4"></i> Edit Deal
           </button>

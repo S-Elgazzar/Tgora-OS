@@ -143,6 +143,15 @@ const state = {
   crmProposals: [],
   crmServiceTypes: [],
   crmTab: 'dashboard',
+  crmSelections: {
+    leads: new Set(),
+    clients: new Set(),
+    contacts: new Set(),
+    deals: new Set(),
+    activities: new Set(),
+    proposals: new Set(),
+  },
+  pendingBulk: null, // { entityKey, kind: 'archive' | 'delete', ids }
   selectedClientId: Number(localStorage.getItem('tgora_selected_client_id')) || null,
   selectedDealId: Number(localStorage.getItem('tgora_selected_deal_id')) || null,
   selectedContactId: Number(localStorage.getItem('tgora_selected_contact_id')) || null,
@@ -1245,6 +1254,100 @@ async function restoreProjectPaymentScheduleItem(id) {
   return updateProjectPaymentScheduleItem(id, { is_cancelled: false, updated_at: new Date().toISOString() });
 }
 
+// Deletes a Project's entire Commercial Data stack (Commercial Terms,
+// Payment Schedule Items, and every Finance Forecast/Transaction linked
+// through payment_schedule_item_id) in FK-safe order: children before
+// parents. Not wrapped in a DB transaction (same honest caveat as
+// detachProjectsAndDeleteCrmDeal above — no multi-statement transaction
+// primitive available without a bespoke Postgres RPC). If any step fails,
+// resyncProjectCommercialLocalState() re-selects exactly the rows this call
+// touched so local state matches whatever partial deletion actually
+// happened in the database, rather than silently drifting.
+async function resyncProjectCommercialLocalState(termsId, itemIds) {
+  if (Array.isArray(itemIds) && itemIds.length > 0) {
+    const [{ data: remForecasts }, { data: remTransactions }, { data: remItems }] = await Promise.all([
+      supabaseClient.from('finance_forecasts').select('*').in('payment_schedule_item_id', itemIds),
+      supabaseClient.from('finance_transactions').select('*').in('payment_schedule_item_id', itemIds),
+      supabaseClient.from('project_payment_schedule_items').select('*').in('id', itemIds),
+    ]);
+    state.financeForecasts = state.financeForecasts
+      .filter((f) => !itemIds.includes(Number(f.payment_schedule_item_id)))
+      .concat(remForecasts || []);
+    state.financeTransactions = state.financeTransactions
+      .filter((t) => !itemIds.includes(Number(t.payment_schedule_item_id)))
+      .concat(remTransactions || []);
+    state.projectPaymentScheduleItems = state.projectPaymentScheduleItems
+      .filter((i) => !itemIds.includes(Number(i.id)))
+      .concat(remItems || []);
+  }
+  const { data: remTerms } = await supabaseClient.from('project_commercial_terms').select('*').eq('id', termsId);
+  state.projectCommercialTerms = state.projectCommercialTerms
+    .filter((ct) => Number(ct.id) !== Number(termsId))
+    .concat(remTerms || []);
+}
+
+async function deleteProjectCommercialData(projectId) {
+  if (!isAdmin()) return { ok: false, message: 'Admin permission required.' };
+
+  const terms = state.projectCommercialTerms.find((ct) => Number(ct.project_id) === Number(projectId));
+  if (!terms) return { ok: false, message: 'This Project has no Commercial Data to delete.' };
+
+  const itemIds = state.projectPaymentScheduleItems
+    .filter((i) => Number(i.commercial_terms_id) === Number(terms.id))
+    .map((i) => i.id);
+
+  if (itemIds.length > 0) {
+    const { error: forecastError } = await supabaseClient
+      .from('finance_forecasts')
+      .delete()
+      .in('payment_schedule_item_id', itemIds);
+    if (forecastError) {
+      console.error('deleteProjectCommercialData:forecasts', forecastError);
+      await resyncProjectCommercialLocalState(terms.id, itemIds);
+      return { ok: false, message: forecastError.message || 'Failed to delete linked Forecasts. Nothing else was deleted.' };
+    }
+
+    const { error: transactionError } = await supabaseClient
+      .from('finance_transactions')
+      .delete()
+      .in('payment_schedule_item_id', itemIds);
+    if (transactionError) {
+      console.error('deleteProjectCommercialData:transactions', transactionError);
+      await resyncProjectCommercialLocalState(terms.id, itemIds);
+      return { ok: false, message: transactionError.message || 'Linked Forecasts were deleted, but Transactions could not be removed. Please retry.' };
+    }
+
+    const { error: itemsError } = await supabaseClient
+      .from('project_payment_schedule_items')
+      .delete()
+      .in('id', itemIds);
+    if (itemsError) {
+      console.error('deleteProjectCommercialData:items', itemsError);
+      await resyncProjectCommercialLocalState(terms.id, itemIds);
+      return { ok: false, message: itemsError.message || 'Linked Forecasts/Transactions were deleted, but Payment Schedule Items could not be removed. Please retry.' };
+    }
+  }
+
+  const { error: termsError } = await supabaseClient
+    .from('project_commercial_terms')
+    .delete()
+    .eq('id', terms.id);
+  if (termsError) {
+    console.error('deleteProjectCommercialData:terms', termsError);
+    await resyncProjectCommercialLocalState(terms.id, itemIds);
+    return { ok: false, message: termsError.message || 'Payment Schedule was deleted, but Commercial Terms could not be removed. Please retry.' };
+  }
+
+  // Full success — splice local state directly (cheaper than a resync
+  // select since every touched row is now known-gone from the database).
+  state.financeForecasts = state.financeForecasts.filter((f) => !itemIds.includes(Number(f.payment_schedule_item_id)));
+  state.financeTransactions = state.financeTransactions.filter((t) => !itemIds.includes(Number(t.payment_schedule_item_id)));
+  state.projectPaymentScheduleItems = state.projectPaymentScheduleItems.filter((i) => !itemIds.includes(Number(i.id)));
+  state.projectCommercialTerms = state.projectCommercialTerms.filter((ct) => Number(ct.id) !== Number(terms.id));
+
+  return { ok: true };
+}
+
 // ---------- Forecast Schedule Linkage Data Layer (Sprint Project Commercial C2) ----------
 // Generates/synchronizes Finance Forecasts from Payment Schedule Items, on
 // top of the C1 linkage columns (payment_schedule_item_id, forecast_component,
@@ -1585,6 +1688,205 @@ async function archiveCrmProposal(id) {
 }
 async function restoreCrmProposal(id) {
   return updateCrmProposal(id, { is_archived: false, updated_at: new Date().toISOString() });
+}
+
+// ---------- CRM Selection / Bulk Actions / Permanent Delete ----------
+// Config-driven helpers shared by all 6 supported CRM entities (Leads,
+// Clients, Contacts, Deals, Activities, Proposals). CRM Notes is
+// intentionally excluded — it has no standalone table/tab.
+const CRM_ENTITY_CONFIG = {
+  leads:      { table: 'crm_leads',      stateKey: 'crmLeads',      selectionKey: 'leads',      idField: 'id', labelField: 'lead_name',      pluralLabel: 'Leads' },
+  clients:    { table: 'crm_clients',    stateKey: 'crmClients',    selectionKey: 'clients',    idField: 'id', labelField: 'client_name',    pluralLabel: 'Companies' },
+  contacts:   { table: 'crm_contacts',   stateKey: 'crmContacts',   selectionKey: 'contacts',   idField: 'id', labelField: 'contact_name',   pluralLabel: 'Contacts' },
+  deals:      { table: 'crm_deals',      stateKey: 'crmDeals',      selectionKey: 'deals',      idField: 'id', labelField: 'deal_name',      pluralLabel: 'Deals' },
+  activities: { table: 'crm_activities', stateKey: 'crmActivities', selectionKey: 'activities', idField: 'id', labelField: 'title',          pluralLabel: 'Activities' },
+  proposals:  { table: 'crm_proposals',  stateKey: 'crmProposals',  selectionKey: 'proposals',  idField: 'id', labelField: 'proposal_title', pluralLabel: 'Proposals' },
+};
+// getFiltered assigned per-key once the getter functions exist further down
+// this file — safe because this object is only ever *read* after the whole
+// script has parsed (inside event-driven render calls), never at top-level
+// eval time, so forward references here are fine.
+CRM_ENTITY_CONFIG.leads.getFiltered      = () => getFilteredCrmLeads();
+CRM_ENTITY_CONFIG.clients.getFiltered    = () => getFilteredCrmClients();
+CRM_ENTITY_CONFIG.contacts.getFiltered   = () => getFilteredCrmContacts();
+CRM_ENTITY_CONFIG.deals.getFiltered      = () => getFilteredCrmDeals();
+CRM_ENTITY_CONFIG.activities.getFiltered = () => getFilteredCrmActivities();
+CRM_ENTITY_CONFIG.proposals.getFiltered  = () => getFilteredCrmProposals();
+
+const CRM_RENDERERS = {
+  leads:      () => renderCrmLeads(),
+  clients:    () => renderCrmClients(),
+  contacts:   () => renderCrmContacts(),
+  deals:      () => renderCrmDeals(),
+  activities: () => renderCrmActivities(),
+  proposals:  () => renderCrmProposals(),
+};
+
+const CRM_FK_MESSAGES = {
+  clients:    'Cannot be permanently deleted while Contacts, Deals, Activities, Proposals, Notes, Forecasts, or Transactions still reference it.',
+  contacts:   'Cannot be deleted while Leads reference it.',
+  leads:      'Cannot be deleted while Deals, Activities, or Notes reference it.',
+  deals:      'Cannot be deleted while Activities or Projects reference it.',
+  activities: 'Cannot be deleted while other records still reference it.',
+  proposals:  'Cannot be deleted while other records still reference it.',
+};
+
+// `count` is the number of records the failed delete attempted to remove.
+// A single-record delete (count === 1, the default) shows the entity-
+// specific singular message; a bulk delete of more than one record shows a
+// generic plural message instead, since a per-entity FK reason may not
+// apply uniformly to every selected record.
+function translateCrmDependencyError(entityKey, error, count = 1) {
+  const isFkError = error && (error.code === '23503' || /foreign key/i.test(error.message || ''));
+  if (isFkError) {
+    if (count > 1) {
+      return 'Cannot delete the selected records because one or more are referenced by other records. No records were deleted.';
+    }
+    return CRM_FK_MESSAGES[entityKey] || 'This record cannot be deleted because other records still reference it.';
+  }
+  return error?.message || 'Failed to permanently delete. Please try again.';
+}
+
+// Drops any selected id that is no longer present in the currently visible
+// (filtered) rows for that entity — keeps selection in sync with search,
+// filters, and the archived/active toggle without needing extra hooks.
+function pruneCrmSelection(selectionKey, visibleRows) {
+  const cfgEntry = Object.values(CRM_ENTITY_CONFIG).find((c) => c.selectionKey === selectionKey);
+  if (!cfgEntry) return;
+  const set = state.crmSelections[selectionKey];
+  if (!set) return;
+  const visibleIds = new Set(visibleRows.map((r) => Number(r[cfgEntry.idField])));
+  Array.from(set).forEach((id) => { if (!visibleIds.has(id)) set.delete(id); });
+}
+
+async function permanentlyDeleteCrmRecord(entityKey, id) {
+  if (!isAdmin()) return { ok: false, message: 'Admin permission required.' };
+  const cfg = CRM_ENTITY_CONFIG[entityKey];
+  const { error } = await supabaseClient.from(cfg.table).delete().eq('id', id);
+  if (error) {
+    console.error(`permanentlyDeleteCrmRecord:${entityKey}`, error);
+    return { ok: false, message: translateCrmDependencyError(entityKey, error) };
+  }
+  return { ok: true };
+}
+
+async function permanentlyDeleteCrmRecordsBulk(entityKey, ids) {
+  if (!isAdmin()) return { ok: false, message: 'Admin permission required.' };
+  if (!Array.isArray(ids) || ids.length === 0) return { ok: false, message: 'Nothing selected.' };
+  const cfg = CRM_ENTITY_CONFIG[entityKey];
+  const { error } = await supabaseClient.from(cfg.table).delete().in('id', ids);
+  if (error) {
+    console.error(`permanentlyDeleteCrmRecordsBulk:${entityKey}`, error);
+    return { ok: false, message: translateCrmDependencyError(entityKey, error, ids.length) };
+  }
+  return { ok: true };
+}
+
+async function bulkUpdateCrmArchiveState(entityKey, ids, archived) {
+  if (!isAdmin()) return false;
+  if (!Array.isArray(ids) || ids.length === 0) return false;
+  const cfg = CRM_ENTITY_CONFIG[entityKey];
+  // C1 invariant, bulk form: only is_archived + updated_at are ever written —
+  // never status/stage. See archiveCrmClient/restoreCrmClient above.
+  const { error } = await supabaseClient
+    .from(cfg.table)
+    .update({ is_archived: archived, updated_at: new Date().toISOString() })
+    .in('id', ids);
+  if (error) {
+    console.error(`bulkUpdateCrmArchiveState:${entityKey}`, error);
+    toast(error.message || 'Bulk update failed', 'error');
+    return false;
+  }
+  return true;
+}
+
+// Preflight dependency check for Deal deletion. Verified against the actual
+// schema migration files (crm_base_schema_recovery_migration.sql,
+// crm_deal_project_conversion_migration.sql) — the only two columns that
+// REFERENCE crm_deals(id) anywhere in this codebase's tracked schema are
+// crm_activities.deal_id and projects.deal_id. crm_notes has no deal_id
+// column at all (its migration comment confirms this is intentional —
+// "deal_id is NOT referenced anywhere in code, so it is intentionally
+// omitted"), and crm_proposals likewise has no deal_id column. If a future
+// migration adds a new FK to crm_deals, this function must be updated to
+// match — it is not derived from a live schema introspection query (no DB
+// credentials are available in this environment), only from the migration
+// files present in the repo.
+function getCrmDealDependencies(dealId) {
+  const linkedProjects = state.projects.filter((p) => Number(p.deal_id) === Number(dealId));
+  const linkedActivities = state.crmActivities.filter((a) => Number(a.deal_id) === Number(dealId));
+  return { linkedProjects, linkedActivities };
+}
+
+function describeCrmDealBlockingDependencies(linkedActivities) {
+  const n = linkedActivities.length;
+  return `This Deal cannot be deleted because ${n} linked Activit${n === 1 ? 'y' : 'ies'} still reference${n === 1 ? 's' : ''} it. Remove or reassign the linked Activit${n === 1 ? 'y' : 'ies'} first, then try again.`;
+}
+
+// Permanently deleting a Deal that one or more Projects still reference via
+// projects.deal_id would hit the FK constraint. This performs the detach
+// (deal_id -> null on every linked Project) then the delete, sequentially —
+// not wrapped in a single DB transaction/RPC, since Supabase's JS client has
+// no multi-statement transaction primitive without a bespoke Postgres
+// function, and adding one is out of scope here. This mirrors the existing
+// two-step write already used by deleteProject() (delete tasks, then the
+// project row) — same honestly-documented risk window between the two
+// awaits, handled explicitly by the 'delete' failure branch below.
+//
+// Safety: a non-Project dependency (Activities) blocks the detach entirely —
+// nothing is written — because Step 1 (detach) is not reversible once Step 2
+// (delete) fails on an FK it still violates; the Deal would remain but its
+// Project links would already be gone. The dependency check is re-run here,
+// inside the actual write function, not just when the confirm modal opens,
+// so a dependency added between opening the modal and clicking confirm is
+// still caught before any write happens.
+async function detachProjectsAndDeleteCrmDeal(dealId) {
+  if (!isAdmin()) return { ok: false, stage: 'permission', message: 'Admin permission required.' };
+
+  const { linkedProjects, linkedActivities } = getCrmDealDependencies(dealId);
+
+  if (linkedActivities.length > 0) {
+    return { ok: false, stage: 'dependency', message: describeCrmDealBlockingDependencies(linkedActivities) };
+  }
+
+  const linkedProjectIds = linkedProjects.map((p) => p.id);
+
+  if (linkedProjectIds.length === 0) {
+    // No longer linked (e.g. detached by someone else since the confirm
+    // dialog opened) — fall back to a normal permanent delete.
+    return permanentlyDeleteCrmRecord('deals', dealId);
+  }
+
+  // Step 1: detach. Deliberately omits updated_at — nothing else in this
+  // file ever reads or writes projects.updated_at, so there is no confirmed
+  // evidence the column exists on this table; adding it speculatively risks
+  // failing this write on a column-not-found error.
+  const { error: unlinkError } = await supabaseClient
+    .from('projects')
+    .update({ deal_id: null })
+    .in('id', linkedProjectIds);
+
+  if (unlinkError) {
+    console.error('detachProjectsAndDeleteCrmDeal:unlink', unlinkError);
+    return { ok: false, stage: 'unlink', message: 'Failed to detach linked Projects — the Deal was not deleted. Please try again.' };
+  }
+
+  // Step 2: delete the Deal itself.
+  const { error: deleteError } = await supabaseClient.from('crm_deals').delete().eq('id', dealId);
+  if (deleteError) {
+    console.error('detachProjectsAndDeleteCrmDeal:delete', deleteError);
+    // Projects are already detached in the DB at this point even though the
+    // overall operation failed — the caller must refetch them narrowly so
+    // local state doesn't silently drift from the database.
+    return {
+      ok: false,
+      stage: 'delete',
+      projectIds: linkedProjectIds,
+      message: 'Projects were detached successfully, but the Deal could not be deleted. Please try deleting the Deal again.',
+    };
+  }
+
+  return { ok: true, projectIds: linkedProjectIds };
 }
 
 // ---------- CRM Service Types Data Layer ----------
@@ -2934,7 +3236,7 @@ async function deleteProject(id) {
   );
 
   if (terms || scheduleItems.length > 0 || hasTransactions) {
-    toast('This Project contains Commercial or Finance records and cannot be deleted. Archive or cancel the Project instead.', 'error');
+    toast("This Project contains Commercial or Finance records. Delete its Commercial Data from Project Details first, then delete the Project.", 'error');
     return false;
   }
 
@@ -2960,6 +3262,17 @@ async function deleteProject(id) {
   });
 
   return true;
+}
+
+// Narrow re-fetch of specific Projects by id — used to resync local state
+// with the database after a multi-step write partially succeeds (e.g. the
+// Deal detach-and-delete flow below, where Projects are unlinked in one
+// write and the Deal delete in a second).
+async function refetchProjectsById(ids) {
+  if (!Array.isArray(ids) || ids.length === 0) return [];
+  const { data, error } = await supabaseClient.from('projects').select('*').in('id', ids);
+  if (error) { console.error('refetchProjectsById', error); return []; }
+  return data || [];
 }
 
 async function deleteTask(id) {
@@ -5482,21 +5795,75 @@ function renderTeam() {
   refreshIcons();
 }
 
+// ---------- CRM Selection UI (checkbox column, Select All, bulk toolbar) ----------
+function crmRowCheckboxCell(selectionKey, id) {
+  const checked = state.crmSelections[selectionKey].has(Number(id));
+  // No stopPropagation here: this app's entire action system is a single
+  // document-level delegated click listener. Stopping propagation on this
+  // <td> would kill the click before it ever reaches that listener, so the
+  // checkbox's native visual toggle would fire but crm-toggle-row-selection
+  // never would (this was Bug 1 — the bulk toolbar never appeared).
+  return `<td class="px-4 py-3.5"><input type="checkbox" class="crm-row-checkbox" data-action="crm-toggle-row-selection" data-selection-key="${selectionKey}" data-id="${id}" ${checked ? 'checked' : ''} /></td>`;
+}
+
+function renderCrmSelectAllCheckbox(tab) {
+  const cfg = CRM_ENTITY_CONFIG[tab];
+  const mount = $(`#crm-${tab}-select-all-mount`);
+  if (!mount) return;
+  if (!cfg || !isAdmin()) { mount.innerHTML = ''; return; }
+
+  const rows = cfg.getFiltered();
+  const sel = state.crmSelections[cfg.selectionKey];
+  const selectedCount = rows.filter((r) => sel.has(Number(r[cfg.idField]))).length;
+
+  mount.innerHTML = `<input type="checkbox" data-action="crm-toggle-select-all" data-selection-key="${cfg.selectionKey}" ${rows.length === 0 ? 'disabled' : ''} />`;
+  const cb = mount.querySelector('input');
+  if (cb) {
+    cb.checked = rows.length > 0 && selectedCount === rows.length;
+    cb.indeterminate = selectedCount > 0 && selectedCount < rows.length;
+  }
+}
+
+function renderCrmBulkToolbar(tab) {
+  const el = $('#crm-bulk-toolbar');
+  if (!el) return;
+  const cfg = CRM_ENTITY_CONFIG[tab];
+  if (!cfg || !isAdmin()) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+
+  const sel = state.crmSelections[cfg.selectionKey];
+  if (sel.size === 0) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+
+  const selectedRows = cfg.getFiltered().filter((r) => sel.has(Number(r[cfg.idField])));
+  const hasActive = selectedRows.some((r) => !r.is_archived);
+  const hasArchived = selectedRows.some((r) => r.is_archived);
+  const mixed = hasActive && hasArchived;
+
+  const btns = [];
+  if (hasActive && !mixed) {
+    btns.push(renderButton(createButtonDescriptor({ variant: 'secondary', text: 'Archive Selected', icon: 'archive', dataset: { action: 'crm-bulk-archive' } })));
+  }
+  if (hasArchived && !mixed) {
+    btns.push(renderButton(createButtonDescriptor({ variant: 'secondary', text: 'Restore Selected', icon: 'rotate-ccw', dataset: { action: 'crm-bulk-restore' } })));
+  }
+  btns.push(renderButton(createButtonDescriptor({ variant: 'destructive', text: 'Delete Permanently', icon: 'trash-2', dataset: { action: 'crm-bulk-delete' } })));
+  btns.push(renderButton(createButtonDescriptor({ variant: 'ghost', text: 'Clear Selection', dataset: { action: 'crm-clear-selection' } })));
+
+  el.innerHTML = `<span class="text-sm font-medium text-brand-700">${sel.size} selected</span><div class="flex items-center gap-2 ml-auto flex-wrap">${btns.join('')}</div>`;
+  el.classList.remove('hidden');
+  refreshIcons();
+}
+
+function renderCrmSelectionUI(tab) {
+  renderCrmSelectAllCheckbox(tab);
+  renderCrmBulkToolbar(tab);
+}
+
 // ---------- CRM Leads Render ----------
-function renderCrmLeads() {
-  const tbody = $('#crm-leads-table-body');
-  const empty = $('#crm-leads-empty');
-  const wrapper = $('#crm-leads-table-wrapper');
-
-  if (!tbody || !empty || !wrapper) return;
-
+function getFilteredCrmLeads() {
   const f = state.filters.crmLeads;
   const search = (f.search || '').toLowerCase();
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-
-  renderActiveFilterChips('crmLeads');
-  renderHeaderFilters('crmLeads');
 
   let leads = state.crmLeads.filter((l) =>
     f.archived === 'archived' ? l.is_archived : !l.is_archived
@@ -5537,11 +5904,28 @@ function renderCrmLeads() {
     leads = leads.filter((l) => matchesDateBucketFilter(l.updated_at, f.lastActivity, today));
   }
 
+  return leads;
+}
+
+function renderCrmLeads() {
+  const tbody = $('#crm-leads-table-body');
+  const empty = $('#crm-leads-empty');
+  const wrapper = $('#crm-leads-table-wrapper');
+
+  if (!tbody || !empty || !wrapper) return;
+
+  renderActiveFilterChips('crmLeads');
+  renderHeaderFilters('crmLeads');
+
+  let leads = getFilteredCrmLeads();
+  pruneCrmSelection('leads', leads);
+
   if (leads.length === 0) {
     tbody.innerHTML = '';
     empty.classList.remove('hidden');
     wrapper.classList.add('hidden');
     refreshIcons();
+    renderCrmSelectionUI('leads');
     return;
   }
 
@@ -5584,12 +5968,19 @@ function renderCrmLeads() {
            </button>`
         : '';
 
+      const deleteBtn = admin
+        ? `<button class="icon-btn danger" data-action="permanent-delete-lead" data-id="${l.id}" title="Delete permanently">
+             <i data-lucide="trash-2" class="w-4 h-4"></i>
+           </button>`
+        : '';
+
       const actionsCell = admin
-        ? `<div class="inline-flex items-center gap-1">${editBtn}${archiveBtn}${restoreBtn}</div>`
+        ? `<div class="inline-flex items-center gap-1">${editBtn}${archiveBtn}${restoreBtn}${deleteBtn}</div>`
         : '<span class="text-xs text-gray-400">View only</span>';
 
       return `
         <tr>
+          ${admin ? crmRowCheckboxCell('leads', l.id) : ''}
           <td class="px-5 py-3.5">
             <div class="min-w-0">
               <button
@@ -5612,21 +6003,13 @@ function renderCrmLeads() {
     .join('');
 
   refreshIcons();
+  renderCrmSelectionUI('leads');
 }
 
 // ---------- CRM Clients Render ----------
-function renderCrmClients() {
-  const tbody = $('#crm-clients-table-body');
-  const empty = $('#crm-clients-empty');
-  const wrapper = $('#crm-clients-table-wrapper');
-
-  if (!tbody || !empty || !wrapper) return;
-
+function getFilteredCrmClients() {
   const f = state.filters.crmClients;
   const search = (f.search || '').toLowerCase();
-
-  renderActiveFilterChips('crmClients');
-  renderHeaderFilters('crmClients');
 
   let clients = state.crmClients.filter((c) =>
     f.archived === 'archived' ? c.is_archived : !c.is_archived
@@ -5655,11 +6038,28 @@ function renderCrmClients() {
     clients = clients.filter((c) => (c.client_name || '').trim() === f.company);
   }
 
+  return clients;
+}
+
+function renderCrmClients() {
+  const tbody = $('#crm-clients-table-body');
+  const empty = $('#crm-clients-empty');
+  const wrapper = $('#crm-clients-table-wrapper');
+
+  if (!tbody || !empty || !wrapper) return;
+
+  renderActiveFilterChips('crmClients');
+  renderHeaderFilters('crmClients');
+
+  let clients = getFilteredCrmClients();
+  pruneCrmSelection('clients', clients);
+
   if (clients.length === 0) {
     tbody.innerHTML = '';
     empty.classList.remove('hidden');
     wrapper.classList.add('hidden');
     refreshIcons();
+    renderCrmSelectionUI('clients');
     return;
   }
 
@@ -5688,12 +6088,19 @@ function renderCrmClients() {
            </button>`
         : '';
 
+      const deleteBtn = admin
+        ? `<button class="icon-btn danger" data-action="permanent-delete-client" data-id="${c.id}" title="Delete permanently">
+             <i data-lucide="trash-2" class="w-4 h-4"></i>
+           </button>`
+        : '';
+
       const actionsCell = admin
-        ? `<div class="inline-flex items-center gap-1">${editBtn}${archiveBtn}${restoreBtn}</div>`
+        ? `<div class="inline-flex items-center gap-1">${editBtn}${archiveBtn}${restoreBtn}${deleteBtn}</div>`
         : '<span class="text-xs text-gray-400">View only</span>';
 
       return `
         <tr>
+          ${admin ? crmRowCheckboxCell('clients', c.id) : ''}
           <td class="px-5 py-3.5">
             <div class="min-w-0">
               <button class="text-sm font-medium text-gray-900 hover:text-indigo-600 text-left" data-action="open-client-details" data-id="${c.id}">${escapeHtml(c.client_name)}</button>
@@ -5710,10 +6117,18 @@ function renderCrmClients() {
     .join('');
 
   refreshIcons();
+  renderCrmSelectionUI('clients');
 }
 
 // ---------- CRM Tab ----------
 function setCrmTab(tab) {
+  // Bulk-selection is scoped per CRM tab — capture the outgoing tab BEFORE
+  // state.crmTab changes, and clear its selection so bulk actions/toolbars
+  // never operate across tabs.
+  const previousTab = state.crmTab;
+  if (tab !== previousTab) {
+    state.crmSelections[previousTab]?.clear();
+  }
   state.crmTab = tab;
   const tabs = ['dashboard', 'leads', 'clients', 'contacts', 'deals', 'activities', 'proposals', 'services'];
   tabs.forEach(t => {
@@ -5728,6 +6143,12 @@ function setCrmTab(tab) {
       btn.classList.toggle('text-gray-500', !active);
     }
   });
+  // Re-render the destination tab's table so its row checkboxes reflect
+  // current (possibly just-cleared) selection state — the checkboxes' native
+  // DOM `checked` property does not update itself just because the JS Set
+  // backing it was cleared while the tab was hidden.
+  if (CRM_RENDERERS[tab]) CRM_RENDERERS[tab]();
+  renderCrmSelectionUI(tab);
 }
 
 // ---------- CRM Timeline Helper ----------
@@ -6038,17 +6459,9 @@ function renderCrmDashboard() {
 }
 
 // ---------- CRM Contacts Render ----------
-function renderCrmContacts() {
-  const tbody = $('#crm-contacts-table-body');
-  const empty = $('#crm-contacts-empty');
-  const wrapper = $('#crm-contacts-table-wrapper');
-  if (!tbody || !empty || !wrapper) return;
-
+function getFilteredCrmContacts() {
   const f = state.filters.crmContacts;
   const search = (f.search || '').toLowerCase();
-
-  renderActiveFilterChips('crmContacts');
-  renderHeaderFilters('crmContacts');
 
   let contacts = state.crmContacts.filter(c =>
     f.archived === 'archived' ? c.is_archived : !c.is_archived
@@ -6074,11 +6487,27 @@ function renderCrmContacts() {
     contacts = contacts.filter(c => (c.email || '').trim() === f.email);
   }
 
+  return contacts;
+}
+
+function renderCrmContacts() {
+  const tbody = $('#crm-contacts-table-body');
+  const empty = $('#crm-contacts-empty');
+  const wrapper = $('#crm-contacts-table-wrapper');
+  if (!tbody || !empty || !wrapper) return;
+
+  renderActiveFilterChips('crmContacts');
+  renderHeaderFilters('crmContacts');
+
+  let contacts = getFilteredCrmContacts();
+  pruneCrmSelection('contacts', contacts);
+
   if (contacts.length === 0) {
     tbody.innerHTML = '';
     empty.classList.remove('hidden');
     wrapper.classList.add('hidden');
     refreshIcons();
+    renderCrmSelectionUI('contacts');
     return;
   }
   empty.classList.add('hidden');
@@ -6089,6 +6518,7 @@ function renderCrmContacts() {
     const client = state.crmClients.find(cl => Number(cl.id) === Number(c.client_id));
     return `
       <tr>
+        ${admin ? crmRowCheckboxCell('contacts', c.id) : ''}
         <td class="px-5 py-3.5">
           <button class="text-sm font-medium text-gray-900 hover:text-indigo-600 text-left" data-action="open-contact-details" data-id="${c.id}">${escapeHtml(c.contact_name)}</button>
           ${c.title ? `<p class="text-xs text-gray-500">${escapeHtml(c.title)}</p>` : ''}
@@ -6101,28 +6531,22 @@ function renderCrmContacts() {
           ${admin ? `<div class="inline-flex items-center gap-1">
             <button class="icon-btn" data-action="edit-contact" data-id="${c.id}" title="Edit contact"><i data-lucide="pencil" class="w-4 h-4"></i></button>
             ${!c.is_archived ? `<button class="icon-btn" data-action="archive-contact" data-id="${c.id}" title="Archive contact"><i data-lucide="archive" class="w-4 h-4"></i></button>` : `<button class="icon-btn text-emerald-600" data-action="restore-contact" data-id="${c.id}" title="Restore to Active"><i data-lucide="rotate-ccw" class="w-4 h-4"></i></button>`}
+            <button class="icon-btn danger" data-action="permanent-delete-contact" data-id="${c.id}" title="Delete permanently"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
           </div>` : '<span class="text-xs text-gray-400">View only</span>'}
         </td>
       </tr>
     `;
   }).join('');
   refreshIcons();
+  renderCrmSelectionUI('contacts');
 }
 
 // ---------- CRM Deals Render ----------
-function renderCrmDeals() {
-  const tbody = $('#crm-deals-table-body');
-  const empty = $('#crm-deals-empty');
-  const wrapper = $('#crm-deals-table-wrapper');
-  if (!tbody || !empty || !wrapper) return;
-
+function getFilteredCrmDeals() {
   const f = state.filters.crmDeals;
   const search = (f.search || '').toLowerCase();
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-
-  renderActiveFilterChips('crmDeals');
-  renderHeaderFilters('crmDeals');
 
   let deals = state.crmDeals.filter(d =>
     f.archived === 'archived' ? d.is_archived : !d.is_archived
@@ -6150,11 +6574,27 @@ function renderCrmDeals() {
     deals = deals.filter(d => matchesDateBucketFilter(d.expected_close_date, f.closeDate, today));
   }
 
+  return deals;
+}
+
+function renderCrmDeals() {
+  const tbody = $('#crm-deals-table-body');
+  const empty = $('#crm-deals-empty');
+  const wrapper = $('#crm-deals-table-wrapper');
+  if (!tbody || !empty || !wrapper) return;
+
+  renderActiveFilterChips('crmDeals');
+  renderHeaderFilters('crmDeals');
+
+  let deals = getFilteredCrmDeals();
+  pruneCrmSelection('deals', deals);
+
   if (deals.length === 0) {
     tbody.innerHTML = '';
     empty.classList.remove('hidden');
     wrapper.classList.add('hidden');
     refreshIcons();
+    renderCrmSelectionUI('deals');
     return;
   }
   empty.classList.add('hidden');
@@ -6167,6 +6607,7 @@ function renderCrmDeals() {
     const value = d.value != null ? `${Number(d.value).toLocaleString()} ${d.currency || 'EGP'}` : '—';
     return `
       <tr>
+        ${admin ? crmRowCheckboxCell('deals', d.id) : ''}
         <td class="px-5 py-3.5">
           <button class="text-sm font-medium text-gray-900 hover:text-indigo-600 text-left" data-action="open-deal-details" data-id="${d.id}">
             ${escapeHtml(d.deal_name)}
@@ -6181,28 +6622,22 @@ function renderCrmDeals() {
           ${admin ? `<div class="inline-flex items-center gap-1">
             <button class="icon-btn" data-action="edit-deal" data-id="${d.id}" title="Edit deal"><i data-lucide="pencil" class="w-4 h-4"></i></button>
             ${!d.is_archived ? `<button class="icon-btn" data-action="archive-deal" data-id="${d.id}" title="Archive deal"><i data-lucide="archive" class="w-4 h-4"></i></button>` : `<button class="icon-btn text-emerald-600" data-action="restore-deal" data-id="${d.id}" title="Restore to Active"><i data-lucide="rotate-ccw" class="w-4 h-4"></i></button>`}
+            <button class="icon-btn danger" data-action="permanent-delete-deal" data-id="${d.id}" title="Delete permanently"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
           </div>` : '<span class="text-xs text-gray-400">View only</span>'}
         </td>
       </tr>
     `;
   }).join('');
   refreshIcons();
+  renderCrmSelectionUI('deals');
 }
 
 // ---------- CRM Activities Render ----------
-function renderCrmActivities() {
-  const tbody = $('#crm-activities-table-body');
-  const empty = $('#crm-activities-empty');
-  const wrapper = $('#crm-activities-table-wrapper');
-  if (!tbody || !empty || !wrapper) return;
-
+function getFilteredCrmActivities() {
   const f = state.filters.crmActivities;
   const search = (f.search || '').toLowerCase();
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-
-  renderActiveFilterChips('crmActivities');
-  renderHeaderFilters('crmActivities');
 
   let activities = state.crmActivities.filter(a =>
     f.archived === 'archived' ? a.is_archived : !a.is_archived
@@ -6227,11 +6662,27 @@ function renderCrmActivities() {
     activities = activities.filter(a => Number(a.owner_id) === Number(f.owner));
   }
 
+  return activities;
+}
+
+function renderCrmActivities() {
+  const tbody = $('#crm-activities-table-body');
+  const empty = $('#crm-activities-empty');
+  const wrapper = $('#crm-activities-table-wrapper');
+  if (!tbody || !empty || !wrapper) return;
+
+  renderActiveFilterChips('crmActivities');
+  renderHeaderFilters('crmActivities');
+
+  let activities = getFilteredCrmActivities();
+  pruneCrmSelection('activities', activities);
+
   if (activities.length === 0) {
     tbody.innerHTML = '';
     empty.classList.remove('hidden');
     wrapper.classList.add('hidden');
     refreshIcons();
+    renderCrmSelectionUI('activities');
     return;
   }
   empty.classList.add('hidden');
@@ -6243,6 +6694,7 @@ function renderCrmActivities() {
     const owner = state.teamMembers.find(m => Number(m.id) === Number(a.owner_id));
     return `
       <tr>
+        ${admin ? crmRowCheckboxCell('activities', a.id) : ''}
         <td class="px-5 py-3.5">
           <p class="text-sm font-medium text-gray-900">${escapeHtml(a.title)}</p>
         </td>
@@ -6255,28 +6707,22 @@ function renderCrmActivities() {
           ${admin ? `<div class="inline-flex items-center gap-1">
             <button class="icon-btn" data-action="edit-activity" data-id="${a.id}" title="Edit activity"><i data-lucide="pencil" class="w-4 h-4"></i></button>
             ${!a.is_archived ? `<button class="icon-btn" data-action="archive-activity" data-id="${a.id}" title="Archive activity"><i data-lucide="archive" class="w-4 h-4"></i></button>` : `<button class="icon-btn text-emerald-600" data-action="restore-activity" data-id="${a.id}" title="Restore to Active"><i data-lucide="rotate-ccw" class="w-4 h-4"></i></button>`}
+            <button class="icon-btn danger" data-action="permanent-delete-activity" data-id="${a.id}" title="Delete permanently"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
           </div>` : '<span class="text-xs text-gray-400">View only</span>'}
         </td>
       </tr>
     `;
   }).join('');
   refreshIcons();
+  renderCrmSelectionUI('activities');
 }
 
 // ---------- CRM Proposals Render ----------
-function renderCrmProposals() {
-  const tbody = $('#crm-proposals-table-body');
-  const empty = $('#crm-proposals-empty');
-  const wrapper = $('#crm-proposals-table-wrapper');
-  if (!tbody || !empty || !wrapper) return;
-
+function getFilteredCrmProposals() {
   const f = state.filters.crmProposals;
   const search = (f.search || '').toLowerCase();
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-
-  renderActiveFilterChips('crmProposals');
-  renderHeaderFilters('crmProposals');
 
   let proposals = state.crmProposals.filter(p =>
     f.archived === 'archived' ? p.is_archived : !p.is_archived
@@ -6303,11 +6749,27 @@ function renderCrmProposals() {
     proposals = proposals.filter(p => Number(p.owner_id) === Number(f.owner));
   }
 
+  return proposals;
+}
+
+function renderCrmProposals() {
+  const tbody = $('#crm-proposals-table-body');
+  const empty = $('#crm-proposals-empty');
+  const wrapper = $('#crm-proposals-table-wrapper');
+  if (!tbody || !empty || !wrapper) return;
+
+  renderActiveFilterChips('crmProposals');
+  renderHeaderFilters('crmProposals');
+
+  let proposals = getFilteredCrmProposals();
+  pruneCrmSelection('proposals', proposals);
+
   if (proposals.length === 0) {
     tbody.innerHTML = '';
     empty.classList.remove('hidden');
     wrapper.classList.add('hidden');
     refreshIcons();
+    renderCrmSelectionUI('proposals');
     return;
   }
   empty.classList.add('hidden');
@@ -6320,6 +6782,7 @@ function renderCrmProposals() {
     const amount = p.amount != null ? `${Number(p.amount).toLocaleString()} ${p.currency || 'EGP'}` : '—';
     return `
       <tr>
+        ${admin ? crmRowCheckboxCell('proposals', p.id) : ''}
         <td class="px-5 py-3.5">
           <p class="text-sm font-medium text-gray-900">${escapeHtml(p.proposal_title)}</p>
         </td>
@@ -6332,12 +6795,14 @@ function renderCrmProposals() {
           ${admin ? `<div class="inline-flex items-center gap-1">
             <button class="icon-btn" data-action="edit-proposal" data-id="${p.id}" title="Edit proposal"><i data-lucide="pencil" class="w-4 h-4"></i></button>
             ${!p.is_archived ? `<button class="icon-btn" data-action="archive-proposal" data-id="${p.id}" title="Archive proposal"><i data-lucide="archive" class="w-4 h-4"></i></button>` : `<button class="icon-btn text-emerald-600" data-action="restore-proposal" data-id="${p.id}" title="Restore to Active"><i data-lucide="rotate-ccw" class="w-4 h-4"></i></button>`}
+            <button class="icon-btn danger" data-action="permanent-delete-proposal" data-id="${p.id}" title="Delete permanently"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
           </div>` : '<span class="text-xs text-gray-400">View only</span>'}
         </td>
       </tr>
     `;
   }).join('');
   refreshIcons();
+  renderCrmSelectionUI('proposals');
 }
 
 // Sprint CRM-4.5D Fix Pass 2 — a Lead may qualify multiple Deals (approved
@@ -6918,6 +7383,12 @@ function openDealDetailsModal(id) {
 
   const editBtn = $('#deal-details-modal-edit-btn');
   if (editBtn) editBtn.dataset.id = deal.id;
+
+  const deleteBtn = $('#deal-details-modal-delete-btn');
+  if (deleteBtn) {
+    deleteBtn.dataset.id = deal.id;
+    deleteBtn.classList.toggle('hidden', !isAdmin());
+  }
 
   const addActivityBtn = $('#deal-details-modal-add-activity-btn');
   if (addActivityBtn) addActivityBtn.dataset.dealId = deal.id;
@@ -13154,8 +13625,158 @@ function openConfirm(type, id, label) {
 }
 function closeConfirm() {
   state.pendingDelete = null;
+  state.pendingBulk = null;
   $('#confirm-modal').classList.add('hidden');
   document.body.style.overflow = '';
+}
+
+// ---------- CRM Permanent Delete / Bulk Confirm entry points ----------
+function openPermaDeleteConfirm(entityKey, id) {
+  const cfg = CRM_ENTITY_CONFIG[entityKey];
+  const record = state[cfg.stateKey].find((r) => Number(r[cfg.idField]) === id);
+  const label = record ? `"${record[cfg.labelField] || 'this record'}"` : 'This record';
+  openConfirm(`crm_${entityKey}_permanent_delete`, id, label);
+  // Deal Details is a modal, not a routed view — remember whether it was
+  // open so confirmDelete()'s epilogue knows to close it after a successful
+  // delete (mirrors the closeModal()-before-navigating pattern used by the
+  // existing edit-deal dispatcher case).
+  if (entityKey === 'deals') {
+    const dealModal = $('#deal-details-modal');
+    state.pendingDelete.fromDealModal = !!(dealModal && !dealModal.classList.contains('hidden'));
+  }
+}
+
+// Deal-specific entry point for the row/modal Delete-Permanently button:
+// detects Projects still linked via projects.deal_id and, if any exist,
+// opens a dedicated "detach and delete" confirmation instead of letting the
+// normal permanent-delete flow hit the FK error. Falls back to the standard
+// flow when nothing is linked.
+function openDealPermanentDeleteConfirm(id) {
+  const { linkedProjects, linkedActivities } = getCrmDealDependencies(id);
+
+  // A non-Project dependency (Activities) blocks the flow entirely — no
+  // confirmation is even offered, since the detach step is not safely
+  // reversible if the delete step then fails on this exact FK. See the
+  // safety note on detachProjectsAndDeleteCrmDeal(), which re-checks this
+  // same condition at write time.
+  if (linkedActivities.length > 0) {
+    toast(describeCrmDealBlockingDependencies(linkedActivities), 'error');
+    return;
+  }
+
+  if (linkedProjects.length === 0) {
+    openPermaDeleteConfirm('deals', id);
+    return;
+  }
+
+  const deal = state.crmDeals.find((d) => Number(d.id) === id);
+  const label = deal ? `"${deal.deal_name}"` : 'This deal';
+  // Type ends in _permanent_delete (not e.g. "..._detach_and_delete") so
+  // confirmDelete()'s success-toast fallback (labelize(type)) never runs —
+  // that branch mangles compound type strings into garbled text (the same
+  // class of bug already fixed once for openBulkConfirm()'s title). Title/
+  // icon/button below are overridden regardless of the suffix.
+  openConfirm('crm_deal_detach_permanent_delete', id, label);
+
+  const dealModal = $('#deal-details-modal');
+  state.pendingDelete.fromDealModal = !!(dealModal && !dealModal.classList.contains('hidden'));
+
+  // openConfirm()'s type-suffix styling has no concept of this flow —
+  // override title/message/icon/button directly, same technique already
+  // used by openBulkConfirm() for its title.
+  const n = linkedProjects.length;
+  const titleEl = $('#confirm-modal-title');
+  if (titleEl) titleEl.textContent = 'Detach Project and Delete Deal?';
+  const msgEl = $('#confirm-msg');
+  if (msgEl) {
+    msgEl.textContent = `This Deal is linked to ${n} Project${n === 1 ? '' : 's'}. The Project record${n === 1 ? '' : 's'} will remain, but ${n === 1 ? 'its' : 'their'} CRM Origin link to this Deal will be removed. The Deal will then be permanently deleted.`;
+  }
+  const iconWrap = $('#confirm-icon-wrap');
+  if (iconWrap) {
+    iconWrap.className = 'w-12 h-12 mx-auto rounded-full bg-red-50 text-red-700 flex items-center justify-center mb-4';
+    iconWrap.innerHTML = '<i data-lucide="unlink" class="w-5 h-5"></i>';
+  }
+  const btn = $('#confirm-delete-btn');
+  if (btn) {
+    btn.className = 'h-9 px-4 inline-flex items-center gap-2 bg-red-700 hover:bg-red-800 text-white text-sm font-medium rounded-lg shadow-sm';
+    btn.innerHTML = '<i data-lucide="unlink" class="w-4 h-4"></i> Detach and Delete Deal';
+  }
+  refreshIcons();
+}
+
+// Entry point for the "Delete Commercial Data" button in Project Details'
+// Commercial Summary.
+function openDeleteProjectCommercialDataConfirm(projectId) {
+  openConfirm('project_commercial_data_permanent_delete', projectId, 'Commercial Data');
+  const titleEl = $('#confirm-modal-title');
+  if (titleEl) titleEl.textContent = 'Delete Project Commercial Data?';
+  const msgEl = $('#confirm-msg');
+  if (msgEl) {
+    msgEl.textContent = "This will permanently delete the Project's Commercial Terms, Payment Schedule Items, linked Forecasts, and linked Transactions. The Project and its Tasks will remain. This action cannot be undone.";
+  }
+  const btn = $('#confirm-delete-btn');
+  if (btn) btn.innerHTML = '<i data-lucide="trash-2" class="w-4 h-4"></i> Delete Commercial Data';
+  refreshIcons();
+}
+
+function openBulkConfirm(entityKey, kind) {
+  const cfg = CRM_ENTITY_CONFIG[entityKey];
+  const ids = Array.from(state.crmSelections[cfg.selectionKey]);
+  if (ids.length === 0) return;
+  state.pendingBulk = { entityKey, kind, ids };
+  const label = `The selected ${ids.length} ${cfg.pluralLabel}`;
+  const type = kind === 'delete' ? `crm_${entityKey}_bulk_permanent_delete` : `crm_${entityKey}_bulk_archive`;
+  openConfirm(type, null, label);
+  // openConfirm() derives its default title from `type` via labelize(), which
+  // would mangle a compound type string like "crm_clients_bulk_archive" into
+  // "Crm Clients Bulk" — override with a proper count+entity title here
+  // instead of teaching openConfirm() a new bulk-specific title format.
+  const titleEl = $('#confirm-modal-title');
+  if (titleEl) {
+    titleEl.textContent = kind === 'delete'
+      ? `Delete ${ids.length} ${cfg.pluralLabel} Permanently?`
+      : `Archive ${ids.length} ${cfg.pluralLabel}?`;
+  }
+}
+
+async function confirmBulkAction() {
+  const { entityKey, kind, ids } = state.pendingBulk;
+  const cfg = CRM_ENTITY_CONFIG[entityKey];
+  const btn = $('#confirm-delete-btn');
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Processing…`;
+    refreshIcons();
+  }
+
+  let ok = false;
+  let message = '';
+  if (kind === 'archive') {
+    ok = await bulkUpdateCrmArchiveState(entityKey, ids, true);
+  } else {
+    const r = await permanentlyDeleteCrmRecordsBulk(entityKey, ids);
+    ok = r.ok;
+    message = r.message;
+  }
+
+  if (btn) btn.disabled = false;
+  closeConfirm();
+
+  if (ok) {
+    if (kind === 'delete') {
+      state[cfg.stateKey] = state[cfg.stateKey].filter((r) => !ids.includes(Number(r[cfg.idField])));
+    } else {
+      state[cfg.stateKey].forEach((r) => {
+        if (ids.includes(Number(r[cfg.idField]))) { r.is_archived = true; r.updated_at = new Date().toISOString(); }
+      });
+    }
+    ids.forEach((id) => state.crmSelections[cfg.selectionKey].delete(id));
+    CRM_RENDERERS[entityKey]();
+    renderCrmSelectionUI(entityKey);
+    toast(kind === 'delete' ? `${ids.length} permanently deleted.` : `${ids.length} archived.`, 'success');
+  } else {
+    toast(message || 'Bulk action failed.', 'error');
+  }
 }
 
 // ---------- Sidebar Mobile ----------
@@ -14784,11 +15405,22 @@ async function handleTaskSubmit(e) {
 
 // ---------- Delete Handlers ----------
 async function confirmDelete() {
+  if (state.pendingBulk) return confirmBulkAction();
   if (!state.pendingDelete) return;
 
   const { type, id } = state.pendingDelete;
   const currentView = state.view;
+  const wasFromDealModal = !!state.pendingDelete.fromDealModal;
   const btn = $('#confirm-delete-btn');
+
+  // Narrow-render targets, set by the CRM archive/permanent-delete branches
+  // below so the epilogue can splice local state + re-render just the
+  // affected CRM table instead of the app-wide refreshDataAndRender().
+  let narrowCrmEntity = null;   // archive: entity key whose row was updated
+  let narrowCrmRecord = null;   // archive: the server's updated row
+  let narrowCrmDeleteEntity = null; // permanent delete: entity key whose row was removed
+  let narrowDealDetachProjectIds = null; // detach-and-delete: Project ids that were unlinked
+  let narrowProjectCommercialDelete = false; // Project Commercial Data delete succeeded
 
   btn.disabled = true;
   btn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Processing…`;
@@ -14809,27 +15441,113 @@ async function confirmDelete() {
   }
 
   if (type === 'lead_archive') {
-    ok = !!(await archiveCrmLead(id));
+    const updated = await archiveCrmLead(id);
+    ok = !!updated;
+    if (ok) { narrowCrmEntity = 'leads'; narrowCrmRecord = updated; }
   }
 
   if (type === 'client_archive') {
-    ok = !!(await archiveCrmClient(id));
+    const updated = await archiveCrmClient(id);
+    ok = !!updated;
+    if (ok) { narrowCrmEntity = 'clients'; narrowCrmRecord = updated; }
   }
 
   if (type === 'contact_archive') {
-    ok = !!(await archiveCrmContact(id));
+    const updated = await archiveCrmContact(id);
+    ok = !!updated;
+    if (ok) { narrowCrmEntity = 'contacts'; narrowCrmRecord = updated; }
   }
 
   if (type === 'deal_archive') {
-    ok = !!(await archiveCrmDeal(id));
+    const updated = await archiveCrmDeal(id);
+    ok = !!updated;
+    if (ok) { narrowCrmEntity = 'deals'; narrowCrmRecord = updated; }
   }
 
   if (type === 'activity_archive') {
-    ok = !!(await archiveCrmActivity(id));
+    const updated = await archiveCrmActivity(id);
+    ok = !!updated;
+    if (ok) { narrowCrmEntity = 'activities'; narrowCrmRecord = updated; }
   }
 
   if (type === 'proposal_archive') {
-    ok = !!(await archiveCrmProposal(id));
+    const updated = await archiveCrmProposal(id);
+    ok = !!updated;
+    if (ok) { narrowCrmEntity = 'proposals'; narrowCrmRecord = updated; }
+  }
+
+  if (type === 'crm_leads_permanent_delete') {
+    const r = await permanentlyDeleteCrmRecord('leads', id);
+    ok = r.ok;
+    if (ok) narrowCrmDeleteEntity = 'leads'; else toast(r.message, 'error');
+  }
+  if (type === 'crm_clients_permanent_delete') {
+    const r = await permanentlyDeleteCrmRecord('clients', id);
+    ok = r.ok;
+    if (ok) narrowCrmDeleteEntity = 'clients'; else toast(r.message, 'error');
+  }
+  if (type === 'crm_contacts_permanent_delete') {
+    const r = await permanentlyDeleteCrmRecord('contacts', id);
+    ok = r.ok;
+    if (ok) narrowCrmDeleteEntity = 'contacts'; else toast(r.message, 'error');
+  }
+  if (type === 'crm_deals_permanent_delete') {
+    const r = await permanentlyDeleteCrmRecord('deals', id);
+    ok = r.ok;
+    if (ok) narrowCrmDeleteEntity = 'deals'; else toast(r.message, 'error');
+  }
+  if (type === 'crm_activities_permanent_delete') {
+    const r = await permanentlyDeleteCrmRecord('activities', id);
+    ok = r.ok;
+    if (ok) narrowCrmDeleteEntity = 'activities'; else toast(r.message, 'error');
+  }
+  if (type === 'crm_proposals_permanent_delete') {
+    const r = await permanentlyDeleteCrmRecord('proposals', id);
+    ok = r.ok;
+    if (ok) narrowCrmDeleteEntity = 'proposals'; else toast(r.message, 'error');
+  }
+
+  if (type === 'crm_deal_detach_permanent_delete') {
+    const r = await detachProjectsAndDeleteCrmDeal(id);
+    ok = r.ok;
+    if (ok) {
+      narrowCrmDeleteEntity = 'deals';
+      narrowDealDetachProjectIds = r.projectIds;
+    } else if (r.stage === 'delete' && Array.isArray(r.projectIds)) {
+      // Detach succeeded in the DB even though the overall operation is
+      // reported as failed — refetch just those Projects narrowly so local
+      // state doesn't silently drift from the database, then re-render if
+      // the user happens to be viewing one of them right now.
+      toast(r.message, 'error');
+      const refreshed = await refetchProjectsById(r.projectIds);
+      const byId = new Map(refreshed.map((p) => [Number(p.id), p]));
+      state.projects.forEach((p) => {
+        const fresh = byId.get(Number(p.id));
+        if (fresh) Object.assign(p, fresh);
+      });
+      if (currentView === 'project-details' && byId.has(Number(state.selectedProjectId))) {
+        renderProjectDetails();
+      }
+    } else {
+      toast(r.message || 'Failed to detach and delete deal.', 'error');
+    }
+  }
+
+  if (type === 'project_commercial_data_permanent_delete') {
+    const r = await deleteProjectCommercialData(id);
+    ok = r.ok;
+    if (ok) {
+      narrowProjectCommercialDelete = true;
+    } else {
+      toast(r.message || 'Failed to delete Commercial Data.', 'error');
+      // deleteProjectCommercialData() already resynced local state to match
+      // the DB even on partial failure — re-render now so the UI reflects
+      // whatever partial deletion actually happened.
+      if (state.view === 'project-details') renderProjectDetails();
+      renderFinanceDashboard();
+      renderFinanceTransactions();
+      renderFinanceForecast();
+    }
   }
 
   if (type === 'finance_transaction_archive') {
@@ -14874,7 +15592,46 @@ async function confirmDelete() {
       : `${labelize(type)} deleted`;
     toast(toastMsg, 'success');
 
-    await refreshDataAndRender();
+    if (narrowCrmEntity) {
+      // Archive: splice the server's updated row back into local state and
+      // re-render only the affected CRM table — no app-wide refetch.
+      const cfg = CRM_ENTITY_CONFIG[narrowCrmEntity];
+      const idx = state[cfg.stateKey].findIndex((r) => Number(r[cfg.idField]) === id);
+      if (idx !== -1) state[cfg.stateKey][idx] = narrowCrmRecord;
+      pruneCrmSelection(cfg.selectionKey, cfg.getFiltered());
+      CRM_RENDERERS[narrowCrmEntity]();
+      renderCrmSelectionUI(narrowCrmEntity);
+    } else if (narrowCrmDeleteEntity) {
+      // Permanent delete: drop the row from local state and re-render only
+      // the affected CRM table — no app-wide refetch.
+      const cfg = CRM_ENTITY_CONFIG[narrowCrmDeleteEntity];
+      state[cfg.stateKey] = state[cfg.stateKey].filter((r) => Number(r[cfg.idField]) !== Number(id));
+      state.crmSelections[cfg.selectionKey].delete(Number(id));
+      CRM_RENDERERS[narrowCrmDeleteEntity]();
+      renderCrmSelectionUI(narrowCrmDeleteEntity);
+      if (narrowCrmDeleteEntity === 'deals' && wasFromDealModal) closeModal();
+      if (narrowCrmDeleteEntity === 'deals' && narrowDealDetachProjectIds) {
+        // Detach-and-delete flow: null out deal_id on the affected Projects
+        // in local state (already updated in the DB by step 1) and refresh
+        // Project Details if the user happens to be viewing one of them.
+        const idSet = new Set(narrowDealDetachProjectIds.map(Number));
+        state.projects.forEach((p) => { if (idSet.has(Number(p.id))) p.deal_id = null; });
+        if (currentView === 'project-details' && idSet.has(Number(state.selectedProjectId))) {
+          renderProjectDetails();
+        }
+      }
+    } else if (narrowProjectCommercialDelete) {
+      // Project Commercial Data delete: local state was already spliced
+      // inside deleteProjectCommercialData() — just re-render the affected
+      // views (Project Details' Commercial Summary + the Finance views that
+      // could show the now-deleted Forecasts/Transactions).
+      if (state.view === 'project-details') renderProjectDetails();
+      renderFinanceDashboard();
+      renderFinanceTransactions();
+      renderFinanceForecast();
+    } else {
+      await refreshDataAndRender();
+    }
 
     if (currentView === 'projects') {
       setView('projects');
@@ -15295,6 +16052,9 @@ function renderProjectCommercialSection(project) {
   emptyEl?.classList.add('hidden');
   summaryEl?.classList.remove('hidden');
   scheduleCard?.classList.remove('hidden');
+
+  const deleteCommercialBtn = $('#commercial-delete-btn');
+  if (deleteCommercialBtn) deleteCommercialBtn.dataset.id = project.id;
 
   const items = state.projectPaymentScheduleItems.filter(
     (i) => Number(i.commercial_terms_id) === Number(terms.id)
@@ -17982,10 +18742,14 @@ if (action === 'archive-lead') {
 if (action === 'restore-lead') {
   const id = Number(trigger.dataset.id);
   (async () => {
-    const result = await restoreCrmLead(id);
-    if (result) {
+    const updated = await restoreCrmLead(id);
+    if (updated) {
+      const idx = state.crmLeads.findIndex((l) => Number(l.id) === id);
+      if (idx !== -1) state.crmLeads[idx] = updated;
+      pruneCrmSelection('leads', getFilteredCrmLeads());
+      CRM_RENDERERS.leads();
+      renderCrmSelectionUI('leads');
       toast('Lead restored to Active.', 'success');
-      await refreshDataAndRender();
     }
   })();
   return;
@@ -18012,10 +18776,14 @@ if (action === 'archive-client') {
 if (action === 'restore-client') {
   const id = Number(trigger.dataset.id);
   (async () => {
-    const result = await restoreCrmClient(id);
-    if (result) {
+    const updated = await restoreCrmClient(id);
+    if (updated) {
+      const idx = state.crmClients.findIndex((c) => Number(c.id) === id);
+      if (idx !== -1) state.crmClients[idx] = updated;
+      pruneCrmSelection('clients', getFilteredCrmClients());
+      CRM_RENDERERS.clients();
+      renderCrmSelectionUI('clients');
       toast('Company restored to Active.', 'success');
-      await refreshDataAndRender();
     }
   })();
   return;
@@ -18070,10 +18838,14 @@ if (action === 'archive-contact') {
 if (action === 'restore-contact') {
   const id = Number(trigger.dataset.id);
   (async () => {
-    const result = await restoreCrmContact(id);
-    if (result) {
+    const updated = await restoreCrmContact(id);
+    if (updated) {
+      const idx = state.crmContacts.findIndex((c) => Number(c.id) === id);
+      if (idx !== -1) state.crmContacts[idx] = updated;
+      pruneCrmSelection('contacts', getFilteredCrmContacts());
+      CRM_RENDERERS.contacts();
+      renderCrmSelectionUI('contacts');
       toast('Contact restored to Active.', 'success');
-      await refreshDataAndRender();
     }
   })();
   return;
@@ -18126,10 +18898,14 @@ if (action === 'archive-deal') {
 if (action === 'restore-deal') {
   const id = Number(trigger.dataset.id);
   (async () => {
-    const result = await restoreCrmDeal(id);
-    if (result) {
+    const updated = await restoreCrmDeal(id);
+    if (updated) {
+      const idx = state.crmDeals.findIndex((d) => Number(d.id) === id);
+      if (idx !== -1) state.crmDeals[idx] = updated;
+      pruneCrmSelection('deals', getFilteredCrmDeals());
+      CRM_RENDERERS.deals();
+      renderCrmSelectionUI('deals');
       toast('Deal restored to Active.', 'success');
-      await refreshDataAndRender();
     }
   })();
   return;
@@ -18164,10 +18940,14 @@ if (action === 'archive-activity') {
 if (action === 'restore-activity') {
   const id = Number(trigger.dataset.id);
   (async () => {
-    const result = await restoreCrmActivity(id);
-    if (result) {
+    const updated = await restoreCrmActivity(id);
+    if (updated) {
+      const idx = state.crmActivities.findIndex((a) => Number(a.id) === id);
+      if (idx !== -1) state.crmActivities[idx] = updated;
+      pruneCrmSelection('activities', getFilteredCrmActivities());
+      CRM_RENDERERS.activities();
+      renderCrmSelectionUI('activities');
       toast('Activity restored to Active.', 'success');
-      await refreshDataAndRender();
     }
   })();
   return;
@@ -18201,10 +18981,14 @@ if (action === 'archive-proposal') {
 if (action === 'restore-proposal') {
   const id = Number(trigger.dataset.id);
   (async () => {
-    const result = await restoreCrmProposal(id);
-    if (result) {
+    const updated = await restoreCrmProposal(id);
+    if (updated) {
+      const idx = state.crmProposals.findIndex((p) => Number(p.id) === id);
+      if (idx !== -1) state.crmProposals[idx] = updated;
+      pruneCrmSelection('proposals', getFilteredCrmProposals());
+      CRM_RENDERERS.proposals();
+      renderCrmSelectionUI('proposals');
       toast('Proposal restored to Active.', 'success');
-      await refreshDataAndRender();
     }
   })();
   return;
@@ -18232,6 +19016,101 @@ if (action === 'crm-kpi-nav') {
     config.render();
   }
   if (tab) setCrmTab(tab);
+  return;
+}
+
+// ---------- CRM Selection / Bulk Actions / Permanent Delete ----------
+if (action === 'crm-toggle-row-selection') {
+  event.stopPropagation();
+  const key = trigger.dataset.selectionKey;
+  const id = Number(trigger.dataset.id);
+  const set = state.crmSelections[key];
+  if (set) {
+    if (trigger.checked) set.add(id); else set.delete(id);
+  }
+  renderCrmSelectionUI(state.crmTab);
+  return;
+}
+
+if (action === 'crm-toggle-select-all') {
+  const key = trigger.dataset.selectionKey;
+  const cfg = CRM_ENTITY_CONFIG[state.crmTab];
+  if (cfg) {
+    const rows = cfg.getFiltered();
+    const set = state.crmSelections[key];
+    if (trigger.checked) rows.forEach((r) => set.add(Number(r[cfg.idField])));
+    else rows.forEach((r) => set.delete(Number(r[cfg.idField])));
+    CRM_RENDERERS[state.crmTab]();
+    renderCrmSelectionUI(state.crmTab);
+  }
+  return;
+}
+
+if (action === 'crm-clear-selection') {
+  const cfg = CRM_ENTITY_CONFIG[state.crmTab];
+  if (cfg) {
+    state.crmSelections[cfg.selectionKey].clear();
+    CRM_RENDERERS[state.crmTab]();
+    renderCrmSelectionUI(state.crmTab);
+  }
+  return;
+}
+
+if (action === 'crm-bulk-archive') {
+  openBulkConfirm(state.crmTab, 'archive');
+  return;
+}
+
+if (action === 'crm-bulk-delete') {
+  openBulkConfirm(state.crmTab, 'delete');
+  return;
+}
+
+if (action === 'crm-bulk-restore') {
+  (async () => {
+    const entityKey = state.crmTab;
+    const cfg = CRM_ENTITY_CONFIG[entityKey];
+    if (!cfg) return;
+    const ids = Array.from(state.crmSelections[cfg.selectionKey]);
+    if (ids.length === 0) return;
+    const ok = await bulkUpdateCrmArchiveState(entityKey, ids, false);
+    if (ok) {
+      state[cfg.stateKey].forEach((r) => {
+        if (ids.includes(Number(r[cfg.idField]))) { r.is_archived = false; r.updated_at = new Date().toISOString(); }
+      });
+      ids.forEach((id) => state.crmSelections[cfg.selectionKey].delete(id));
+      CRM_RENDERERS[entityKey]();
+      renderCrmSelectionUI(entityKey);
+      toast(`${ids.length} ${ids.length === 1 ? 'record' : 'records'} restored.`, 'success');
+    } else {
+      toast('Bulk restore failed.', 'error');
+    }
+  })();
+  return;
+}
+
+if (action === 'permanent-delete-lead') {
+  openPermaDeleteConfirm('leads', Number(trigger.dataset.id));
+  return;
+}
+if (action === 'permanent-delete-client') {
+  openPermaDeleteConfirm('clients', Number(trigger.dataset.id));
+  return;
+}
+if (action === 'permanent-delete-contact') {
+  openPermaDeleteConfirm('contacts', Number(trigger.dataset.id));
+  return;
+}
+if (action === 'permanent-delete-deal') {
+  openDealPermanentDeleteConfirm(Number(trigger.dataset.id));
+  return;
+}
+if (action === 'permanent-delete-activity') {
+  openPermaDeleteConfirm('activities', Number(trigger.dataset.id));
+  return;
+}
+if (action === 'permanent-delete-proposal') {
+  openPermaDeleteConfirm('proposals', Number(trigger.dataset.id));
   return;
 }
 
@@ -18399,6 +19278,11 @@ if (action === 'convert-forecast-to-tx') {
 
 if (action === 'open-commercial-terms-modal') {
   openCommercialTermsModal();
+  return;
+}
+if (action === 'delete-project-commercial-data') {
+  const projectId = Number(trigger.dataset.id) || Number(state.selectedProjectId);
+  if (projectId) openDeleteProjectCommercialDataConfirm(projectId);
   return;
 }
 if (action === 'open-payment-item-modal') {

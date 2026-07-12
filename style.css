@@ -725,6 +725,24 @@ tbody tr:hover {
 }
 
 /* ============================================
+   CRM row selection & bulk actions toolbar
+   ============================================ */
+.crm-row-checkbox {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: var(--tg-color-brand-600);
+}
+th .crm-row-checkbox,
+td .crm-row-checkbox {
+  display: block;
+  margin: 0 auto;
+}
+#crm-bulk-toolbar {
+  transition: opacity var(--tg-motion-normal);
+}
+
+/* ============================================
    Recent list rows
    ============================================ */
 .recent-row {
