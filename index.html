@@ -1259,7 +1259,7 @@
           </button>
         </div>
 
-        <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+        <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-4">
           <div class="detail-card">
             <p class="text-xs text-gray-500">Contract Value</p>
             <p id="commercial-contract-value" class="font-semibold text-gray-900">—</p>
@@ -1275,6 +1275,18 @@
           <div class="detail-card">
             <p class="text-xs text-gray-500">Client Funds Value</p>
             <p id="commercial-client-funds-value" class="font-semibold text-gray-900">—</p>
+          </div>
+          <div class="detail-card">
+            <p class="text-xs text-gray-500">Outstanding Revenue</p>
+            <p id="commercial-outstanding-revenue-value" class="font-semibold text-gray-900">—</p>
+          </div>
+          <div class="detail-card">
+            <p class="text-xs text-gray-500">Outstanding Client Funds</p>
+            <p id="commercial-outstanding-client-funds-value" class="font-semibold text-gray-900">—</p>
+          </div>
+          <div class="detail-card">
+            <p class="text-xs text-gray-500">Outstanding Total</p>
+            <p id="commercial-outstanding-total-value" class="font-semibold text-gray-900">—</p>
           </div>
           <div class="detail-card">
             <p class="text-xs text-gray-500">Schedule Variance</p>
@@ -1312,6 +1324,8 @@
               <th class="px-5 py-3">Total</th>
               <th class="px-5 py-3">Revenue</th>
               <th class="px-5 py-3">Client Funds</th>
+              <th class="px-5 py-3">Collected</th>
+              <th class="px-5 py-3">Outstanding</th>
               <th class="px-5 py-3">Status</th>
               <th class="px-5 py-3">Forecast</th>
               <th class="px-5 py-3 text-right">Actions</th>
@@ -4388,6 +4402,57 @@
           <button type="button" data-action="close-modal" class="h-9 px-4 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50">Cancel</button>
           <button type="submit" class="h-9 px-4 inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg shadow-sm">
             <i data-lucide="git-fork" class="w-4 h-4"></i> Record Split Receipt
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ===== Collect Payment Modal (Sprint Finance Completion — Collections Foundation) ===== -->
+  <div id="collect-payment-modal" class="modal hidden">
+    <div class="modal-overlay" data-action="close-modal"></div>
+    <div class="modal-panel">
+      <div class="px-6 py-5 border-b border-gray-100 flex items-center justify-between">
+        <div>
+          <h3 id="collect-payment-modal-title" class="text-lg font-semibold text-gray-900">Collect Payment</h3>
+          <p id="collect-payment-modal-meta" class="text-xs text-gray-500 mt-0.5"></p>
+        </div>
+        <button data-action="close-modal" class="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center">
+          <i data-lucide="x" class="w-4 h-4 text-gray-500"></i>
+        </button>
+      </div>
+      <form id="collect-payment-form" class="px-6 py-5 space-y-4">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="form-label">Date <span class="text-rose-500">*</span></label>
+            <input name="transaction_date" type="date" required class="form-input" />
+          </div>
+          <div>
+            <label class="form-label">Account <span class="text-rose-500">*</span></label>
+            <select id="collect-payment-account" name="account_id" class="form-input" required>
+              <option value="">— Select account —</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="collect-payment-revenue-row">
+          <label class="form-label">Revenue Amount Collected</label>
+          <input name="revenue_collected" type="number" min="0" step="0.01" class="form-input" placeholder="0.00" />
+          <p id="collect-payment-revenue-outstanding" class="text-xs text-gray-500 mt-1"></p>
+        </div>
+
+        <div id="collect-payment-client-funds-row">
+          <label class="form-label">Client Funds Amount Collected</label>
+          <input name="client_funds_collected" type="number" min="0" step="0.01" class="form-input" placeholder="0.00" />
+          <p id="collect-payment-client-funds-outstanding" class="text-xs text-gray-500 mt-1"></p>
+        </div>
+
+        <p class="text-xs text-gray-400">Enter exactly what was collected. Partial amounts are supported — this can be recorded again for the remaining balance later. Amounts above the outstanding balance are allowed and will show as Over Collected.</p>
+
+        <div class="flex items-center justify-end gap-2 pt-4 border-t border-gray-100">
+          <button type="button" data-action="close-modal" class="h-9 px-4 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50">Cancel</button>
+          <button type="submit" class="h-9 px-4 inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg shadow-sm">
+            <i data-lucide="banknote" class="w-4 h-4"></i> Record Collection
           </button>
         </div>
       </form>

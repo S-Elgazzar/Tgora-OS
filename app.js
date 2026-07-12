@@ -27,6 +27,7 @@ const state = {
   editingProjectId: null,
   editingPaymentScheduleItemId: null,
   reviewingPaymentScheduleItemId: null, // Sprint Project Commercial C2 — open Review Differences modal target
+  collectingPaymentItemId: null, // Finance Completion Sprint — open Collect Payment modal target
   filters: {
     projects: {
       status: 'all',
@@ -1658,6 +1659,21 @@ async function createFinanceTransaction(payload) {
   const { data, error } = await supabaseClient.from('finance_transactions').insert([payload]).select().single();
   if (error) { console.error('createFinanceTransaction', error); toast(error.message || 'Failed to create transaction', 'error'); return null; }
   await insertFinanceAuditLog({ entityType: 'transaction', entityId: data.id, action: 'created', newData: data });
+  return data;
+}
+
+// One multi-row insert per call — a single INSERT statement is atomic at the
+// database level (all rows land or none do), exactly the same guarantee
+// createFinanceForecastsBatch() already relies on for a Mixed Payment Item's
+// two generated forecasts. Used by Collect Payment so a Mixed item's
+// revenue + client-funds transactions cannot land as one committed and one
+// failed.
+async function createFinanceTransactionsBatch(payloads) {
+  if (!isAdmin()) return null;
+  if (!payloads || payloads.length === 0) return [];
+  const { data, error } = await supabaseClient.from('finance_transactions').insert(payloads).select();
+  if (error) { console.error('createFinanceTransactionsBatch', error); toast(error.message || 'Failed to record collection', 'error'); return null; }
+  await Promise.all((data || []).map(d => insertFinanceAuditLog({ entityType: 'transaction', entityId: d.id, action: 'created', newData: d })));
   return data;
 }
 async function updateFinanceTransaction(id, payload) {
@@ -6965,12 +6981,15 @@ const FINANCE_FORECAST_TYPE_COLORS = {
 
 const FINANCE_FORECAST_STATUS_LABELS = {
   expected: 'Expected', committed: 'Committed', received: 'Received', cancelled: 'Cancelled', overdue: 'Overdue',
+  partially_collected: 'Partially Collected',
 };
 const FINANCE_FORECAST_STATUS_BG = {
   expected: 'bg-blue-50', committed: 'bg-indigo-50', received: 'bg-emerald-50', cancelled: 'bg-gray-100', overdue: 'bg-rose-50',
+  partially_collected: 'bg-amber-50',
 };
 const FINANCE_FORECAST_STATUS_COLORS = {
   expected: 'text-blue-700', committed: 'text-indigo-700', received: 'text-emerald-700', cancelled: 'text-gray-500', overdue: 'text-rose-700',
+  partially_collected: 'text-amber-700',
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -7195,6 +7214,23 @@ function getFinanceProfitImpact(type) {
 }
 function getFinanceClientFundsImpact(type) {
   return getFinanceRule(type)?.clientFundsImpact ?? 0;
+}
+
+// ---------- Collections — schedule component derivation (Sprint Finance Completion) ----------
+// Locked architecture decision: Revenue vs. Client Funds is NEVER stored as
+// its own column on finance_transactions — it is derived from
+// transaction_type via the same FINANCE_RULES impact fields every other
+// classification in this file already reads. No FINANCE_RULES entry has both
+// revenueImpact and clientFundsImpact non-zero, so this mapping is
+// unambiguous for every transaction_type in use today. Returns null for a
+// transaction_type that is neither (expense, transfer, capital_injection,
+// partner_withdrawal, pass_through_spent) — those never represent a
+// collection against a Payment Schedule Item.
+function getScheduleComponent(tx) {
+  if (!tx) return null;
+  if (getFinanceRevenueImpact(tx.transaction_type) > 0) return 'revenue';
+  if (getFinanceClientFundsImpact(tx.transaction_type) > 0) return 'client_funds';
+  return null;
 }
 
 // Sprint 4.2E: account-level (not org-level) in/out direction for a single
@@ -8439,15 +8475,29 @@ function getFinanceForecastForPeriod(dr) {
   const now = new Date(); now.setHours(0, 0, 0, 0);
   const active = state.financeForecasts.filter(f =>
     !f.is_archived && !f.is_deleted && !['cancelled', 'received'].includes(f.status) &&
+    !isForecastEffectivelyReceived(f) &&
     isInDateRange(f.expected_date, dr)
   );
   const expectedIncomeThisMonth   = active.reduce((s, f) => s + (classifyFinanceForecast(f)?.revenueImpact ?? 0) * Number(f.amount), 0);
   const expectedExpensesThisMonth = active.reduce((s, f) => s + (classifyFinanceForecast(f)?.expenseImpact ?? 0) * Number(f.amount), 0);
   const expectedNetCashflow       = expectedIncomeThisMonth - expectedExpensesThisMonth;
   const weightedIncome            = state.financeForecasts
-    .filter(f => !f.is_archived && !f.is_deleted && !['cancelled', 'received'].includes(f.status))
+    .filter(f => !f.is_archived && !f.is_deleted && !['cancelled', 'received'].includes(f.status) && !isForecastEffectivelyReceived(f))
     .reduce((s, f) => s + (classifyFinanceForecast(f)?.revenueImpact ?? 0) * Number(f.amount) * (Number(f.probability) || 100) / 100, 0);
-  const overdueCount              = state.financeForecasts.filter(f => !f.is_archived && !f.is_deleted && f.status === 'expected' && new Date(f.expected_date) < now).length;
+  // Overdue for a schedule-generated forecast reflects the Item-owned Overdue
+  // fact (due date passed AND Outstanding > 0) instead of the raw
+  // status==='expected' check, which stays frozen at 'expected' forever for
+  // schedule-linked forecasts (see isForecastEffectivelyReceived above) and
+  // would otherwise keep a paid-late installment counted as overdue forever.
+  // Manual forecasts are unchanged — same raw check as before.
+  const overdueCount = state.financeForecasts.filter(f => {
+    if (f.is_archived || f.is_deleted) return false;
+    if (f.generated_from_schedule) {
+      const cs = getForecastCollectionState(f);
+      return cs ? cs.overdue : false;
+    }
+    return f.status === 'expected' && new Date(f.expected_date) < now;
+  }).length;
   return { expectedIncomeThisMonth, expectedExpensesThisMonth, expectedNetCashflow, weightedIncome, overdueCount };
 }
 
@@ -8461,6 +8511,7 @@ function getFinanceForecastForPeriod(dr) {
 function getForecastedClientFundsForPeriod(dr) {
   const active = state.financeForecasts.filter(f =>
     !f.is_archived && !f.is_deleted && !['cancelled', 'received'].includes(f.status) &&
+    !isForecastEffectivelyReceived(f) &&
     f.forecast_type === 'client_funds' && isInDateRange(f.expected_date, dr)
   );
   const byCurrency = {};
@@ -8614,6 +8665,18 @@ function buildFinanceEngine(options = {}) {
   const forecast         = getFinanceForecastForPeriod(dr);
   const forecastedClientFunds = getForecastedClientFundsForPeriod(dr);
 
+  // WP2 — Outstanding is live/all-time (not period-filtered), computed once
+  // here and reused for all four dashboard cards, same convention as
+  // forecastedClientFunds above. The underlying rows are also exactly what
+  // each Outstanding KPI's own getData() recomputes when its drilldown opens
+  // — same source, so the card value and the drilldown total can never
+  // diverge.
+  const outstandingRows = getOutstandingPaymentItemRows();
+  const outstandingRevenue     = sumOutstandingByCurrency(outstandingRows.filter(r => Math.round(r.outstandingRevenue * 100) > 0), 'outstandingRevenue');
+  const outstandingClientFunds = sumOutstandingByCurrency(outstandingRows.filter(r => Math.round(r.outstandingClientFunds * 100) > 0), 'outstandingClientFunds');
+  const outstandingTotal       = sumOutstandingByCurrency(outstandingRows.filter(r => Math.round(r.outstandingTotal * 100) > 0), 'outstandingTotal');
+  const overdueOutstanding     = sumOutstandingByCurrency(outstandingRows.filter(r => r.isOverdue), 'outstandingTotal');
+
   const summary = {
     totalCapital:           rawSummary.totalCapital,
     realRevenue:            periodSummary.realIncome,
@@ -8626,9 +8689,11 @@ function buildFinanceEngine(options = {}) {
     cashFlowPeriod:         cashFlow.netMovement,
     weightedExpectedIncome: forecast.weightedIncome,
     overdueForecasts:       forecast.overdueCount,
-    // Object (not a plain number) — value/display/mixed/byCurrency — never
+    // Objects (not plain numbers) — value/display/mixed/byCurrency — never
     // consumed by getBusinessHealthMetrics or any revenue/profit calculation.
     forecastedClientFunds:  forecastedClientFunds,
+    outstandingRevenue,     outstandingClientFunds,
+    outstandingTotal,       overdueOutstanding,
   };
 
   const breakEvenTarget = fixedCostTotal;
@@ -9134,7 +9199,149 @@ const FINANCE_KPI_CONFIG = {
       };
     },
   },
+  // Finance Completion Sprint — WP2. Live/all-time, not period-filtered, per
+  // the Canonical Outstanding Model (WP1 Architecture Lock): Outstanding is a
+  // standing contractual balance, not a period event. rowMode: 'paymentItems'
+  // tells openKpiDrilldown() to render the Payment Item table (Part 2)
+  // instead of the transaction-rows table every other KPI above uses — same
+  // shared modal, one branch, not four separate implementations.
+  outstandingRevenue: {
+    label: 'Outstanding Revenue', icon: 'file-clock', color: 'amber',
+    tooltip: 'Revenue still owed across active Payment Schedule Items. Live — not period-filtered.',
+    formulaLines: ['SUM(', '  MAX(Revenue Amount − Collected Revenue, 0)', '  · Not Cancelled', ')'],
+    excludedList: ['Cancelled Payment Items', 'Client Funds', 'Forecasted Amounts', 'Over-Collection (warning only)'],
+    insight: 'Outstanding Revenue is the contractual Revenue balance not yet collected. It is derived fresh from Payment Schedule Items and their linked Finance Transactions every time — never cached or stored.',
+    rowMode: 'paymentItems',
+    periodFiltered: false,
+    getData() {
+      const itemRows = getOutstandingPaymentItemRows().filter((r) => Math.round(r.outstandingRevenue * 100) > 0);
+      const agg = sumOutstandingByCurrency(itemRows, 'outstandingRevenue');
+      return {
+        value: agg.value, displayValue: agg.display,
+        breakdown: agg.mixed ? Object.entries(agg.byCurrency).map(([c, v]) => ({ label: c, value: fmtMoney(v, c), color: 'amber' })) : undefined,
+        itemRows,
+      };
+    },
+  },
+  outstandingClientFunds: {
+    label: 'Outstanding Client Funds', icon: 'file-clock', color: 'cyan',
+    tooltip: 'Client Funds still owed across active Payment Schedule Items. Live — not period-filtered.',
+    formulaLines: ['SUM(', '  MAX(Client Funds Amount − Collected Client Funds, 0)', '  · Not Cancelled', ')'],
+    excludedList: ['Cancelled Payment Items', 'Revenue', 'Forecasted Amounts', 'Over-Collection (warning only)'],
+    insight: 'Outstanding Client Funds is the pass-through balance still owed — never company revenue, and separate from Forecasted Client Funds (a projection) and Client Funds Held (funds already received).',
+    rowMode: 'paymentItems',
+    periodFiltered: false,
+    getData() {
+      const itemRows = getOutstandingPaymentItemRows().filter((r) => Math.round(r.outstandingClientFunds * 100) > 0);
+      const agg = sumOutstandingByCurrency(itemRows, 'outstandingClientFunds');
+      return {
+        value: agg.value, displayValue: agg.display,
+        breakdown: agg.mixed ? Object.entries(agg.byCurrency).map(([c, v]) => ({ label: c, value: fmtMoney(v, c), color: 'cyan' })) : undefined,
+        itemRows,
+      };
+    },
+  },
+  outstandingTotal: {
+    label: 'Outstanding Total', icon: 'file-clock', color: 'orange',
+    tooltip: 'Revenue + Client Funds still owed across active Payment Schedule Items. Live — not period-filtered.',
+    formulaLines: ['Outstanding Revenue', '+ Outstanding Client Funds', '= Outstanding Total'],
+    excludedList: ['Cancelled Payment Items', 'Forecasted Amounts', 'Over-Collection (warning only)'],
+    insight: 'The full contractual balance still owed to the business across every active project — the single number an Admin should check to answer "how much are we still owed."',
+    rowMode: 'paymentItems',
+    periodFiltered: false,
+    getData() {
+      const itemRows = getOutstandingPaymentItemRows().filter((r) => Math.round(r.outstandingTotal * 100) > 0);
+      const agg = sumOutstandingByCurrency(itemRows, 'outstandingTotal');
+      return {
+        value: agg.value, displayValue: agg.display,
+        breakdown: agg.mixed ? Object.entries(agg.byCurrency).map(([c, v]) => ({ label: c, value: fmtMoney(v, c), color: 'orange' })) : undefined,
+        itemRows,
+      };
+    },
+  },
+  overdueOutstanding: {
+    label: 'Overdue Outstanding', icon: 'alert-triangle', color: 'rose',
+    tooltip: 'Outstanding Total for Payment Schedule Items past their due date. Live — not period-filtered.',
+    formulaLines: ['SUM(', '  Outstanding Total', '  · Due Date < Today', '  · Not Cancelled', ')'],
+    excludedList: ['Not-Yet-Due Items', 'Cancelled Payment Items', 'Forecasted Amounts'],
+    insight: 'These installments are both past due and still owe money — the highest-priority collections list. Overdue is owned by the Payment Schedule Item, not the Forecast.',
+    rowMode: 'paymentItems',
+    periodFiltered: false,
+    getData() {
+      const itemRows = getOutstandingPaymentItemRows().filter((r) => r.isOverdue);
+      const agg = sumOutstandingByCurrency(itemRows, 'outstandingTotal');
+      return {
+        value: agg.value, displayValue: agg.display,
+        breakdown: agg.mixed ? Object.entries(agg.byCurrency).map(([c, v]) => ({ label: c, value: fmtMoney(v, c), color: 'rose' })) : undefined,
+        itemRows,
+      };
+    },
+  },
 };
+
+// Part 2 (WP2) — the one Payment-Item-shaped table body every rowMode:
+// 'paymentItems' KPI shares via openKpiDrilldown(). Visibility and
+// navigation only: no Collect Payment action here (that stays on the
+// Payment Schedule table where it already lives) and Action reuses the
+// existing open-project-details wiring — no new details page.
+const OUTSTANDING_ITEM_STATE_LABEL = { scheduled: 'Scheduled', partially_collected: 'Partially Collected', fully_collected: 'Collected' };
+const OUTSTANDING_ITEM_STATE_CLASS = { scheduled: 'bg-blue-50 text-blue-600', partially_collected: 'bg-amber-50 text-amber-700', fully_collected: 'bg-emerald-50 text-emerald-600' };
+
+function renderOutstandingItemRowsTable(itemRows) {
+  if (!itemRows || itemRows.length === 0) {
+    return `
+    <div class="kpi-section">
+      <div class="kpi-empty-state">
+        <i data-lucide="inbox" class="w-8 h-8 text-gray-300 mx-auto mb-2 block"></i>
+        <p class="text-[13px] text-gray-400 text-center">No outstanding payment schedule items.</p>
+      </div>
+    </div>`;
+  }
+  const totalOutstanding = itemRows.reduce((s, r) => s + r.outstandingTotal, 0);
+  return `
+    <div class="kpi-section">
+      <p class="kpi-section-label">Outstanding Payment Items</p>
+      <div class="kpi-table-wrap">
+        <table class="w-full text-left">
+          <thead class="sticky top-0 bg-white border-b border-gray-100">
+            <tr>
+              <th class="kpi-th">Company</th>
+              <th class="kpi-th">Project</th>
+              <th class="kpi-th">Payment Item</th>
+              <th class="kpi-th whitespace-nowrap">Due Date</th>
+              <th class="kpi-th text-right whitespace-nowrap">Revenue Outstanding</th>
+              <th class="kpi-th text-right whitespace-nowrap">Client Funds Outstanding</th>
+              <th class="kpi-th text-right whitespace-nowrap">Total Outstanding</th>
+              <th class="kpi-th">Collection State</th>
+              <th class="kpi-th">Overdue</th>
+              <th class="kpi-th text-right">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${itemRows.map(r => `
+              <tr class="kpi-tr">
+                <td class="kpi-td max-w-[110px] truncate">${escapeHtml(r.company)}</td>
+                <td class="kpi-td max-w-[110px] truncate">${escapeHtml(r.projectName)}</td>
+                <td class="kpi-td max-w-[130px] truncate">${escapeHtml(r.paymentLabel)}</td>
+                <td class="kpi-td whitespace-nowrap ${r.isOverdue ? 'text-rose-600 font-medium' : 'text-gray-500'}">${fmtDate(r.dueDate)}</td>
+                <td class="kpi-td text-right whitespace-nowrap">${fmtMoney(r.outstandingRevenue, r.currency)}</td>
+                <td class="kpi-td text-right whitespace-nowrap">${fmtMoney(r.outstandingClientFunds, r.currency)}</td>
+                <td class="kpi-td text-right font-semibold whitespace-nowrap">${fmtMoney(r.outstandingTotal, r.currency)}</td>
+                <td class="kpi-td whitespace-nowrap">
+                  <span class="badge ${OUTSTANDING_ITEM_STATE_CLASS[r.collectionState] || 'bg-gray-100 text-gray-500'}">${OUTSTANDING_ITEM_STATE_LABEL[r.collectionState] || r.collectionState}</span>
+                  ${r.isOverCollected ? ' <span class="badge bg-rose-50 text-rose-600" title="Collected more than the scheduled amount">Over</span>' : ''}
+                </td>
+                <td class="kpi-td whitespace-nowrap">${r.isOverdue ? '<span class="badge bg-rose-50 text-rose-600">Overdue</span>' : '<span class="text-gray-300 text-xs">—</span>'}</td>
+                <td class="kpi-td text-right whitespace-nowrap">
+                  ${r.projectId != null ? `<button type="button" class="text-[11px] text-brand-600 hover:underline" data-action="open-project-details" data-id="${r.projectId}">Open Project</button>` : '<span class="text-[11px] text-gray-300">—</span>'}
+                </td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+      <p class="text-[11px] text-gray-400 text-right mt-1.5 pr-0.5">Total Outstanding: ${fmtMoney(totalOutstanding)} · ${itemRows.length} item${itemRows.length !== 1 ? 's' : ''}</p>
+    </div>`;
+}
 
 function openKpiDrilldown(kpiKey) {
   const config = FINANCE_KPI_CONFIG[kpiKey];
@@ -9143,13 +9350,22 @@ function openKpiDrilldown(kpiKey) {
   const data  = config.getData();
   const color = data.color || config.color || 'gray';
   const rows  = data.rows || [];
+  // WP2 — Outstanding KPIs are Payment-Item-shaped, not transaction-shaped
+  // (they need Company/Project/Due Date/three Outstanding figures/Collection
+  // State/an Action button — no single "amount" column). Rather than a
+  // second drilldown implementation, this is the one existing shared
+  // renderer with a mode parameter: rowMode picks which table body renders
+  // below; the header/formula/excluded-list/insight/footer chrome is
+  // identical for every KPI regardless of mode.
+  const isItemMode = config.rowMode === 'paymentItems';
+  const itemRows   = data.itemRows || [];
 
   const hasClient   = rows.some(r => r.client);
   const hasProject  = rows.some(r => r.project);
   const hasCategory = rows.some(r => r.category);
   const hasRef      = rows.some(r => r.ref);
   const totalAmt    = rows.reduce((s, r) => s + r.amount, 0);
-  const recCount    = rows.length;
+  const recCount    = isItemMode ? itemRows.length : rows.length;
   const today       = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 
   // Formula rendered as readable checklist / math rows
@@ -9176,7 +9392,7 @@ function openKpiDrilldown(kpiKey) {
   }).join('');
 
   // Records table with better empty state
-  const rowsHtml = rows.length > 0 ? `
+  const rowsHtml = isItemMode ? renderOutstandingItemRowsTable(itemRows) : rows.length > 0 ? `
     <div class="kpi-section">
       <p class="kpi-section-label">Included Records</p>
       <div class="kpi-table-wrap">
@@ -9941,13 +10157,14 @@ function renderFinanceDashboard() {
   // === 0. Sync global period bar ===
   renderFinanceGlobalPeriodBar();
 
-  // === 1. Top stat cards (10) ===
+  // === 1. Top stat cards (14) ===
   const statsEl = $('#finance-dashboard-stats');
   if (statsEl) {
     const netColor = summary.netProfit >= 0 ? 'emerald' : 'rose';
     const cfColor  = cashFlow.netMovement >= 0 ? 'emerald' : 'rose';
     const periodChip = `<span class="kpi-period-label">${escapeHtml(dr.label)}</span>`;
     const liveChip   = `<span class="kpi-period-label kpi-period-label--live">Live</span>`;
+    const overdueColor = summary.overdueOutstanding.value > 0 ? 'rose' : 'gray';
     const cards = [
       { kpiKey: 'totalCapital',      label: 'Total Capital',       value: fmtMoney(summary.totalCapital),                                             icon: 'landmark',        color: 'indigo',  period: liveChip   },
       { kpiKey: 'realRevenue',       label: 'Real Revenue',        value: fmtMoney(summary.realRevenue),                                              icon: 'trending-up',     color: 'emerald', period: periodChip },
@@ -9959,6 +10176,10 @@ function renderFinanceDashboard() {
       { kpiKey: 'forecastOutgoing',  label: 'Forecast Outgoing',   value: fmtMoney(summary.forecastOutgoing),                                         icon: 'calendar-x',      color: 'orange',  period: periodChip },
       { kpiKey: 'cashFlowThisMonth', label: 'Cash Flow — Period',  value: `${cashFlow.netMovement >= 0 ? '+' : ''}${fmtMoney(cashFlow.netMovement)}`, icon: 'activity',        color: cfColor,   period: periodChip },
       { kpiKey: 'forecastedClientFunds', label: 'Forecasted Client Funds', value: summary.forecastedClientFunds.display,                              icon: 'calendar-clock',  color: 'cyan',    period: periodChip },
+      { kpiKey: 'outstandingRevenue',     label: 'Outstanding Revenue',     value: summary.outstandingRevenue.display,     icon: 'file-clock',    color: 'amber',      period: liveChip },
+      { kpiKey: 'outstandingClientFunds', label: 'Outstanding Client Funds', value: summary.outstandingClientFunds.display, icon: 'file-clock',    color: 'cyan',       period: liveChip },
+      { kpiKey: 'outstandingTotal',       label: 'Outstanding Total',        value: summary.outstandingTotal.display,       icon: 'file-clock',    color: 'orange',     period: liveChip },
+      { kpiKey: 'overdueOutstanding',     label: 'Overdue Outstanding',      value: summary.overdueOutstanding.display,     icon: 'alert-triangle', color: overdueColor, period: liveChip },
     ];
     statsEl.innerHTML = cards.map(c => {
       const cfg = FINANCE_KPI_CONFIG[c.kpiKey];
@@ -10395,9 +10616,15 @@ function renderFinanceForecast() {
   if (tbody) {
     const now = new Date(); now.setHours(0, 0, 0, 0);
     tbody.innerHTML = forecasts.map(fc => {
-      const isConverted  = !!fc.linked_transaction_id;
-      const isOverdue    = !isConverted && !fc.is_deleted && fc.status === 'expected' && new Date(fc.expected_date) < now;
-      const displayStatus = isOverdue ? 'overdue' : fc.status;
+      // Collections Foundation (locked architecture Decision 3): a
+      // schedule-generated forecast's collection state is reflected from its
+      // linked Payment Schedule Item, never computed from the forecast's own
+      // (possibly stale) amount/expected_date. Manual forecasts are entirely
+      // untouched — same legacy computation as before.
+      const scheduleState = getForecastCollectionState(fc);
+      const isConverted  = scheduleState ? scheduleState.status === 'received' : !!fc.linked_transaction_id;
+      const isOverdue    = scheduleState ? scheduleState.overdue : (!isConverted && !fc.is_deleted && fc.status === 'expected' && new Date(fc.expected_date) < now);
+      const displayStatus = isOverdue ? 'overdue' : (scheduleState ? scheduleState.status : fc.status);
       const clientOrProj = fc.client_name || getCrmClientName(fc.client_id) || fc.project_name || '—';
       const sourceCellHtml = renderFinanceForecastSourceCell(fc);
       return `<tr class="hover:bg-gray-50 ${fc.is_deleted ? 'opacity-50 bg-rose-50' : fc.is_archived ? 'opacity-60' : ''}">
@@ -10407,15 +10634,20 @@ function renderFinanceForecast() {
         <td class="px-4 py-2 text-sm text-gray-400">${escapeHtml(getCategoryName(fc.category_id))}</td>
         <td class="px-4 py-2 text-sm font-medium text-right whitespace-nowrap">${fmtMoney(fc.amount)}</td>
         <td class="px-4 py-2 text-sm text-center text-gray-500">${Number(fc.probability).toFixed(0)}%</td>
-        <td class="px-4 py-2 text-sm">${forecastStatusBadge(displayStatus)}</td>
+        <td class="px-4 py-2 text-sm">${forecastStatusBadge(displayStatus)}${scheduleState?.overCollected ? ' <span class="badge bg-rose-50 text-rose-600">Over</span>' : ''}</td>
         <td class="px-4 py-2 text-sm">${sourceCellHtml}</td>
         <td class="px-4 py-2 text-right whitespace-nowrap">
           ${fc.is_deleted ? `
             <button class="icon-btn text-emerald-600" data-action="restore-finance-forecast" data-id="${fc.id}" title="Restore"><i data-lucide="rotate-ccw" class="w-4 h-4"></i></button>
             <button class="icon-btn text-rose-700" data-action="permanent-delete-finance-forecast" data-id="${fc.id}" title="Delete Permanently"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
           ` : !fc.is_archived ? `
-            <button class="icon-btn" data-action="edit-finance-forecast" data-id="${fc.id}" title="Edit"><i data-lucide="pencil" class="w-4 h-4"></i></button>
-            ${!isConverted
+            ${fc.generated_from_schedule
+              ? `<span title="Generated from the Payment Schedule — edit the Payment Schedule Item instead" class="inline-flex"><i data-lucide="pencil" class="w-4 h-4 text-gray-300"></i></span>`
+              : `<button class="icon-btn" data-action="edit-finance-forecast" data-id="${fc.id}" title="Edit"><i data-lucide="pencil" class="w-4 h-4"></i></button>`
+            }
+            ${scheduleState
+              ? `<span title="Collect Payment on the Payment Schedule for this item" class="inline-flex"><i data-lucide="calendar-clock" class="w-4 h-4 text-gray-300"></i></span>`
+              : !isConverted
               ? `<button class="icon-btn text-indigo-500" data-action="convert-forecast-to-tx" data-id="${fc.id}" title="Convert to Transaction"><i data-lucide="arrow-right-circle" class="w-4 h-4"></i></button>`
               : `<span title="Already converted" class="inline-flex"><i data-lucide="check-circle" class="w-4 h-4 text-emerald-400"></i></span>`
             }
@@ -11678,6 +11910,17 @@ async function handleFinanceForecastSubmit(e) {
   if (!isAdmin()) return;
   const form = e.target;
   const id   = state.editingFinanceForecastId;
+  const oldFc = id ? state.financeForecasts.find(f => Number(f.id) === id) : null;
+  // Forecast Safety: a schedule-generated Forecast is immutable through this
+  // manual edit flow — it stays in sync with its Payment Schedule Item
+  // exclusively via updateGeneratedForecastFromSchedule(), which writes
+  // directly through updateFinanceForecast() and never goes through this
+  // handler. Blocking here, not inside updateFinanceForecast() itself, keeps
+  // that synchronization write path untouched.
+  if (oldFc?.generated_from_schedule) {
+    toast('This forecast is generated from the Payment Schedule and cannot be edited manually.', 'error');
+    return;
+  }
   const clientId = Number(form.elements['client_id']?.value) || null;
   const tagsRaw  = form.elements['tags']?.value.trim() || '';
   const payload = {
@@ -11702,7 +11945,6 @@ async function handleFinanceForecastSubmit(e) {
   if (btn) btn.disabled = true;
   let ok = false;
   if (id) {
-    const oldFc = state.financeForecasts.find(f => Number(f.id) === id);
     const result = await updateFinanceForecast(id, payload);
     if (result) await insertFinanceAuditLog({ entityType: 'forecast', entityId: id, action: 'updated', oldData: oldFc, newData: result });
     ok = !!result;
@@ -11768,6 +12010,20 @@ async function handleCommercialTermsSubmit(e) {
   }
 
   const existing = state.projectCommercialTerms.find((ct) => Number(ct.project_id) === Number(project.id)) || null;
+
+  // Financial Data Integrity: once Payment Schedule Items exist under these
+  // Commercial Terms, their amounts (and any collected Finance Transactions
+  // against them) are already denominated in the original currency —
+  // switching Currency here would silently mismatch every existing
+  // scheduled/collected figure against the new one with no conversion.
+  if (existing && existing.currency && currency !== existing.currency) {
+    const hasScheduleItems = state.projectPaymentScheduleItems
+      .some((i) => Number(i.commercial_terms_id) === Number(existing.id));
+    if (hasScheduleItems) {
+      toast('Currency cannot be changed once Payment Schedule Items exist for this project.', 'error');
+      return;
+    }
+  }
 
   const payload = {
     contract_value: contractValue,
@@ -11881,6 +12137,24 @@ async function handlePaymentItemSubmit(e) {
     return;
   }
 
+  // Financial Data Integrity: a component can never be edited down below
+  // what has already been collected against it — Outstanding is derived as
+  // component amount minus Collected (getPaymentItemOutstanding), so
+  // dropping the amount below Collected would silently produce a negative
+  // Outstanding (clamped to 0, i.e. money already received quietly vanishes
+  // from the schedule).
+  if (id) {
+    const collected = getPaymentItemCollected(id);
+    if (Math.round(revenueAmount * 100) < Math.round(collected.revenue * 100)) {
+      toast(`Revenue Amount cannot be reduced below the ${fmtMoney(collected.revenue, terms.currency)} already collected.`, 'error');
+      return;
+    }
+    if (Math.round(clientFundsAmount * 100) < Math.round(collected.clientFunds * 100)) {
+      toast(`Client Funds Amount cannot be reduced below the ${fmtMoney(collected.clientFunds, terms.currency)} already collected.`, 'error');
+      return;
+    }
+  }
+
   // Client Funds Purpose only applies when Client Funds Amount > 0 — clear
   // any stale value (e.g. left over from editing an item down to 0) rather
   // than persisting a purpose for a $0 component.
@@ -11929,6 +12203,15 @@ async function handlePaymentItemSubmit(e) {
 
 async function handleCancelPaymentScheduleItem(id) {
   if (!isAdmin()) return;
+  // Collections Safety: a Payment Schedule Item with any valid collected
+  // transaction against it can never be cancelled — cancelling would orphan
+  // real money already received from the Outstanding/Collected model (Item
+  // is the source of truth those figures derive from). Checked here, not
+  // just hidden in the UI, since this is the actual write path.
+  if (getPaymentItemCollected(id).total > 0) {
+    toast('This payment has collections recorded against it and cannot be cancelled.', 'error');
+    return;
+  }
   const result = await cancelProjectPaymentScheduleItem(id);
   if (result) {
     toast('Payment marked as cancelled.', 'success');
@@ -11943,6 +12226,147 @@ async function handleRestorePaymentScheduleItem(id) {
   if (result) {
     toast('Payment restored.', 'success');
     state.projectPaymentScheduleItems = await fetchProjectPaymentScheduleItems();
+    renderProjectDetails();
+  }
+}
+
+// ---------- Collect Payment (Sprint Finance Completion — Collections Foundation) ----------
+// Records a collection directly as 1–2 Finance Transactions against a
+// Payment Schedule Item — no payment_collections entity, per the locked
+// architecture. A Mixed item (both components > 0) produces one transaction
+// per eligible component, the second linked to the first via
+// related_transaction_id — the same shape the existing Split Receipt feature
+// already uses for one client payment split across income + pass-through.
+// No allocation logic: the admin enters exactly what was collected per
+// component (each input defaults to that component's own current
+// Outstanding, so a plain full collection is just accepting the defaults).
+function openCollectPaymentModal(itemId) {
+  if (!isAdmin()) return;
+  const item = state.projectPaymentScheduleItems.find((i) => Number(i.id) === itemId);
+  if (!item || item.is_cancelled) return;
+  const terms = state.projectCommercialTerms.find((ct) => Number(ct.id) === Number(item.commercial_terms_id));
+  if (!terms) return;
+
+  state.collectingPaymentItemId = itemId;
+  const form = $('#collect-payment-form');
+  if (!form) return;
+  form.reset();
+
+  const currency = terms.currency || 'EGP';
+  const outstanding = getPaymentItemOutstanding(item);
+
+  const titleEl = $('#collect-payment-modal-title');
+  if (titleEl) titleEl.textContent = `Collect Payment — ${item.label || `Payment #${item.id}`}`;
+  const metaEl = $('#collect-payment-modal-meta');
+  if (metaEl) metaEl.textContent = `Due ${fmtDate(item.due_date)} · Outstanding ${fmtMoney(outstanding.total, currency)}`;
+
+  const revenueEligible     = Number(item.revenue_amount) > 0;
+  const clientFundsEligible = Number(item.client_funds_amount) > 0;
+
+  const revenueRow = $('#collect-payment-revenue-row');
+  if (revenueRow) {
+    revenueRow.classList.toggle('hidden', !revenueEligible);
+    if (revenueEligible) {
+      form.elements['revenue_collected'].value = outstanding.revenue > 0 ? outstanding.revenue.toFixed(2) : '';
+      $('#collect-payment-revenue-outstanding').textContent = `Outstanding: ${fmtMoney(outstanding.revenue, currency)}`;
+    }
+  }
+  const clientFundsRow = $('#collect-payment-client-funds-row');
+  if (clientFundsRow) {
+    clientFundsRow.classList.toggle('hidden', !clientFundsEligible);
+    if (clientFundsEligible) {
+      form.elements['client_funds_collected'].value = outstanding.clientFunds > 0 ? outstanding.clientFunds.toFixed(2) : '';
+      $('#collect-payment-client-funds-outstanding').textContent = `Outstanding: ${fmtMoney(outstanding.clientFunds, currency)}`;
+    }
+  }
+
+  populateFinanceAccountSelects(['collect-payment-account']);
+  form.elements['transaction_date'].value = new Date().toISOString().slice(0, 10);
+
+  openModal('collect-payment-modal');
+}
+
+async function handleCollectPaymentSubmit(e) {
+  e.preventDefault();
+  if (!isAdmin()) return;
+  const form = e.target;
+  const itemId = state.collectingPaymentItemId;
+  const item = state.projectPaymentScheduleItems.find((i) => Number(i.id) === itemId);
+  if (!item) return;
+  const terms = state.projectCommercialTerms.find((ct) => Number(ct.id) === Number(item.commercial_terms_id));
+  const project = terms ? state.projects.find((p) => Number(p.id) === Number(terms.project_id)) : null;
+  if (!terms || !project) return;
+
+  const transactionDate = form.elements['transaction_date'].value;
+  const accountId = Number(form.elements['account_id'].value) || null;
+  const revenueRaw     = form.elements['revenue_collected']?.value.trim() || '';
+  const clientFundsRaw = form.elements['client_funds_collected']?.value.trim() || '';
+  const revenueAmt     = revenueRaw === '' ? 0 : Number(revenueRaw);
+  const clientFundsAmt = clientFundsRaw === '' ? 0 : Number(clientFundsRaw);
+
+  if (!transactionDate) { toast('Date is required.', 'error'); return; }
+  if (!accountId)       { toast('Account is required.', 'error'); return; }
+  if (![revenueAmt, clientFundsAmt].every((n) => Number.isFinite(n) && n >= 0)) {
+    toast('Amounts must be 0 or greater.', 'error'); return;
+  }
+  if (revenueAmt <= 0 && clientFundsAmt <= 0) {
+    toast('Enter at least one amount collected.', 'error'); return;
+  }
+
+  const client = resolveGeneratedForecastClient(project);
+  const now = new Date().toISOString();
+  const description = `Collection: ${item.label || `Payment #${item.id}`}`;
+  const currency = terms.currency || 'EGP';
+
+  // One payload per eligible, non-zero component, always in the same order
+  // (revenue first, client funds second) so the sibling-link step below
+  // knows which result is which.
+  const payloads = [];
+  if (revenueAmt > 0) {
+    payloads.push({
+      transaction_date: transactionDate, transaction_type: 'income', status: 'completed',
+      account_id: accountId, client_id: client.client_id, client_name: client.client_name,
+      amount: revenueAmt, currency, description, project_name: project.project_name || null,
+      payment_schedule_item_id: item.id,
+      created_by: state.currentUser?.id || null, created_at: now, updated_at: now,
+    });
+  }
+  if (clientFundsAmt > 0) {
+    payloads.push({
+      transaction_date: transactionDate, transaction_type: 'pass_through_received', status: 'completed',
+      account_id: accountId, client_id: client.client_id, client_name: client.client_name,
+      amount: clientFundsAmt, currency, description, project_name: project.project_name || null,
+      payment_schedule_item_id: item.id,
+      created_by: state.currentUser?.id || null, created_at: now, updated_at: now,
+    });
+  }
+
+  const btn = form.querySelector('[type="submit"]');
+  if (btn) btn.disabled = true;
+
+  // Single atomic insert — both rows land or neither does. This is the
+  // operation Collected/Outstanding actually depend on (they sum by
+  // payment_schedule_item_id + component, never by related_transaction_id),
+  // so correctness is guaranteed here regardless of what happens next.
+  const result = await createFinanceTransactionsBatch(payloads);
+
+  // Best-effort sibling link for a Mixed collection, purely for audit/UI
+  // traceability (mirrors Split Receipt's related_transaction_id). If this
+  // single follow-up write fails, both transactions already exist and are
+  // already correctly counted — nothing about Collected/Outstanding depends
+  // on it, so it is not rolled back and does not fail the collection.
+  if (result && result.length === 2) {
+    const [revenueTx, clientFundsTx] = result;
+    const linked = await updateFinanceTransaction(clientFundsTx.id, { related_transaction_id: revenueTx.id });
+    if (!linked) console.error('handleCollectPaymentSubmit: sibling link update failed for transaction', clientFundsTx.id);
+  }
+
+  if (btn) btn.disabled = false;
+  if (result) {
+    toast('Payment collected.', 'success');
+    closeModal();
+    state.collectingPaymentItemId = null;
+    await loadFinanceTransactionsAndSync();
     renderProjectDetails();
   }
 }
@@ -14403,6 +14827,186 @@ function computePaymentItemForecastState(item) {
   return { state, reason, adjusted, components: componentStates };
 }
 
+// ---------- Collections Foundation (Sprint Finance Completion — locked architecture) ----------
+// Payment Schedule Item is the Single Source of Truth. Finance Transactions
+// are the collection source of truth. Collected/Outstanding are ALWAYS
+// derived here from live finance_transactions — never cached or stored on
+// the Payment Schedule Item, the Forecast, or anywhere else.
+
+// "Valid" mirrors the exact active-transaction filter every other Finance
+// total in this codebase already uses (getFinanceSummary, getProjectPnL,
+// the Accounting Journal sync): not soft-deleted, not archived, not
+// cancelled.
+function getPaymentItemCollected(itemId) {
+  const valid = state.financeTransactions.filter((t) =>
+    Number(t.payment_schedule_item_id) === Number(itemId) &&
+    !t.is_deleted && !t.is_archived && t.status !== 'cancelled'
+  );
+  let revenue = 0, clientFunds = 0;
+  valid.forEach((t) => {
+    const component = getScheduleComponent(t);
+    const amt = Number(t.amount) || 0;
+    if (component === 'revenue') revenue += amt;
+    else if (component === 'client_funds') clientFunds += amt;
+  });
+  return { revenue, clientFunds, total: revenue + clientFunds };
+}
+
+// Canonical Outstanding Model (WP2): clamped at 0 per component — an
+// over-collection is a warning flag (isPaymentItemOverCollected below), never
+// a negative Outstanding figure.
+function getPaymentItemOutstanding(item) {
+  const collected = getPaymentItemCollected(item.id);
+  const revenue     = Math.max((Number(item.revenue_amount) || 0) - collected.revenue, 0);
+  const clientFunds = Math.max((Number(item.client_funds_amount) || 0) - collected.clientFunds, 0);
+  return { revenue, clientFunds, total: revenue + clientFunds, collected };
+}
+
+// Cent-rounded comparisons throughout, matching the convention
+// computeComponentForecastState() already established for amount equality.
+// Over-collection is deliberately NOT one of these states — see
+// isPaymentItemOverCollected() below. Fully collected and over-collected are
+// the same lifecycle stage (nothing more is owed); over-collection is a
+// warning flag layered on top of "Collected", exactly how Overdue is layered
+// on top of Scheduled/Partially Collected rather than being its own state.
+function getPaymentItemCollectionState(item) {
+  if (item.is_cancelled) return 'cancelled';
+  const outstanding     = getPaymentItemOutstanding(item);
+  const outstandingCents = Math.round(outstanding.total * 100);
+  if (outstanding.collected.total > 0 && outstandingCents <= 0) return 'fully_collected';
+  if (outstanding.collected.total > 0) return 'partially_collected';
+  return 'scheduled';
+}
+
+// Warning/validation flag, not a state — collected more than the item's
+// total_amount. Item-level granularity (matches Outstanding Total shown in
+// the same row); a per-component over-collection is a separate, existing
+// concern already surfaced on the Forecast list via
+// getForecastCollectionState().overCollected. Deliberately computed from raw
+// collected vs. total_amount, NOT from getPaymentItemOutstanding() — that
+// function clamps at 0 per the Canonical Outstanding Model, so this flag
+// would always read false if it were derived from the (already-clamped)
+// Outstanding figure instead of the raw comparison.
+function isPaymentItemOverCollected(item) {
+  if (item.is_cancelled) return false;
+  const collected = getPaymentItemCollected(item.id);
+  return Math.round((collected.total - (Number(item.total_amount) || 0)) * 100) > 0;
+}
+
+// Overdue is owned by the Payment Schedule Item (locked architecture
+// Decision 2) — a due date that has passed with nothing outstanding is not
+// overdue, and an item with no Forecast yet generated can still be overdue.
+function isPaymentItemOverdue(item) {
+  if (item.is_cancelled || !item.due_date) return false;
+  const today = new Date().toISOString().slice(0, 10);
+  if (item.due_date >= today) return false;
+  return Math.round(getPaymentItemOutstanding(item).total * 100) > 0;
+}
+
+// Forecast reflection (locked architecture Decision 3): collection state is
+// computed once, on the Payment Schedule Item, using the Item's LIVE
+// component amount — never the Forecast's own (possibly stale/under-review)
+// amount. Nothing is written back to fc.status; this is read-time only, per
+// "Outstanding must always be derived, do not store derived values."
+// Returns null for a manually-created (non-schedule) forecast, or if its
+// linked Payment Schedule Item can't be resolved — callers fall back to the
+// existing legacy behavior for those.
+function getForecastCollectionState(fc) {
+  if (!fc || !fc.generated_from_schedule || !fc.payment_schedule_item_id || !fc.forecast_component) return null;
+  const item = state.projectPaymentScheduleItems.find((i) => Number(i.id) === Number(fc.payment_schedule_item_id));
+  if (!item) return null;
+
+  const component   = fc.forecast_component;
+  const liveAmount  = getComponentAmount(item, component);
+  const collected   = getPaymentItemCollected(item.id);
+  const collectedAmt = component === 'revenue' ? collected.revenue : collected.clientFunds;
+  const rawOutstanding = liveAmount - collectedAmt;
+  const cents = (n) => Math.round((Number(n) || 0) * 100);
+
+  let status;
+  if (cents(collectedAmt) <= 0) status = 'expected';
+  else if (cents(rawOutstanding) > 0) status = 'partially_collected';
+  else status = 'received';
+
+  return {
+    status,
+    collected: collectedAmt,
+    // Clamped at 0, matching the Canonical Outstanding Model — overCollected
+    // below is computed from the raw (pre-clamp) value, same decoupling as
+    // isPaymentItemOverCollected().
+    outstanding: Math.max(rawOutstanding, 0),
+    overCollected: cents(rawOutstanding) < 0,
+    overdue: isPaymentItemOverdue(item),
+  };
+}
+
+// Dashboard forecast aggregations (getFinanceForecastForPeriod,
+// getForecastedClientFundsForPeriod) gate on raw fc.status to decide which
+// forecasts are still "active"/incoming. That is correct for a manually
+// created forecast, but WP1 deliberately never writes fc.status for a
+// schedule-generated one — its collection state is derived at read time only
+// (getForecastCollectionState above). Without this check, a fully-collected
+// schedule-linked forecast would keep counting as still-expected income
+// forever, double-counting the same money as both Real Revenue (from the
+// real transaction) and Forecast Incoming / Weighted Expected Income (from
+// the now-stale forecast). Manual forecasts are entirely unaffected — this
+// returns false for any forecast that isn't schedule-generated, so their
+// existing raw-status behavior is unchanged.
+function isForecastEffectivelyReceived(fc) {
+  if (!fc.generated_from_schedule) return false;
+  const cs = getForecastCollectionState(fc);
+  return cs ? cs.status === 'received' : false;
+}
+
+// ---------- Finance Dashboard Outstanding (WP2 — Finance Dashboard & Outstanding Completion) ----------
+// One row per non-cancelled Payment Schedule Item, enriched with Company/
+// Project attribution and Outstanding — the single source every Outstanding
+// KPI and the drilldown list read from, so the Dashboard can never compute a
+// different number than the Payment Schedule table (Part 1/2 of WP2).
+// Attribution walks Payment Item -> Commercial Terms -> Project -> Deal ->
+// CRM Company via resolveGeneratedForecastClient(), the exact same resolver
+// already used for schedule-generated Forecasts and Collect Payment — no new
+// resolution logic. A missing/broken relationship at any hop falls back to
+// safe display text rather than throwing.
+function getOutstandingPaymentItemRows() {
+  return state.projectPaymentScheduleItems
+    .filter((item) => !item.is_cancelled)
+    .map((item) => {
+      const terms   = state.projectCommercialTerms.find((ct) => Number(ct.id) === Number(item.commercial_terms_id)) || null;
+      const project = terms ? state.projects.find((p) => Number(p.id) === Number(terms.project_id)) : null;
+      const client  = project ? resolveGeneratedForecastClient(project) : { client_id: null, client_name: null };
+      const outstanding = getPaymentItemOutstanding(item);
+      return {
+        currency:               terms?.currency || 'EGP',
+        company:                client.client_name || 'Unassigned',
+        projectName:            project?.project_name || '—',
+        projectId:              project?.id ?? null,
+        paymentLabel:           item.label || `Payment #${item.id}`,
+        dueDate:                item.due_date,
+        outstandingRevenue:     outstanding.revenue,
+        outstandingClientFunds: outstanding.clientFunds,
+        outstandingTotal:       outstanding.total,
+        collectionState:        getPaymentItemCollectionState(item),
+        isOverdue:              isPaymentItemOverdue(item),
+        isOverCollected:        isPaymentItemOverCollected(item),
+      };
+    });
+}
+
+// Currency-safe aggregation for Outstanding — same "never blend currencies,
+// show a grouped breakdown instead, no FX conversion" rule
+// getForecastedClientFundsForPeriod() already established for forecasts.
+// `field` is one of the outstanding* keys on a getOutstandingPaymentItemRows() row.
+function sumOutstandingByCurrency(rows, field) {
+  const byCurrency = {};
+  rows.forEach((r) => { byCurrency[r.currency] = (byCurrency[r.currency] || 0) + r[field]; });
+  const currencies = Object.keys(byCurrency);
+  const value = rows.reduce((s, r) => s + r[field], 0);
+  const mixed = currencies.length > 1;
+  const display = currencies.length === 0 ? fmtMoney(0) : mixed ? 'Mixed currencies' : fmtMoney(value, currencies[0]);
+  return { value, display, mixed, byCurrency };
+}
+
 // Project Commercial Summary + Payment Schedule (Sprint Project Commercial B).
 // Admin-only — hidden entirely for Manager/Member. Contract Value comes from
 // project_commercial_terms; Scheduled/Revenue/Client Funds Value and Schedule
@@ -14448,12 +15052,31 @@ function renderProjectCommercialSection(project) {
   const scheduledValue   = activeItems.reduce((sum, i) => sum + (Number(i.total_amount) || 0), 0);
   const revenueValue     = activeItems.reduce((sum, i) => sum + (Number(i.revenue_amount) || 0), 0);
   const clientFundsValue = activeItems.reduce((sum, i) => sum + (Number(i.client_funds_amount) || 0), 0);
+  // Split by component, matching how Revenue Value / Client Funds Value are
+  // already split rather than blended — Outstanding Revenue (Tgora's own
+  // money) and Outstanding Client Funds (pass-through, not Tgora's revenue)
+  // mean very different things and must not collapse into one figure.
+  const outstandingRevenue     = activeItems.reduce((sum, i) => sum + getPaymentItemOutstanding(i).revenue, 0);
+  const outstandingClientFunds = activeItems.reduce((sum, i) => sum + getPaymentItemOutstanding(i).clientFunds, 0);
+  const outstandingTotal       = outstandingRevenue + outstandingClientFunds;
   const variance = Math.round((scheduledValue - contractValue) * 100) / 100;
 
   $('#commercial-contract-value').textContent     = fmtMoney(contractValue, currency);
   $('#commercial-scheduled-value').textContent    = fmtMoney(scheduledValue, currency);
   $('#commercial-revenue-value').textContent      = fmtMoney(revenueValue, currency);
   $('#commercial-client-funds-value').textContent = fmtMoney(clientFundsValue, currency);
+
+  const outstandingColor = (v) => v > 0 ? 'text-amber-600' : v < 0 ? 'text-rose-600' : 'text-emerald-600';
+  [
+    ['#commercial-outstanding-revenue-value', outstandingRevenue],
+    ['#commercial-outstanding-client-funds-value', outstandingClientFunds],
+    ['#commercial-outstanding-total-value', outstandingTotal],
+  ].forEach(([selector, value]) => {
+    const el = $(selector);
+    if (!el) return;
+    el.textContent = fmtMoney(value, currency);
+    el.className = 'font-semibold ' + outstandingColor(value);
+  });
 
   const varianceEl = $('#commercial-schedule-variance');
   if (varianceEl) {
@@ -14496,13 +15119,35 @@ function renderProjectCommercialSection(project) {
   if (body) {
     body.innerHTML = sortedItems.map((item) => {
       const isCancelled = !!item.is_cancelled;
-      const isOverdue = !isCancelled && item.due_date && item.due_date < today;
-      const statusLabel = isCancelled ? 'Cancelled' : isOverdue ? 'Overdue' : 'Upcoming';
+      const collectionState = getPaymentItemCollectionState(item);
+      const isOverdue = isPaymentItemOverdue(item);
+      const isOverCollected = isPaymentItemOverCollected(item);
+      const outstanding = getPaymentItemOutstanding(item);
+
+      // Precedence: Cancelled > Overdue > collection state — Overdue can be
+      // true alongside Partially Collected (a balance remains past its due
+      // date), so it takes display priority over the plain collection label.
+      // Over-collection is a separate warning flag, not part of this
+      // precedence chain — it renders alongside whichever status is shown
+      // (in practice only ever alongside "Collected", since collecting more
+      // than the total always clears any Outstanding).
+      const COLLECTION_STATE_LABEL = {
+        scheduled: 'Scheduled', partially_collected: 'Partially Collected', fully_collected: 'Collected',
+      };
+      const COLLECTION_STATE_CLASS = {
+        scheduled: 'badge bg-blue-50 text-blue-600',
+        partially_collected: 'badge bg-amber-50 text-amber-700',
+        fully_collected: 'badge bg-emerald-50 text-emerald-600',
+      };
+      const statusLabel = isCancelled ? 'Cancelled' : isOverdue ? 'Overdue' : COLLECTION_STATE_LABEL[collectionState];
       const statusClass = isCancelled
         ? 'badge bg-gray-100 text-gray-500'
         : isOverdue
         ? 'badge bg-rose-50 text-rose-600'
-        : 'badge bg-emerald-50 text-emerald-600';
+        : COLLECTION_STATE_CLASS[collectionState];
+      const overCollectedBadge = isOverCollected
+        ? ' <span class="badge bg-rose-50 text-rose-600" title="Collected more than the scheduled amount">Over</span>'
+        : '';
 
       const fcState = computePaymentItemForecastState(item);
       const canGenerate = !isCancelled && fcState.components.length > 0 && (fcState.state === 'not_generated' || fcState.state === 'partially_generated');
@@ -14515,10 +15160,18 @@ function renderProjectCommercialSection(project) {
           <td class="px-5 py-3.5 text-sm text-gray-900">${fmtMoney(item.total_amount, currency)}</td>
           <td class="px-5 py-3.5 text-sm text-gray-700">${fmtMoney(item.revenue_amount, currency)}</td>
           <td class="px-5 py-3.5 text-sm text-gray-700">${fmtMoney(item.client_funds_amount, currency)}</td>
-          <td class="px-5 py-3.5"><span class="${statusClass}">${statusLabel}</span></td>
+          <td class="px-5 py-3.5 text-sm text-gray-700">${fmtMoney(outstanding.collected.total, currency)}</td>
+          <td class="px-5 py-3.5 text-sm font-medium ${outstanding.total > 0 ? 'text-amber-600' : 'text-emerald-600'}">${fmtMoney(outstanding.total, currency)}</td>
+          <td class="px-5 py-3.5"><span class="${statusClass}">${statusLabel}</span>${overCollectedBadge}</td>
           <td class="px-5 py-3.5">${renderPaymentItemForecastBadge(fcState)}</td>
           <td class="px-5 py-3.5 text-right">
             <div class="flex items-center justify-end gap-2">
+              ${!isCancelled
+                ? `<button type="button" data-action="open-collect-payment" data-id="${item.id}" class="text-gray-400 hover:text-emerald-600" title="Collect Payment">
+                     <i data-lucide="banknote" class="w-4 h-4"></i>
+                   </button>`
+                : ''
+              }
               ${canGenerate
                 ? `<button type="button" data-action="generate-payment-item-forecasts" data-id="${item.id}" class="text-gray-400 hover:text-indigo-600" title="Generate Forecast from Schedule">
                      <i data-lucide="sparkles" class="w-4 h-4"></i>
@@ -14538,6 +15191,8 @@ function renderProjectCommercialSection(project) {
                 ? `<button type="button" data-action="restore-payment-item" data-id="${item.id}" class="text-gray-400 hover:text-emerald-600" title="Restore payment">
                      <i data-lucide="rotate-ccw" class="w-4 h-4"></i>
                    </button>`
+                : outstanding.collected.total > 0
+                ? `<span title="Has collections recorded — cannot be cancelled" class="inline-flex"><i data-lucide="x-circle" class="w-4 h-4 text-gray-300"></i></span>`
                 : `<button type="button" data-action="cancel-payment-item" data-id="${item.id}" class="text-gray-400 hover:text-rose-600" title="Cancel payment">
                      <i data-lucide="x-circle" class="w-4 h-4"></i>
                    </button>`
@@ -16813,6 +17468,14 @@ document.addEventListener('click', (e) => {
   if (action === 'open-project-details') {
   const id = Number(trigger.dataset.id);
 
+  // WP2 fix: this action performs a full view switch (setView below), but
+  // never closed an open modal before invoking it. Every existing call site
+  // renders this button in plain page content (Recent Projects, Forecast
+  // list, Team page), so the gap was never visible — the new Outstanding
+  // drilldown is the first modal to use it. closeModal() is idempotent when
+  // nothing is open, so this is a no-op everywhere else.
+  closeModal();
+
   state.selectedProjectId = id;
   resetProjectDetailsFiltersForProject(id);
 
@@ -17473,6 +18136,10 @@ if (action === 'restore-payment-item') {
   handleRestorePaymentScheduleItem(Number(trigger.dataset.id));
   return;
 }
+if (action === 'open-collect-payment') {
+  openCollectPaymentModal(Number(trigger.dataset.id));
+  return;
+}
 
 if (action === 'generate-payment-item-forecasts') {
   handleGeneratePaymentItemForecasts(Number(trigger.dataset.id));
@@ -17606,6 +18273,7 @@ if (action === 'confirm-reset-forecast-from-schedule') {
   $('#commercial-terms-form')?.addEventListener('submit', handleCommercialTermsSubmit);
   $('#payment-item-form')?.addEventListener('submit', handlePaymentItemSubmit);
   $('#payment-item-form')?.elements['client_funds_amount']?.addEventListener('input', updateClientFundsPurposeRequiredIndicator);
+  $('#collect-payment-form')?.addEventListener('submit', handleCollectPaymentSubmit);
   $('#confirm-delete-btn').addEventListener('click', confirmDelete);
 
   // CRM Leads filters
