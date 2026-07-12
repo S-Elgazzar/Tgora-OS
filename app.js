@@ -1430,10 +1430,14 @@ async function updateCrmClient(id, payload) {
   return data;
 }
 
+// C1: archive/restore must never touch the business `status` field — only
+// is_archived is the source of truth for archived-ness (every filter/KPI in
+// this file already reads is_archived, never status==='archived'). Writing
+// status here used to silently overwrite and then guess-restore the real
+// status (e.g. active/inactive), permanently losing it.
 async function archiveCrmClient(id) {
   return updateCrmClient(id, {
     is_archived: true,
-    status: 'archived',
     updated_at: new Date().toISOString(),
   });
 }
@@ -1441,7 +1445,6 @@ async function archiveCrmClient(id) {
 async function restoreCrmClient(id) {
   return updateCrmClient(id, {
     is_archived: false,
-    status: 'active',
     updated_at: new Date().toISOString(),
   });
 }
@@ -1464,11 +1467,12 @@ async function updateCrmContact(id, payload) {
   if (error) { console.error('updateCrmContact', error); toast(error.message || 'Failed to update contact', 'error'); return null; }
   return data;
 }
+// C1: see archiveCrmClient/restoreCrmClient above — status is never written here.
 async function archiveCrmContact(id) {
-  return updateCrmContact(id, { is_archived: true, status: 'archived', updated_at: new Date().toISOString() });
+  return updateCrmContact(id, { is_archived: true, updated_at: new Date().toISOString() });
 }
 async function restoreCrmContact(id) {
-  return updateCrmContact(id, { is_archived: false, status: 'active', updated_at: new Date().toISOString() });
+  return updateCrmContact(id, { is_archived: false, updated_at: new Date().toISOString() });
 }
 
 // ---------- CRM Deals Data Layer ----------
@@ -1558,13 +1562,14 @@ async function updateCrmProposal(id, payload) {
   if (error) { console.error('updateCrmProposal', error); toast(error.message || 'Failed to update proposal', 'error'); return null; }
   return data;
 }
+// C1: see archiveCrmClient/restoreCrmClient above — status is never written
+// here either, so an Accepted/Rejected/Sent Proposal keeps that status
+// through an archive/restore cycle instead of reverting to 'draft'.
 async function archiveCrmProposal(id) {
-  return updateCrmProposal(id, { is_archived: true, status: 'archived', updated_at: new Date().toISOString() });
+  return updateCrmProposal(id, { is_archived: true, updated_at: new Date().toISOString() });
 }
 async function restoreCrmProposal(id) {
-  // Safest default per existing edit-form fallback (openEditProposalModal
-  // already treats a missing status as 'draft' — see form.status.value there).
-  return updateCrmProposal(id, { is_archived: false, status: 'draft', updated_at: new Date().toISOString() });
+  return updateCrmProposal(id, { is_archived: false, updated_at: new Date().toISOString() });
 }
 
 // ---------- CRM Service Types Data Layer ----------
@@ -2495,7 +2500,28 @@ function renderAlerts() {
   refreshIcons();
 }
 
+// C3 — Last Active Admin Protection. An active Admin is role_type==='admin'
+// AND status !== 'inactive'. countActiveAdmins(excludeId) lets a caller ask
+// "how many active Admins would remain if this one member were removed from
+// the count" without needing two different code paths for update vs delete.
+function isActiveAdmin(member) {
+  return (member?.role_type || '').toLowerCase() === 'admin' &&
+    (member?.status || '').toLowerCase() !== 'inactive';
+}
+
+function countActiveAdmins(excludeId = null) {
+  return state.teamMembers.filter(
+    (m) => isActiveAdmin(m) && Number(m.id) !== Number(excludeId)
+  ).length;
+}
+
 async function insertTeamMember(payload) {
+  // C6: only Admin may create Team Members.
+  if (!canEditTeamMember()) {
+    toast('You do not have permission to create team members', 'error');
+    return null;
+  }
+
   const { data, error } = await supabaseClient
     .from('team_members')
     .insert([payload])
@@ -2520,6 +2546,24 @@ async function insertTeamMember(payload) {
 }
 
 async function updateTeamMember(id, payload) {
+  // C6: only Admin may edit Team Members (name/email/job_title/department,
+  // and role_type/status — Manager/Member may never write any of these).
+  if (!canEditTeamMember()) {
+    toast('You do not have permission to edit team members', 'error');
+    return null;
+  }
+
+  // C3: block a write that would demote, or deactivate, the last active Admin.
+  const current = state.teamMembers.find((m) => Number(m.id) === Number(id));
+  const wouldLoseActiveAdmin = current && isActiveAdmin(current) && (
+    (payload.role_type !== undefined && (payload.role_type || '').toLowerCase() !== 'admin') ||
+    (payload.status !== undefined && (payload.status || '').toLowerCase() === 'inactive')
+  );
+  if (wouldLoseActiveAdmin && countActiveAdmins(id) === 0) {
+    toast('This is the last active Admin — promote another Admin before changing this.', 'error');
+    return null;
+  }
+
   const { data, error } = await supabaseClient
     .from('team_members')
     .update(payload)
@@ -2560,6 +2604,13 @@ async function fetchTasks() {
 }
 
 async function insertProject(payload) {
+  // C6: only Admin/Manager may create Projects (same matrix already used to
+  // hide/show the New Project button).
+  if (!canCreateProject()) {
+    toast('You do not have permission to create projects', 'error');
+    return null;
+  }
+
   const { data, error } = await supabaseClient
     .from('projects')
     .insert([payload])
@@ -2584,6 +2635,13 @@ async function insertProject(payload) {
 }
 
 async function updateProject(id, payload) {
+  // C6: only Admin/Manager may edit Projects (same matrix already used to
+  // hide/show the Edit action).
+  if (!canEditProject()) {
+    toast('You do not have permission to edit projects', 'error');
+    return null;
+  }
+
   const { data, error } = await supabaseClient
     .from('projects')
     .update(payload)
@@ -2609,6 +2667,12 @@ async function updateProject(id, payload) {
 }
 
 async function insertTask(payload) {
+  // C6: only Admin/Manager may create Tasks.
+  if (!canCreateTask()) {
+    toast('You do not have permission to create tasks', 'error');
+    return null;
+  }
+
   const { data, error } = await supabaseClient
     .from('tasks')
     .insert([payload])
@@ -2638,6 +2702,28 @@ async function updateTask(id, payload) {
   const oldTask = state.tasks.find(
     (task) => Number(task.id) === Number(id)
   );
+
+  // C6: authorization guard mirroring the exact approved field matrix already
+  // enforced in the UI (applyTaskFieldPermission/canEditTaskField) — Admin:
+  // any field on any task. Manager: any field except
+  // TASK_MANAGER_RESTRICTED_FIELDS (start_date/deadline), on any task.
+  // Member: only TASK_MEMBER_EDITABLE_FIELDS (status/task_link/notes), and
+  // only on their own task. Checked against the caller-supplied keys before
+  // this function's own internal auto-fields (completed_at/is_archived/
+  // archived_at, below) are added, since those are a system side effect of
+  // an allowed status change, not something the caller chose to write.
+  if (oldTask) {
+    const requestedFields = Object.keys(payload);
+    const allowed = isAdmin()
+      ? true
+      : isManager()
+      ? requestedFields.every((f) => !TASK_MANAGER_RESTRICTED_FIELDS.includes(f))
+      : isOwnTask(oldTask) && requestedFields.every((f) => TASK_MEMBER_EDITABLE_FIELDS.includes(f));
+    if (!allowed) {
+      toast('You do not have permission to make this change.', 'error');
+      return null;
+    }
+  }
 
   if (payload.status !== undefined && oldTask) {
     const oldStatus = (oldTask.status || '').toLowerCase();
@@ -2781,6 +2867,12 @@ async function updateTask(id, payload) {
 // view. Deliberately narrow — only flips the archive flags, never touches
 // status or any other field, and never deletes anything.
 async function restoreTask(id) {
+  // C6: matches this function's own documented scope — Admin/Manager only.
+  if (!canFullyEditTask()) {
+    toast('You do not have permission to restore this task', 'error');
+    return null;
+  }
+
   const { data, error } = await supabaseClient
     .from('tasks')
     .update({ is_archived: false, archived_at: null })
@@ -2798,9 +2890,38 @@ async function restoreTask(id) {
 }
 
 async function deleteProject(id) {
+  // C6: only Admin may delete Projects (same matrix already used to
+  // hide/show the Delete action).
+  if (!canDeleteProject()) {
+    toast('You do not have permission to delete projects', 'error');
+    return false;
+  }
+
   const project = state.projects.find(
     (p) => Number(p.id) === Number(id)
   );
+
+  // C5: block deleting a Project that still has Commercial Terms, Payment
+  // Schedule Items, or any linked Finance Transaction — deleting the Project
+  // row would silently orphan real commercial/financial records, including
+  // already-collected client money, with no recovery. Nothing is
+  // cascade-deleted to make room for the delete; the Project itself is
+  // simply not deletable while any of this exists.
+  const terms = state.projectCommercialTerms.find(
+    (ct) => Number(ct.project_id) === Number(id)
+  );
+  const scheduleItems = terms
+    ? state.projectPaymentScheduleItems.filter((i) => Number(i.commercial_terms_id) === Number(terms.id))
+    : [];
+  const scheduleItemIds = new Set(scheduleItems.map((i) => Number(i.id)));
+  const hasTransactions = state.financeTransactions.some(
+    (t) => scheduleItemIds.has(Number(t.payment_schedule_item_id))
+  );
+
+  if (terms || scheduleItems.length > 0 || hasTransactions) {
+    toast('This Project contains Commercial or Finance records and cannot be deleted. Archive or cancel the Project instead.', 'error');
+    return false;
+  }
 
   await supabaseClient.from('tasks').delete().eq('project_id', id);
 
@@ -2831,6 +2952,12 @@ async function deleteTask(id) {
     (t) => Number(t.id) === Number(id)
   );
 
+  // C6: only Admin/Manager may delete Tasks.
+  if (!canDeleteTask(task)) {
+    toast('You do not have permission to delete this task', 'error');
+    return false;
+  }
+
   const { error } = await supabaseClient
     .from('tasks')
     .delete()
@@ -2854,9 +2981,35 @@ async function deleteTask(id) {
 }
 
 async function deleteTeamMember(id) {
+  // C6: only Admin may delete Team Members.
+  if (!canDeleteTeamMember()) {
+    toast('You do not have permission to delete team members', 'error');
+    return false;
+  }
+
   const member = state.teamMembers.find(
     (m) => Number(m.id) === Number(id)
   );
+
+  // C3: block deleting the last active Admin.
+  if (member && isActiveAdmin(member) && countActiveAdmins(id) === 0) {
+    toast('This is the last active Admin — promote another Admin before deleting this member.', 'error');
+    return false;
+  }
+
+  // C4: block deleting a member who still owns Tasks — deleting them would
+  // leave those Tasks pointing at a name that no longer resolves to anyone.
+  // No auto-reassignment; the admin must reassign first.
+  if (member) {
+    const memberName = (member.name || '').toLowerCase().trim();
+    const hasTasks = !!memberName && state.tasks.some(
+      (t) => (t.assigned_to || '').toLowerCase().trim() === memberName
+    );
+    if (hasTasks) {
+      toast('This member has Tasks assigned to them. Reassign those Tasks before deleting this member.', 'error');
+      return false;
+    }
+  }
 
   const { error } = await supabaseClient
     .from('team_members')
@@ -2881,7 +3034,15 @@ async function deleteTeamMember(id) {
 }
 
 // ---------- Rendering ----------
-function populateTeamMembers() {
+// C4: builds the Assigned To select. `currentAssignedTo` (passed only when
+// opening Edit on an existing Task) is preserved as a selectable option even
+// if that member is now inactive or no longer has a team_members row at all
+// — so opening Edit never silently clears assigned_to just because the
+// assignee became inactive since the Task was created. An inactive member is
+// never offered for a NEW assignment: Create Task and the plain
+// populateTeamMembers() call both omit currentAssignedTo, and an inactive
+// member only ever appears when they are already the Task's current value.
+function populateTaskAssigneeSelect(currentAssignedTo = '') {
   const select = $('#assigned-to-select');
 
   if (!select) return;
@@ -2890,8 +3051,15 @@ function populateTeamMembers() {
     (m) => (m.status || '').toLowerCase() !== 'inactive'
   );
 
+  const trimmedCurrent = (currentAssignedTo || '').trim();
+  const currentIsActive = activeMembers.some((m) => m.name === trimmedCurrent);
+  const legacyOption = (trimmedCurrent && !currentIsActive)
+    ? `<option value="${escapeHtml(trimmedCurrent)}">${escapeHtml(trimmedCurrent)} (Inactive)</option>`
+    : '';
+
   select.innerHTML = `
     <option value="">Select Team Member</option>
+    ${legacyOption}
     ${activeMembers
       .map(
         (member) => `
@@ -2902,6 +3070,10 @@ function populateTeamMembers() {
       )
       .join('')}
   `;
+}
+
+function populateTeamMembers() {
+  populateTaskAssigneeSelect();
 }
 
 function populateLeadOwnerSelect() {
@@ -6887,6 +7059,11 @@ async function refreshDataAndRender() {
     );
     state.currentMember = rematched || null;
     state.currentRole   = (rematched?.role_type || 'member').toLowerCase().trim();
+    // C2: the member behind this session may have just been deactivated or
+    // removed (this re-fetch is exactly what a realtime team_members change
+    // or a Team Member edit triggers) — revoke access immediately rather
+    // than rendering the app with a stale role.
+    if (await denyAccessIfNotActiveMember(rematched)) return;
   }
 
   // Fetch admin-gated Commercial data only after the role above has been
@@ -12481,6 +12658,36 @@ function isMember() {
   return state.currentRole === 'member';
 }
 
+// C2: a Team Member record with status 'inactive', or no matching Team
+// Member record at all for the signed-in Supabase Auth user, must never be
+// treated as a valid session. Called everywhere role is (re)resolved from
+// team_members — init() on load/session-restore, and refreshDataAndRender()
+// on every realtime team_members change and every Team Member edit
+// (handleMemberSubmit already calls refreshDataAndRender() on success), so
+// all three required trigger points share this one check. Signs the
+// Supabase session out and returns to Login when it fires; returns false
+// (no-op) for a normal active session so nothing else is affected.
+async function denyAccessIfNotActiveMember(member) {
+  if (!state.currentUser?.id) return false;
+  const inactive = !member || (member.status || '').toLowerCase() === 'inactive';
+  if (!inactive) return false;
+
+  await supabaseClient.auth.signOut();
+  state.currentUser = null;
+  state.currentMember = null;
+  state.currentRole = null;
+
+  const errorEl = $('#login-error');
+  if (errorEl) {
+    errorEl.textContent = member
+      ? 'Your account is inactive. Contact an administrator.'
+      : 'No active Team Member record was found for this account. Contact an administrator.';
+    errorEl.classList.remove('hidden');
+  }
+  $('#auth-screen')?.classList.remove('hidden');
+  return true;
+}
+
 function canEditTeamMember() {
   return isAdmin();
 }
@@ -12645,6 +12852,22 @@ function canCreateTask() {
 
 function canDeleteTask(task) {
   return isAdmin() || isManager();
+}
+
+// ---------- Project Permission Helpers (C6) ----------
+// Mirrors the pre-existing UI gating exactly (project row action buttons,
+// the New Project button toggle) — this is a parity fix adding the same
+// check at the data-write layer, not a change to who can do what.
+function canCreateProject() {
+  return isAdmin() || isManager();
+}
+
+function canEditProject() {
+  return isAdmin() || isManager();
+}
+
+function canDeleteProject() {
+  return isAdmin();
 }
 
 // Single source of truth for Performance feature access (monthly history,
@@ -14382,6 +14605,11 @@ function openEditTaskModal(id) {
   form.assigned_to.required = false;
   form.deadline.required = false;
 
+  // C4: rebuild the Assigned To select for THIS task before setting its
+  // value, so an inactive/legacy current assignee is preserved as a
+  // selectable option instead of silently failing to match and blanking out.
+  populateTaskAssigneeSelect(task.assigned_to);
+
   form.task_info.value = task.task_info || '';
   form.assigned_to.value = task.assigned_to || '';
   form.status.value = task.status || 'todo';
@@ -14488,7 +14716,8 @@ async function handleTaskSubmit(e) {
     if (limitedEdit) {
       payload = {
         status: form.status.value,
-        task_link: form.task_link.value || null
+        task_link: form.task_link.value || null,
+        notes: form.notes.value || null
       };
     }
   }
@@ -17519,6 +17748,10 @@ document.addEventListener('click', (e) => {
   }
 
   if (action === 'open-project-modal') {
+  if (!canCreateProject()) {
+    toast('You do not have permission to create projects', 'error');
+    return;
+  }
   openCreateProjectModal();
   return;
 }
@@ -17544,12 +17777,19 @@ document.addEventListener('click', (e) => {
     form.deadline.required = true;
   }
 
+  // C4: reset Assigned To back to active-members-only — a prior Edit may
+  // have left a preserved-inactive-assignee option in this shared select.
+  populateTeamMembers();
   syncTaskProjectSelect();
   openModal('task-modal');
   return;
 }
 
   if (action === 'open-member-modal') {
+  if (!canEditTeamMember()) {
+    toast('You do not have permission to create team members', 'error');
+    return;
+  }
   openCreateMemberModal();
   return;
 }
@@ -17596,12 +17836,20 @@ document.addEventListener('click', (e) => {
   }
 
   if (action === 'edit-project') {
+  if (!canEditProject()) {
+    toast('You do not have permission to edit projects', 'error');
+    return;
+  }
   const id = Number(trigger.dataset.id);
   openEditProjectModal(id);
   return;
 }
 
 if (action === 'delete-project') {
+  if (!canDeleteProject()) {
+    toast('You do not have permission to delete projects', 'error');
+    return;
+  }
   const id = Number(trigger.dataset.id);
   const project = state.projects.find((p) => p.id === id);
   openConfirm('project', id, project ? `Project “${project.project_name}”` : 'This project');
@@ -17646,12 +17894,20 @@ if (action === 'restore-task') {
 }
 
 if (action === 'edit-member') {
+  if (!canEditTeamMember()) {
+    toast('You do not have permission to edit team members', 'error');
+    return;
+  }
   const id = Number(trigger.dataset.id);
   openEditMemberModal(id);
   return;
 }
 
 if (action === 'delete-member') {
+  if (!canDeleteTeamMember()) {
+    toast('You do not have permission to delete team members', 'error');
+    return;
+  }
   const id = Number(trigger.dataset.id);
   const member = state.teamMembers.find((m) => Number(m.id) === id);
   openConfirm('member', id, member ? `Member “${member.name}”` : 'This member');
@@ -19202,6 +19458,10 @@ renderStaticButtonMounts();
 
       state.currentMember = matchedMember || null;
       state.currentRole = (matchedMember?.role_type || 'member').toLowerCase().trim();
+      // C2: deny app access on session restore if this account has no active
+      // Team Member record — must run before any admin-gated data below is
+      // fetched or rendered.
+      if (await denyAccessIfNotActiveMember(matchedMember)) return;
     } else {
       state.currentMember = null;
       state.currentRole = null;
