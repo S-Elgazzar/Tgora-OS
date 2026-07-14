@@ -130,6 +130,7 @@ const state = {
     financeTransactions: { search: '', type: 'all', account: '', archived: 'active' },
     financeAccounts:     { search: '' },
     financeForecasts:    { search: '', type: 'all', status: 'all', archived: 'active', source: 'all', component: 'all' },
+    financeFixedCosts:   { search: '', status: 'all' },
   },
   pendingDelete: null, // { type: 'project' | 'task', id }
   projectCommercialTerms: [],
@@ -192,6 +193,8 @@ const state = {
   editingFinanceAccountId: null,
   editingFinanceTransactionId: null,
   editingFinanceForecastId: null,
+  editingFinanceFixedCostId: null,
+  openWidgetKey: null, // widgetKey currently shown in the Finance widget drilldown modal, or null if closed
   memberTasksBase: [],       // all tasks for the currently viewed member (set in openMemberDetails)
   memberTasksCardBase: null, // card-filtered subset; null = show all member tasks
   leadEditReturnView: null,
@@ -2047,8 +2050,12 @@ async function fetchFinanceSettings() {
 
 async function fetchFinanceFixedCosts() {
   if (!isAdmin()) return [];
+  // Fetches every row (active and inactive) — the Fixed Costs management
+  // tab needs inactive rows visible for its Active/Inactive/All filter.
+  // getFinanceFixedCosts() below is what filters down to active-now rows
+  // for Business Health calculations.
   const { data, error } = await supabaseClient
-    .from('finance_fixed_costs').select('*').eq('is_active', true).order('cost_name');
+    .from('finance_fixed_costs').select('*').order('cost_name');
   if (error) {
     // Table may not exist yet during development/rollout — do not break the app,
     // just fall back to finance_settings / the hardcoded default.
@@ -2056,6 +2063,28 @@ async function fetchFinanceFixedCosts() {
     return [];
   }
   return data || [];
+}
+
+async function createFinanceFixedCost(payload) {
+  if (!isAdmin()) return null;
+  const { data, error } = await supabaseClient.from('finance_fixed_costs').insert([payload]).select().single();
+  if (error) { console.error('createFinanceFixedCost', error); toast(error.message || 'Failed to create fixed cost', 'error'); return null; }
+  return data;
+}
+async function updateFinanceFixedCost(id, payload) {
+  if (!isAdmin()) return null;
+  const { data, error } = await supabaseClient.from('finance_fixed_costs').update(payload).eq('id', id).select().single();
+  if (error) { console.error('updateFinanceFixedCost', error); toast(error.message || 'Failed to update fixed cost', 'error'); return null; }
+  return data;
+}
+async function setFinanceFixedCostActive(id, isActive) {
+  return updateFinanceFixedCost(id, { is_active: isActive, updated_at: new Date().toISOString() });
+}
+async function permanentlyDeleteFinanceFixedCost(id) {
+  if (!isAdmin()) return false;
+  const { error } = await supabaseClient.from('finance_fixed_costs').delete().eq('id', id);
+  if (error) { console.error('permanentlyDeleteFinanceFixedCost', error); toast(error.message || 'Failed to permanently delete fixed cost', 'error'); return false; }
+  return true;
 }
 
 async function fetchFinanceChartOfAccounts() {
@@ -8908,13 +8937,45 @@ const FINANCE_FIXED_COSTS_DEFAULT = [
   { label: 'Internet / Utilities', amount: 1200 },
   { label: 'Miscellaneous', amount: 3000 },
 ];
+// Single source of truth for converting any fixed-cost frequency into its
+// Monthly Equivalent. Every calculation that needs a monthly fixed-cost
+// figure (break-even, safe/stretch target, burn rate, cash runway, Business
+// Health) must go through getFinanceFixedCosts() below, which applies this
+// factor — never re-derive a monthly figure from `amount`/`frequency` inline.
+const FIXED_COST_MONTHLY_FACTOR = {
+  daily:     365 / 12,
+  weekly:    52 / 12,
+  monthly:   1,
+  quarterly: 1 / 3,
+  yearly:    1 / 12,
+};
+function getFixedCostMonthlyEquivalent(cost) {
+  const factor = FIXED_COST_MONTHLY_FACTOR[cost.frequency] ?? 1;
+  return (Number(cost.amount) || 0) * factor;
+}
+
+// A fixed cost counts toward calculations only while is_active is true and
+// today falls within [start_date, end_date] (either bound may be absent).
+// Plain ISO-string ('YYYY-MM-DD') comparison avoids timezone drift from
+// constructing Date objects for date-only columns.
+function isFixedCostActiveNow(cost, todayIso) {
+  todayIso = todayIso || new Date().toISOString().slice(0, 10);
+  if (cost.is_active === false) return false;
+  if (cost.start_date && cost.start_date > todayIso) return false;
+  if (cost.end_date && cost.end_date < todayIso) return false;
+  return true;
+}
+
 // Resolution order: finance_fixed_costs table rows > finance_settings
 // 'fixed_costs' > FINANCE_FIXED_COSTS_DEFAULT. Callers always get the same
-// { label, amount } shape regardless of which source was used.
+// { label, amount } shape regardless of which source was used — `amount`
+// here is always the Monthly Equivalent, never the raw stored amount.
 function getFinanceFixedCosts() {
   const rows = state.financeFixedCosts || [];
   if (rows.length) {
-    return rows.map(r => ({ label: r.cost_name, amount: Number(r.amount) || 0 }));
+    return rows
+      .filter(r => isFixedCostActiveNow(r))
+      .map(r => ({ label: r.cost_name, amount: getFixedCostMonthlyEquivalent(r) }));
   }
   return getFinanceArraySetting('fixed_costs', FINANCE_FIXED_COSTS_DEFAULT);
 }
@@ -10223,11 +10284,23 @@ const FINANCE_WIDGET_CONFIG = {
   'business-health':     { title: 'Business Health',          icon: 'heart-pulse',   color: 'emerald', tooltip: 'Composite health score — profitability, cash runway, forecast accuracy.',              periodFiltered: true  },
 };
 
+// Fixed Cost mutations always refresh the compact dashboard widget via
+// renderFinanceDashboard(); this additionally refreshes the Business Health
+// drilldown modal's own content in place if it happens to be the modal
+// currently open, so an open modal never shows stale metrics/breakdown.
+function refreshOpenBusinessHealthModalIfNeeded() {
+  if (state.openWidgetKey === 'business-health') openWidgetDrilldown('business-health');
+}
+
 function openWidgetDrilldown(widgetKey) {
   const cfg = FINANCE_WIDGET_CONFIG[widgetKey];
   if (!cfg) return;
   const body = $('#widget-modal-body');
   if (!body) return;
+  // Tracked so a Fixed Cost mutation can tell whether this modal is the one
+  // currently open and, if so, re-run this function to refresh its content
+  // live instead of leaving it stale. Cleared by closeModal().
+  state.openWidgetKey = widgetKey;
 
   const color = cfg.color || 'gray';
   const today = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
@@ -10727,6 +10800,11 @@ function openWidgetDrilldown(widgetKey) {
         </div>
       </div>
 
+      <p class="kpi-section-label">Health Score Breakdown</p>
+      <div class="mb-5">
+        ${renderBusinessHealthScoreBreakdown(m)}
+      </div>
+
       <p class="kpi-section-label">Fixed Cost Breakdown</p>
       <div class="bg-gray-50 rounded-xl px-4 py-3 mb-3 flex items-center justify-between">
         <span class="text-[12px] text-gray-500 uppercase font-semibold tracking-wide">Monthly Fixed Cost</span>
@@ -11142,6 +11220,66 @@ function renderFinanceAccounts() {
         <td class="px-4 py-3 text-right">
           <button class="icon-btn text-indigo-500" data-action="open-account-ledger" data-id="${a.id}" title="View Ledger"><i data-lucide="book-open" class="w-4 h-4"></i></button>
           <button class="icon-btn" data-action="edit-finance-account" data-id="${a.id}" title="Edit"><i data-lucide="pencil" class="w-4 h-4"></i></button>
+        </td>
+      </tr>`;
+    }).join('');
+  }
+  refreshIcons();
+}
+
+const FIXED_COST_FREQUENCY_LABELS = { daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly', quarterly: 'Quarterly', yearly: 'Yearly' };
+
+function getFilteredFinanceFixedCosts() {
+  const f = state.filters.financeFixedCosts;
+  let rows = state.financeFixedCosts || [];
+  if (f.status === 'active')   rows = rows.filter(r => r.is_active);
+  if (f.status === 'inactive') rows = rows.filter(r => !r.is_active);
+  if (f.search) {
+    const q = f.search.toLowerCase();
+    rows = rows.filter(r =>
+      (r.cost_name || '').toLowerCase().includes(q) ||
+      (r.category  || '').toLowerCase().includes(q)
+    );
+  }
+  return rows;
+}
+
+function renderFinanceFixedCosts() {
+  const totalEl = $('#finance-fixed-costs-monthly-total');
+  if (totalEl) {
+    const total = (state.financeFixedCosts || [])
+      .filter(r => isFixedCostActiveNow(r))
+      .reduce((s, r) => s + getFixedCostMonthlyEquivalent(r), 0);
+    totalEl.textContent = fmtMoney(total);
+  }
+
+  const tbody = $('#finance-fixed-costs-table-body');
+  const empty  = $('#finance-fixed-costs-empty');
+  const rows = getFilteredFinanceFixedCosts();
+  if (!rows.length) {
+    if (tbody) tbody.innerHTML = '';
+    if (empty) empty.classList.remove('hidden');
+    refreshIcons();
+    return;
+  }
+  if (empty) empty.classList.add('hidden');
+  if (tbody) {
+    tbody.innerHTML = rows.map(r => {
+      const monthly = getFixedCostMonthlyEquivalent(r);
+      const countsNow = isFixedCostActiveNow(r);
+      return `<tr class="hover:bg-gray-50 ${!r.is_active ? 'opacity-60' : ''}">
+        <td class="px-4 py-3 text-sm font-medium text-gray-800">${escapeHtml(r.cost_name)}</td>
+        <td class="px-4 py-3 text-sm text-gray-500">${escapeHtml(r.category || '—')}</td>
+        <td class="px-4 py-3 text-sm text-gray-700 text-right whitespace-nowrap">${fmtMoney(r.amount)}</td>
+        <td class="px-4 py-3 text-sm text-gray-500">${FIXED_COST_FREQUENCY_LABELS[r.frequency] || labelize(r.frequency || 'monthly')}</td>
+        <td class="px-4 py-3 text-sm font-semibold text-right whitespace-nowrap ${countsNow ? 'text-gray-800' : 'text-gray-400'}" title="${countsNow ? 'Counted in Business Health' : 'Not counted in Business Health right now'}">${fmtMoney(monthly)}</td>
+        <td class="px-4 py-3 text-center">
+          <span class="inline-flex px-2 py-0.5 text-xs font-medium rounded-full ${r.is_active ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-100 text-gray-500'}">${r.is_active ? 'Active' : 'Inactive'}</span>
+        </td>
+        <td class="px-4 py-3 text-right whitespace-nowrap">
+          <button class="icon-btn" data-action="edit-finance-fixed-cost" data-id="${r.id}" title="Edit"><i data-lucide="pencil" class="w-4 h-4"></i></button>
+          <button class="icon-btn" data-action="toggle-finance-fixed-cost-active" data-id="${r.id}" title="${r.is_active ? 'Deactivate' : 'Activate'}"><i data-lucide="power" class="w-4 h-4"></i></button>
+          <button class="icon-btn text-rose-500" data-action="permanent-delete-finance-fixed-cost" data-id="${r.id}" title="Delete Permanently"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
         </td>
       </tr>`;
     }).join('');
@@ -11728,7 +11866,7 @@ function getBusinessHealthDaysRemaining(dr) {
   return 0; // historical / multi-period ranges
 }
 
-function getBusinessHealthScore({ breakEven, safeTarget, currentRevenue, netProfit, runwayMonths, clientFundsHeld }, cfg) {
+function getBusinessHealthScore({ breakEven, safeTarget, currentRevenue, netProfit, runwayMonths, clientFundsHeld, burnRate, cashInAccounts }, cfg) {
   const w = cfg.scoreWeights;
   const healthyRunway = cfg.runwayThresholds.healthy;
   const breakEvenPts  = breakEven  > 0 ? Math.min(1, currentRevenue / breakEven)  * w.breakEven  : w.breakEven;
@@ -11745,6 +11883,112 @@ function getBusinessHealthScore({ breakEven, safeTarget, currentRevenue, netProf
   else status = 'Risk';
   const statusColor = { Excellent: 'emerald', Healthy: 'blue', Attention: 'amber', Risk: 'rose' }[status];
 
+  // ---- Transparency data for the "Health Score Breakdown" UI section ----
+  // Pure display data, reverse-engineered directly from the exact branches
+  // computed above. Does not alter score, weights, rounding, or thresholds
+  // in any way — earned/max here are the same values used in `breakdown`.
+  const breakEvenPct  = breakEven  > 0 ? Math.round(Math.min(1, currentRevenue / breakEven)  * 100) : null;
+  const safeTargetPct = safeTarget > 0 ? Math.round(Math.min(1, currentRevenue / safeTarget) * 100) : null;
+  const runwayIsFinite = isFinite(runwayMonths);
+  const runwayPct = Math.round(Math.min(1, (runwayIsFinite ? runwayMonths : healthyRunway) / healthyRunway) * 100);
+
+  const explain = [
+    {
+      label: 'Progress to Break-Even',
+      earned: Math.round(breakEvenPts * 10) / 10,
+      max: w.breakEven,
+      measured: [
+        { name: 'currentRevenue', value: fmtMoney(currentRevenue) },
+        { name: 'breakEven',      value: fmtMoney(breakEven) },
+      ],
+      condition: `breakEven > 0 ? min(1, currentRevenue / breakEven) × ${w.breakEven} : ${w.breakEven}`,
+      result: breakEven > 0,
+      reason: breakEven > 0
+        ? `Current revenue covers ${breakEvenPct}% of the required monthly break-even.`
+        : `Break-even is ${fmtMoney(breakEven)} (no active fixed costs), so this component defaults to the full ${w.breakEven} points.`,
+      improvement: breakEven > 0 && currentRevenue < breakEven
+        ? `Close ${fmtMoney(breakEven - currentRevenue)} more in revenue to reach ${fmtMoney(breakEven)} and earn full points here.`
+        : 'Already earning full points for this component.',
+    },
+    {
+      label: 'Progress to Safe Target',
+      earned: Math.round(safeTargetPts * 10) / 10,
+      max: w.safeTarget,
+      measured: [
+        { name: 'currentRevenue', value: fmtMoney(currentRevenue) },
+        { name: 'safeTarget',     value: fmtMoney(safeTarget) },
+      ],
+      condition: `safeTarget > 0 ? min(1, currentRevenue / safeTarget) × ${w.safeTarget} : ${w.safeTarget}`,
+      result: safeTarget > 0,
+      reason: safeTarget > 0
+        ? `Current revenue covers ${safeTargetPct}% of the ${fmtMoney(safeTarget)} safe target.`
+        : `Safe target is ${fmtMoney(safeTarget)} (no active fixed costs), so this component defaults to the full ${w.safeTarget} points.`,
+      improvement: safeTarget > 0 && currentRevenue < safeTarget
+        ? `Close ${fmtMoney(safeTarget - currentRevenue)} more in revenue to reach the ${fmtMoney(safeTarget)} safe target and earn full points here.`
+        : 'Already earning full points for this component.',
+    },
+    {
+      label: 'Positive Net Profit',
+      earned: netProfitPts,
+      max: w.netProfit,
+      measured: [
+        { name: 'netProfit', value: fmtMoney(netProfit) },
+      ],
+      condition: `netProfit > 0 ? ${w.netProfit} : 0`,
+      result: netProfit > 0,
+      reason: netProfit > 0
+        ? `Net profit is ${fmtMoney(netProfit)}, which is positive, so the full ${w.netProfit} points are awarded.`
+        : `Net profit is ${fmtMoney(netProfit)}, which is not positive, so 0 of ${w.netProfit} points are awarded.`,
+      improvement: netProfit > 0
+        ? 'Already earning full points for this component.'
+        : `Net profit needs to increase by more than ${fmtMoney(Math.abs(netProfit))} (from ${fmtMoney(netProfit)} to above ${fmtMoney(0)}) to earn these ${w.netProfit} points.`,
+    },
+    {
+      label: `Cash Runway ≥ ${healthyRunway} Months`,
+      earned: Math.round(runwayPts * 10) / 10,
+      max: w.cashRunway,
+      measured: [
+        { name: 'runwayMonths',  value: runwayIsFinite ? `${runwayMonths.toFixed(1)} months` : '∞ (zero burn rate)' },
+        { name: 'healthyRunway', value: `${healthyRunway} months` },
+      ],
+      condition: `min(1, (isFinite(runwayMonths) ? runwayMonths : healthyRunway) / healthyRunway) × ${w.cashRunway}`,
+      result: runwayIsFinite,
+      reason: runwayIsFinite
+        ? `Cash runway is ${runwayMonths.toFixed(1)} months, which is ${runwayPct}% of the ${healthyRunway}-month healthy threshold.`
+        : `Burn rate is 0 EGP (no active fixed costs), so runway is infinite and this component is capped at the ${healthyRunway}-month threshold, earning the full ${w.cashRunway} points.`,
+      improvement: (() => {
+        if (runwayPct >= 100) return 'Already earning full points for this component.';
+        // requiredCash = max(0, burnRate × healthyRunway − cashInAccounts) — the
+        // exact cash gap to close to reach the healthy-runway threshold, using
+        // the same burnRate/cashInAccounts the runway ratio above is built from.
+        const missingMonths = healthyRunway - runwayMonths;
+        if (burnRate > 0 && Number.isFinite(cashInAccounts)) {
+          const requiredCash = Math.max(0, burnRate * healthyRunway - cashInAccounts);
+          return `Add ${fmtMoney(requiredCash)} to cash in accounts (or reduce monthly fixed costs) to close the ${missingMonths.toFixed(1)}-month gap and reach ${healthyRunway} months of runway.`;
+        }
+        // burnRate/cashInAccounts not supplied by this caller — fall back to
+        // the derivable months-only gap rather than inventing an EGP amount.
+        return `Runway is ${missingMonths.toFixed(1)} months short of the ${healthyRunway}-month threshold; increase cash in accounts or reduce monthly fixed costs to close the gap.`;
+      })(),
+    },
+    {
+      label: 'Client Funds Not Negative',
+      earned: clientFundsPts,
+      max: w.clientFunds,
+      measured: [
+        { name: 'clientFundsHeld', value: fmtMoney(clientFundsHeld) },
+      ],
+      condition: `clientFundsHeld >= 0 ? ${w.clientFunds} : 0`,
+      result: clientFundsHeld >= 0,
+      reason: clientFundsHeld >= 0
+        ? `Client Funds Held is not negative, so the current scoring model awards the full ${w.clientFunds} points for this component.`
+        : `Client funds held is ${fmtMoney(clientFundsHeld)}, which is negative, so 0 of ${w.clientFunds} points are awarded.`,
+      improvement: clientFundsHeld >= 0
+        ? 'Already earning full points for this component.'
+        : `Increase client funds held by ${fmtMoney(-clientFundsHeld)} to return it to zero and earn these ${w.clientFunds} points.`,
+    },
+  ];
+
   return {
     score, status, statusColor,
     breakdown: [
@@ -11754,6 +11998,7 @@ function getBusinessHealthScore({ breakEven, safeTarget, currentRevenue, netProf
       { label: `Cash Runway ≥ ${healthyRunway} Months`, points: Math.round(runwayPts * 10) / 10,      max: w.cashRunway },
       { label: 'Client Funds Not Negative',            points: clientFundsPts,                       max: w.clientFunds },
     ],
+    explain,
   };
 }
 
@@ -11822,7 +12067,7 @@ function getBusinessHealthMetrics(options = {}) {
   const projectedRevenue  = currentRevenue + forecastedRevenue;
   const projectedGap      = safeTarget - projectedRevenue;
 
-  const scoreInfo = getBusinessHealthScore({ breakEven, safeTarget, currentRevenue, netProfit, runwayMonths, clientFundsHeld }, cfg);
+  const scoreInfo = getBusinessHealthScore({ breakEven, safeTarget, currentRevenue, netProfit, runwayMonths, clientFundsHeld, burnRate, cashInAccounts }, cfg);
   const recommendations = getBusinessHealthRecommendations({
     breakEven, safeTarget, currentRevenue, projectedRevenue, runwayMonths, clientFundsHeld,
     realIncome: periodSum.realIncome, realExpenses: periodSum.realExpenses,
@@ -11835,6 +12080,7 @@ function getBusinessHealthMetrics(options = {}) {
     daysRemaining, revenueProgressPct, remainingToSafeTarget, dailyNeeded,
     forecastedRevenue, projectedRevenue, projectedGap,
     score: scoreInfo.score, status: scoreInfo.status, statusColor: scoreInfo.statusColor, scoreBreakdown: scoreInfo.breakdown,
+    scoreExplain: scoreInfo.explain,
     recommendations, config: cfg,
     realIncome: periodSum.realIncome, realExpenses: periodSum.realExpenses,
   };
@@ -11992,6 +12238,45 @@ function renderBusinessHealthScoreChecklist(scoreBreakdown) {
     </div>`;
 }
 
+// Reverse-engineered transparency view: one card per real scoring component
+// (from m.scoreExplain, built inside getBusinessHealthScore()), showing the
+// exact measured values, the exact condition evaluated, its boolean result,
+// and a reason/improvement sentence generated directly from that condition.
+// The Total row always reuses m.score itself (not a re-sum of the per-card
+// 1-decimal `earned` figures) so it is guaranteed to match the Health Score
+// shown above pixel-for-pixel — no separate, potentially-drifting total.
+function renderBusinessHealthScoreBreakdown(m) {
+  return `
+    <div id="health-score-breakdown">
+      <div class="bg-white rounded-xl border border-gray-200 divide-y divide-gray-100">
+        ${m.scoreExplain.map(c => {
+          const earnedColor = c.earned >= c.max ? 'text-emerald-600' : c.earned <= 0 ? 'text-rose-600' : 'text-amber-600';
+          return `
+          <div class="px-4 py-4">
+            <div class="flex items-center justify-between gap-3 mb-2.5">
+              <h4 class="text-[13px] font-bold text-gray-900">${escapeHtml(c.label)}</h4>
+              <span class="text-[13px] font-bold ${earnedColor} tabular-nums whitespace-nowrap">${c.earned} / ${c.max} pts</span>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-[12px] mb-2.5">
+              ${c.measured.map(mm => `<div><span class="text-gray-400 font-mono">${escapeHtml(mm.name)}</span> = <span class="font-semibold text-gray-700">${escapeHtml(mm.value)}</span></div>`).join('')}
+            </div>
+            <div class="bg-gray-50 rounded-lg px-3 py-2 mb-2.5">
+              <p class="text-[10px] text-gray-400 uppercase font-semibold tracking-wide mb-1">Condition Evaluated</p>
+              <p class="text-[12px] font-mono text-gray-700 break-words">${escapeHtml(c.condition)}</p>
+              <p class="text-[11px] text-gray-500 mt-1.5">Result: <span class="font-bold ${c.result ? 'text-emerald-600' : 'text-rose-600'}">${c.result ? 'True' : 'False'}</span></p>
+            </div>
+            <p class="text-[12px] text-gray-600 leading-relaxed mb-1.5"><span class="font-semibold text-gray-700">Reason — </span>${escapeHtml(c.reason)}</p>
+            <p class="text-[12px] text-gray-500 leading-relaxed"><span class="font-semibold text-gray-600">To improve — </span>${escapeHtml(c.improvement)}</p>
+          </div>`;
+        }).join('')}
+      </div>
+      <div class="flex items-center justify-between px-4 py-3 mt-2 bg-gray-900 rounded-xl">
+        <span class="text-[13px] font-bold text-white">Total Health Score</span>
+        <span class="text-[13px] font-bold text-white">${m.score} / 100</span>
+      </div>
+    </div>`;
+}
+
 function renderBusinessHealthWidget(m) {
   const el = $('#finance-business-health-panel');
   if (!el) return;
@@ -12044,6 +12329,7 @@ function renderBusinessHealthWidget(m) {
         <div class="flex flex-col items-center justify-center shrink-0 gap-2">
           ${renderHealthRing(m.score, sc)}
           <span class="inline-flex px-2.5 py-0.5 text-xs font-semibold rounded-full bg-${sc}-50 text-${sc}-700 border border-${sc}-200">${m.status}</span>
+          <button data-action="open-health-score-breakdown" class="text-[11px] font-medium text-gray-400 hover:text-gray-600 underline underline-offset-2">Why this score?</button>
         </div>
 
         <div class="flex-1 min-w-0">
@@ -12209,7 +12495,7 @@ function renderFinanceGlobalPeriodBar() {
 
 function setFinanceTab(tab) {
   state.financeTab = tab;
-  ['dashboard', 'transactions', 'forecast', 'accounts', 'reports'].forEach(t => {
+  ['dashboard', 'transactions', 'forecast', 'accounts', 'fixed-costs', 'reports'].forEach(t => {
     const section = $(`#finance-section-${t}`);
     const btn = document.querySelector(`[data-finance-tab="${t}"]`);
     if (section) section.classList.toggle('hidden', t !== tab);
@@ -12231,6 +12517,7 @@ function renderFinanceView() {
   renderFinanceTransactions();
   renderFinanceForecast();
   renderFinanceAccounts();
+  renderFinanceFixedCosts();
   renderFinanceReports();
   renderAccountingReports();
 }
@@ -12352,6 +12639,32 @@ function openFinanceAccountModal(id = null) {
   openModal('finance-account-modal');
 }
 
+function openFinanceFixedCostModal(id = null) {
+  state.editingFinanceFixedCostId = id;
+  const form  = $('#finance-fixed-cost-form');
+  const title = $('#finance-fixed-cost-modal-title');
+  if (!form) return;
+  form.reset();
+  if (title) title.textContent = id ? 'Edit Fixed Cost' : 'New Fixed Cost';
+  if (id) {
+    const cost = state.financeFixedCosts.find(r => Number(r.id) === id);
+    if (cost) {
+      form.elements['cost_name'].value  = cost.cost_name  || '';
+      form.elements['category'].value   = cost.category   || '';
+      form.elements['amount'].value     = cost.amount     ?? '';
+      form.elements['frequency'].value  = cost.frequency  || 'monthly';
+      form.elements['start_date'].value = cost.start_date || '';
+      form.elements['end_date'].value   = cost.end_date   || '';
+      form.elements['notes'].value      = cost.notes      || '';
+      if (form.elements['is_active']) form.elements['is_active'].checked = cost.is_active !== false;
+    }
+  } else {
+    if (form.elements['is_active']) form.elements['is_active'].checked = true;
+    form.elements['frequency'].value = 'monthly';
+  }
+  openModal('finance-fixed-cost-modal');
+}
+
 function openSplitReceiptModal() {
   const form = $('#split-receipt-form');
   if (!form) return;
@@ -12412,6 +12725,48 @@ async function handleFinanceAccountSubmit(e) {
     closeModal();
     state.financeAccounts = await fetchFinanceAccounts();
     renderFinanceView();
+  }
+}
+
+async function handleFinanceFixedCostSubmit(e) {
+  e.preventDefault();
+  if (!isAdmin()) return;
+  const form = e.target;
+  const id   = state.editingFinanceFixedCostId;
+  const payload = {
+    cost_name:  form.elements['cost_name'].value.trim(),
+    category:   form.elements['category'].value.trim() || null,
+    amount:     Number(form.elements['amount'].value) || 0,
+    frequency:  form.elements['frequency'].value || 'monthly',
+    start_date: form.elements['start_date'].value || null,
+    end_date:   form.elements['end_date'].value || null,
+    notes:      form.elements['notes'].value.trim() || null,
+    is_active:  form.elements['is_active'] ? form.elements['is_active'].checked : true,
+    updated_at: new Date().toISOString(),
+  };
+  if (!payload.cost_name) { toast('Name is required.', 'error'); return; }
+  if (!(payload.amount > 0)) { toast('Amount must be greater than 0.', 'error'); return; }
+  const btn = form.querySelector('[type="submit"]');
+  if (btn) btn.disabled = true;
+  let result = null;
+  if (id) {
+    result = await updateFinanceFixedCost(id, payload);
+  } else {
+    payload.created_at = new Date().toISOString();
+    result = await createFinanceFixedCost(payload);
+  }
+  if (btn) btn.disabled = false;
+  if (result) {
+    toast(id ? 'Fixed cost updated.' : 'Fixed cost created.', 'success');
+    closeModal();
+    // Immediate local rendering — splice the server's row into state and
+    // re-render just the Fixed Costs table + Business Health widget. No
+    // refreshDataAndRender() / no refetch of this table.
+    const idx = state.financeFixedCosts.findIndex(r => Number(r.id) === Number(result.id));
+    if (idx !== -1) state.financeFixedCosts[idx] = result; else state.financeFixedCosts.push(result);
+    renderFinanceFixedCosts();
+    renderFinanceDashboard();
+    refreshOpenBusinessHealthModalIfNeeded();
   }
 }
 
@@ -13564,6 +13919,7 @@ function openModal(id) {
 function closeModal() {
   $$('.modal').forEach((m) => m.classList.add('hidden'));
   document.body.style.overflow = '';
+  state.openWidgetKey = null;
 }
 
 function openConfirm(type, id, label) {
@@ -15421,6 +15777,7 @@ async function confirmDelete() {
   let narrowCrmDeleteEntity = null; // permanent delete: entity key whose row was removed
   let narrowDealDetachProjectIds = null; // detach-and-delete: Project ids that were unlinked
   let narrowProjectCommercialDelete = false; // Project Commercial Data delete succeeded
+  let narrowFixedCostDeleteId = null; // permanent delete: Fixed Cost id that was removed
 
   btn.disabled = true;
   btn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Processing…`;
@@ -15570,6 +15927,11 @@ async function confirmDelete() {
     ok = await permanentDeleteFinanceForecast(id);
   }
 
+  if (type === 'finance_fixed_cost_permanent_delete') {
+    ok = await permanentlyDeleteFinanceFixedCost(id);
+    if (ok) narrowFixedCostDeleteId = id;
+  }
+
   btn.disabled = false;
   btn.innerHTML = type.endsWith('_archive')
     ? '<i data-lucide="archive" class="w-4 h-4"></i> Archive'
@@ -15629,6 +15991,13 @@ async function confirmDelete() {
       renderFinanceDashboard();
       renderFinanceTransactions();
       renderFinanceForecast();
+    } else if (narrowFixedCostDeleteId != null) {
+      // Permanent delete: drop the row from local state and re-render just
+      // the Fixed Costs table + Business Health — no app-wide refetch.
+      state.financeFixedCosts = state.financeFixedCosts.filter((r) => Number(r.id) !== Number(narrowFixedCostDeleteId));
+      renderFinanceFixedCosts();
+      renderFinanceDashboard();
+      refreshOpenBusinessHealthModalIfNeeded();
     } else {
       await refreshDataAndRender();
     }
@@ -19203,6 +19572,44 @@ if (action === 'edit-finance-account') {
   openFinanceAccountModal(Number(trigger.dataset.id));
   return;
 }
+if (action === 'open-finance-fixed-cost-modal') {
+  openFinanceFixedCostModal();
+  return;
+}
+if (action === 'edit-finance-fixed-cost') {
+  openFinanceFixedCostModal(Number(trigger.dataset.id));
+  return;
+}
+if (action === 'toggle-finance-fixed-cost-active') {
+  const id = Number(trigger.dataset.id);
+  const cost = state.financeFixedCosts.find(r => Number(r.id) === id);
+  if (!cost) return;
+  (async () => {
+    const result = await setFinanceFixedCostActive(id, !cost.is_active);
+    if (result) {
+      toast(result.is_active ? 'Fixed cost activated.' : 'Fixed cost deactivated.', 'success');
+      const idx = state.financeFixedCosts.findIndex(r => Number(r.id) === id);
+      if (idx !== -1) state.financeFixedCosts[idx] = result;
+      renderFinanceFixedCosts();
+      renderFinanceDashboard();
+      refreshOpenBusinessHealthModalIfNeeded();
+    }
+  })();
+  return;
+}
+if (action === 'permanent-delete-finance-fixed-cost') {
+  const id = Number(trigger.dataset.id);
+  const cost = state.financeFixedCosts.find(r => Number(r.id) === id);
+  openConfirm('finance_fixed_cost_permanent_delete', id, cost?.cost_name ? `"${cost.cost_name}"` : 'This fixed cost');
+  return;
+}
+if (action === 'open-health-score-breakdown') {
+  openWidgetDrilldown('business-health');
+  setTimeout(() => {
+    $('#health-score-breakdown')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, 60);
+  return;
+}
 if (action === 'archive-finance-transaction') {
   const id = Number(trigger.dataset.id);
   const tx = state.financeTransactions.find(t => Number(t.id) === id);
@@ -19432,6 +19839,7 @@ if (action === 'confirm-reset-forecast-from-schedule') {
   $('#note-form')?.addEventListener('submit', handleNoteSubmit);
   $('#proposal-form')?.addEventListener('submit', handleProposalSubmit);
   $('#finance-account-form')?.addEventListener('submit', handleFinanceAccountSubmit);
+  $('#finance-fixed-cost-form')?.addEventListener('submit', handleFinanceFixedCostSubmit);
   $('#finance-transaction-form')?.addEventListener('submit', handleFinanceTransactionSubmit);
   $('#split-receipt-form')?.addEventListener('submit', handleSplitReceiptSubmit);
   $('#finance-forecast-form')?.addEventListener('submit', handleFinanceForecastSubmit);
@@ -19551,6 +19959,14 @@ if (action === 'confirm-reset-forecast-from-schedule') {
   $('#finance-tx-search')?.addEventListener('input', (e) => {
     state.filters.financeTransactions.search = e.target.value;
     renderFinanceTransactions();
+  });
+  $('#finance-fixed-cost-search')?.addEventListener('input', (e) => {
+    state.filters.financeFixedCosts.search = e.target.value;
+    renderFinanceFixedCosts();
+  });
+  $('#finance-fixed-cost-status-filter')?.addEventListener('change', (e) => {
+    state.filters.financeFixedCosts.status = e.target.value;
+    renderFinanceFixedCosts();
   });
 
   // Transaction type sync
