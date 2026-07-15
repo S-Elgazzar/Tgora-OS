@@ -1402,6 +1402,173 @@ async function updateGeneratedForecastFromSchedule(forecastId, item, component, 
   return result;
 }
 
+// ---------- Shared CRM Input Normalization & Validation (UAT Fix Pass 1) ----------
+// Single source of truth for text/email/phone/URL normalization + format
+// validation. Used by both form submit handlers AND the underlying
+// create/update data-layer functions below, so validation can't be bypassed
+// by a caller that goes straight to the data layer.
+
+// Trim only — safe on every field including Notes/Address/long descriptions,
+// since it only strips leading/trailing whitespace around the whole value,
+// never internal spacing or newlines. Empty optional text -> null (PART 1B).
+function normalizeText(value) {
+  if (value === null || value === undefined) return null;
+  const trimmed = String(value).trim();
+  return trimmed === '' ? null : trimmed;
+}
+
+// Trim + collapse repeated internal whitespace. Only for human-name/title
+// fields (company name, contact name, job title) per PART 1A — never call
+// this on Notes, Address, or other long free-text fields.
+function normalizeNameText(value) {
+  const trimmed = normalizeText(value);
+  return trimmed === null ? null : trimmed.replace(/\s+/g, ' ');
+}
+
+// Lowercased, whitespace-collapsed form used ONLY for comparisons/duplicate
+// detection — never stored or displayed (PART 1C: preserve display casing).
+function normalizeForComparison(value) {
+  const trimmed = normalizeText(value);
+  return trimmed === null ? '' : trimmed.replace(/\s+/g, ' ').toLowerCase();
+}
+
+const EMAIL_FORMAT_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+// { valid, value } — value is trimmed but never case-altered. null input is
+// always valid (email stays optional; only format is enforced when supplied).
+function normalizeAndValidateEmail(value) {
+  const trimmed = normalizeText(value);
+  if (trimmed === null) return { valid: true, value: null };
+  if (/\s/.test(trimmed) || !EMAIL_FORMAT_REGEX.test(trimmed)) return { valid: false, value: trimmed };
+  return { valid: true, value: trimmed };
+}
+
+// Digits, leading +, spaces, hyphens, parentheses only — and must contain a
+// meaningful number of digits, not just punctuation.
+const PHONE_ALLOWED_CHARS_REGEX = /^[0-9+\-()\s]+$/;
+function normalizeAndValidatePhone(value) {
+  const trimmed = normalizeText(value);
+  if (trimmed === null) return { valid: true, value: null };
+  const digitCount = (trimmed.match(/\d/g) || []).length;
+  if (!PHONE_ALLOWED_CHARS_REGEX.test(trimmed) || digitCount < 5) return { valid: false, value: trimmed };
+  return { valid: true, value: trimmed };
+}
+
+// Accepts bare domains (novabuild.com), www.-prefixed, or full http(s):// URLs.
+// A supplied domain with no protocol is normalized to an https:// form for
+// storage/display. Rejects plain names with no TLD, spaces, and malformed URLs.
+const URL_HOST_REGEX = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i;
+function normalizeAndValidateUrl(value) {
+  const trimmed = normalizeText(value);
+  if (trimmed === null) return { valid: true, value: null };
+  if (/\s/.test(trimmed)) return { valid: false, value: trimmed };
+  const hadProtocol = /^https?:\/\//i.test(trimmed);
+  const withoutProtocol = hadProtocol ? trimmed.replace(/^https?:\/\//i, '') : trimmed;
+  const host = withoutProtocol.split(/[\/?#]/)[0].replace(/^www\./i, '');
+  if (!URL_HOST_REGEX.test(host)) return { valid: false, value: trimmed };
+  return { valid: true, value: hadProtocol ? trimmed : `https://${trimmed}` };
+}
+
+// Normalizes + validates a Company (crm_clients) payload in place (returns a
+// copy). Only touches keys actually present in the payload so partial update
+// payloads (e.g. archive/restore, which only send is_archived/updated_at)
+// are left untouched. Returns { ok: true, payload } or { ok: false, message }.
+function normalizeCrmClientPayload(payload) {
+  const out = { ...payload };
+  if ('client_name' in out) out.client_name = normalizeNameText(out.client_name);
+  if ('industry' in out) out.industry = normalizeText(out.industry);
+  if ('address' in out) out.address = normalizeText(out.address);
+  if ('notes' in out) out.notes = normalizeText(out.notes);
+  if ('referred_by' in out) out.referred_by = normalizeText(out.referred_by);
+  if ('country' in out) out.country = normalizeText(out.country);
+
+  if ('email' in out) {
+    const r = normalizeAndValidateEmail(out.email);
+    if (!r.valid) return { ok: false, message: 'Enter a valid company email address (e.g. name@company.com).' };
+    out.email = r.value;
+  }
+  const phoneLabels = { phone: 'phone number', whatsapp: 'WhatsApp number' };
+  for (const [field, label] of Object.entries(phoneLabels)) {
+    if (field in out) {
+      const r = normalizeAndValidatePhone(out[field]);
+      if (!r.valid) return { ok: false, message: `Enter a valid ${label}.` };
+      out[field] = r.value;
+    }
+  }
+  const urlLabels = {
+    website: 'Website', facebook_url: 'Facebook', instagram_url: 'Instagram',
+    linkedin_url: 'LinkedIn', tiktok_url: 'TikTok', snapchat_url: 'Snapchat', other_social_url: 'social link',
+  };
+  for (const [field, label] of Object.entries(urlLabels)) {
+    if (field in out) {
+      const r = normalizeAndValidateUrl(out[field]);
+      if (!r.valid) return { ok: false, message: `Enter a valid ${label} URL (e.g. novabuild.com).` };
+      out[field] = r.value;
+    }
+  }
+  return { ok: true, payload: out };
+}
+
+// Case-insensitive, whitespace-normalized duplicate lookup against already
+// loaded state.crmClients (PART 5A). excludeId lets an edit keep its own name.
+function findDuplicateCrmClientByName(name, excludeId) {
+  const normalized = normalizeForComparison(name);
+  if (!normalized) return null;
+  return (state.crmClients || []).find(c =>
+    Number(c.id) !== Number(excludeId) && normalizeForComparison(c.client_name) === normalized
+  ) || null;
+}
+
+// Same shape as normalizeCrmClientPayload, for Contacts (crm_contacts).
+function normalizeCrmContactPayload(payload) {
+  const out = { ...payload };
+  if ('contact_name' in out) out.contact_name = normalizeNameText(out.contact_name);
+  if ('title' in out) out.title = normalizeNameText(out.title);
+  if ('department' in out) out.department = normalizeNameText(out.department);
+  if ('notes' in out) out.notes = normalizeText(out.notes);
+  if ('preferred_contact_method' in out) out.preferred_contact_method = normalizeText(out.preferred_contact_method);
+  if ('is_decision_maker' in out) out.is_decision_maker = Boolean(out.is_decision_maker);
+
+  if ('email' in out) {
+    const r = normalizeAndValidateEmail(out.email);
+    if (!r.valid) return { ok: false, message: 'Enter a valid contact email address (e.g. name@company.com).' };
+    out.email = r.value;
+  }
+  const phoneLabels = { phone: 'phone number', whatsapp: 'WhatsApp number' };
+  for (const [field, label] of Object.entries(phoneLabels)) {
+    if (field in out) {
+      const r = normalizeAndValidatePhone(out[field]);
+      if (!r.valid) return { ok: false, message: `Enter a valid ${label}.` };
+      out[field] = r.value;
+    }
+  }
+  if ('linkedin_url' in out) {
+    const r = normalizeAndValidateUrl(out.linkedin_url);
+    if (!r.valid) return { ok: false, message: 'Enter a valid LinkedIn URL (e.g. linkedin.com/in/name).' };
+    out.linkedin_url = r.value;
+  }
+  return { ok: true, payload: out };
+}
+
+// Primary rule: same normalized email (case-insensitive) anywhere blocks.
+// Fallback (email empty on the incoming contact): same normalized name inside
+// the same company blocks; different companies with the same name are fine
+// (PART 6B). excludeId lets an edit keep matching itself.
+function findDuplicateCrmContact({ email, contactName, clientId, excludeId }) {
+  const contacts = state.crmContacts || [];
+  const normEmail = normalizeForComparison(email);
+  if (normEmail) {
+    return contacts.find(c => Number(c.id) !== Number(excludeId) && normalizeForComparison(c.email) === normEmail) || null;
+  }
+  const normName = normalizeForComparison(contactName);
+  if (!normName || !clientId) return null;
+  return contacts.find(c =>
+    Number(c.id) !== Number(excludeId) &&
+    Number(c.client_id) === Number(clientId) &&
+    normalizeForComparison(c.contact_name) === normName
+  ) || null;
+}
+
 // ---------- CRM Leads Data Layer ----------
 // Architecture note (Sprint CRM-1/CRM-2): crm_leads.status currently still
 // includes 'won'/'lost' values (new, contacted, qualified, proposal_sent,
@@ -1507,6 +1674,12 @@ async function fetchCrmClients() {
 
 async function createCrmClient(payload) {
   if (!isAdmin()) return null;
+  const normResult = normalizeCrmClientPayload(payload);
+  if (!normResult.ok) { toast(normResult.message, 'error'); return null; }
+  payload = normResult.payload;
+  if (!payload.client_name) { toast('Company name is required.', 'error'); return null; }
+  const dup = findDuplicateCrmClientByName(payload.client_name, null);
+  if (dup) { toast(`A company named "${dup.client_name}" already exists.`, 'error'); return null; }
   const { data, error } = await supabaseClient
     .from('crm_clients')
     .insert([payload])
@@ -1522,6 +1695,14 @@ async function createCrmClient(payload) {
 
 async function updateCrmClient(id, payload) {
   if (!isAdmin()) return null;
+  const normResult = normalizeCrmClientPayload(payload);
+  if (!normResult.ok) { toast(normResult.message, 'error'); return null; }
+  payload = normResult.payload;
+  if ('client_name' in payload) {
+    if (!payload.client_name) { toast('Company name is required.', 'error'); return null; }
+    const dup = findDuplicateCrmClientByName(payload.client_name, id);
+    if (dup) { toast(`A company named "${dup.client_name}" already exists.`, 'error'); return null; }
+  }
   const { data, error } = await supabaseClient
     .from('crm_clients')
     .update(payload)
@@ -1563,12 +1744,50 @@ async function fetchCrmContacts() {
 }
 async function createCrmContact(payload) {
   if (!isAdmin()) return null;
+  const normResult = normalizeCrmContactPayload(payload);
+  if (!normResult.ok) { toast(normResult.message, 'error'); return null; }
+  payload = normResult.payload;
+  if (!payload.contact_name) { toast('Contact name is required.', 'error'); return null; }
+  // A Contact must always belong to a Company — mirrors the same hard
+  // requirement already enforced on Deal (see createCrmDeal above).
+  if (!payload.client_id) { toast('Select a company before creating this contact.', 'error'); return null; }
+  const dup = findDuplicateCrmContact({ email: payload.email, contactName: payload.contact_name, clientId: payload.client_id, excludeId: null });
+  if (dup) {
+    toast(payload.email ? `A contact with email "${payload.email}" already exists.` : `A contact named "${dup.contact_name}" already exists in this company.`, 'error');
+    return null;
+  }
   const { data, error } = await supabaseClient.from('crm_contacts').insert([payload]).select().single();
   if (error) { console.error('createCrmContact', error); toast(error.message || 'Failed to create contact', 'error'); return null; }
   return data;
 }
 async function updateCrmContact(id, payload) {
   if (!isAdmin()) return null;
+  const normResult = normalizeCrmContactPayload(payload);
+  if (!normResult.ok) { toast(normResult.message, 'error'); return null; }
+  payload = normResult.payload;
+  // Same requirement as createCrmContact, but an update payload can
+  // legitimately omit client_id entirely (e.g. archiveCrmContact/
+  // restoreCrmContact below only touch is_archived) — only block when the
+  // caller explicitly tries to clear it, not every partial update.
+  if ('client_id' in payload && !payload.client_id) {
+    toast('A contact must have a company — this cannot be cleared.', 'error');
+    return null;
+  }
+  if ('contact_name' in payload && !payload.contact_name) {
+    toast('Contact name is required.', 'error');
+    return null;
+  }
+  if ('email' in payload || 'contact_name' in payload || 'client_id' in payload) {
+    const existing = (state.crmContacts || []).find(c => Number(c.id) === Number(id));
+    const email = 'email' in payload ? payload.email : existing?.email;
+    const contactName = 'contact_name' in payload ? payload.contact_name : existing?.contact_name;
+    const clientId = 'client_id' in payload ? payload.client_id : existing?.client_id;
+    const dup = findDuplicateCrmContact({ email, contactName, clientId, excludeId: id });
+    if (dup) {
+      toast(email ? `A contact with email "${email}" already exists.` : `A contact named "${dup.contact_name}" already exists in this company.`, 'error');
+      return null;
+    }
+  }
   const { data, error } = await supabaseClient.from('crm_contacts').update(payload).eq('id', id).select().single();
   if (error) { console.error('updateCrmContact', error); toast(error.message || 'Failed to update contact', 'error'); return null; }
   return data;
@@ -6046,7 +6265,7 @@ function getFilteredCrmClients() {
 
   if (search) {
     clients = clients.filter((c) =>
-      [c.client_name, c.industry, c.email, c.phone, c.website]
+      [c.client_name, c.industry, c.email, c.phone, c.country, c.source, c.website]
         .some((v) => v && String(v).toLowerCase().includes(search))
     );
   }
@@ -6138,6 +6357,9 @@ function renderCrmClients() {
           </td>
           <td class="px-5 py-3.5 text-sm text-gray-700">${labelize(c.client_type)}</td>
           <td class="px-5 py-3.5 text-sm text-gray-700">${escapeHtml(c.industry || '—')}</td>
+          <td class="px-5 py-3.5 text-sm text-gray-700">${escapeHtml(c.country || '—')}</td>
+          <td class="px-5 py-3.5 text-sm text-gray-700">${c.source ? labelize(c.source) : '—'}</td>
+          <td class="px-5 py-3.5 text-sm">${renderCompactExternalLink(c.website)}</td>
           <td class="px-5 py-3.5">${renderStatusBadge(c.status)}</td>
           <td class="px-5 py-3.5 text-right">${actionsCell}</td>
         </tr>
@@ -6496,9 +6718,11 @@ function getFilteredCrmContacts() {
     f.archived === 'archived' ? c.is_archived : !c.is_archived
   );
   if (search) {
-    contacts = contacts.filter(c =>
-      [c.contact_name, c.title, c.phone, c.email].some(v => v && String(v).toLowerCase().includes(search))
-    );
+    contacts = contacts.filter(c => {
+      const client = state.crmClients.find(cl => Number(cl.id) === Number(c.client_id));
+      return [c.contact_name, c.title, c.department, c.phone, c.whatsapp, c.email, client?.client_name]
+        .some(v => v && String(v).toLowerCase().includes(search));
+    });
   }
   if (f.status !== 'all') {
     contacts = contacts.filter(c => getCrmContactStatus(c) === f.status);
@@ -6549,7 +6773,10 @@ function renderCrmContacts() {
       <tr>
         ${admin ? crmRowCheckboxCell('contacts', c.id) : ''}
         <td class="px-5 py-3.5">
-          <button class="text-sm font-medium text-gray-900 hover:text-indigo-600 text-left" data-action="open-contact-details" data-id="${c.id}">${escapeHtml(c.contact_name)}</button>
+          <div class="flex items-center gap-1.5">
+            <button class="text-sm font-medium text-gray-900 hover:text-indigo-600 text-left" data-action="open-contact-details" data-id="${c.id}">${escapeHtml(c.contact_name)}</button>
+            ${c.is_decision_maker ? `<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200" title="Decision Maker">DM</span>` : ''}
+          </div>
           ${c.title ? `<p class="text-xs text-gray-500">${escapeHtml(c.title)}</p>` : ''}
         </td>
         <td class="px-5 py-3.5 text-sm text-gray-700">${client ? `<button class="hover:text-indigo-600 hover:underline text-left" data-action="open-client-details" data-id="${client.id}">${escapeHtml(client.client_name)}</button>` : '—'}</td>
@@ -7044,6 +7271,16 @@ function renderExternalLink(url) {
   return `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer" class="text-indigo-600 hover:underline break-all">${escapeHtml(url.trim())}</a>`;
 }
 
+// PART 5C — concise table-cell variant of renderExternalLink: strips the
+// protocol for display (full value still available via the title tooltip)
+// and truncates instead of wrapping, so a long URL can't blow out row height.
+function renderCompactExternalLink(url) {
+  const href = buildSafeExternalUrl(url);
+  if (!href) return '—';
+  const label = url.trim().replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+  return `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer" class="text-indigo-600 hover:underline block truncate max-w-[160px]" title="${escapeHtml(url.trim())}">${escapeHtml(label)}</a>`;
+}
+
 function renderClientDetails() {
   const client = state.crmClients.find(c => Number(c.id) === Number(state.selectedClientId));
   if (!client) {
@@ -7088,6 +7325,7 @@ function renderClientDetails() {
   setText('client-details-whatsapp', client.whatsapp);
   setText('client-details-email',    client.email);
   setText('client-details-address',  client.address);
+  setText('client-details-country',  client.country);
   setText('client-details-source',   labelize(client.source));
   setText('client-details-notes',    client.notes || 'No notes yet.');
 
@@ -7133,7 +7371,10 @@ function renderClientDetails() {
       : contacts.map(c => `
           <div class="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
             <div>
-              <button class="text-sm font-medium text-gray-900 hover:text-indigo-600 text-left" data-action="open-contact-details" data-id="${c.id}">${escapeHtml(c.contact_name)}</button>
+              <div class="flex items-center gap-1.5">
+                <button class="text-sm font-medium text-gray-900 hover:text-indigo-600 text-left" data-action="open-contact-details" data-id="${c.id}">${escapeHtml(c.contact_name)}</button>
+                ${c.is_decision_maker ? `<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200" title="Decision Maker">DM</span>` : ''}
+              </div>
               ${c.title ? `<p class="text-xs text-gray-500">${escapeHtml(c.title)}</p>` : ''}
             </div>
             <div class="text-right text-xs text-gray-500 space-y-0.5">
@@ -7293,6 +7534,12 @@ function renderContactDetails() {
   setText('contact-details-job-title', contact.title);
   setText('contact-details-company',   company ? company.client_name : 'No company');
   setText('contact-details-notes',     contact.notes || 'No notes yet.');
+  setText('contact-details-department', contact.department);
+  setText('contact-details-preferred-contact-method', contact.preferred_contact_method ? labelize(contact.preferred_contact_method) : null);
+  setText('contact-details-decision-maker', contact.is_decision_maker ? 'Yes' : 'No');
+
+  const linkedinEl = $('#contact-details-linkedin');
+  if (linkedinEl) linkedinEl.innerHTML = renderExternalLink(contact.linkedin_url);
 
   const statusTextEl = $('#contact-details-status-text');
   if (statusTextEl) statusTextEl.textContent = labelize(status);
@@ -13765,6 +14012,115 @@ function syncSearchInputWithView() {
   } else {
     searchInput.value = '';
   }
+  // A navigation away from the search box (nav click, Back/Forward, saving a
+  // form, etc.) should never leave a stale results dropdown floating over
+  // the new view.
+  hideGlobalSearchResults();
+}
+
+// ---------- Global Search (PART 8, UAT Fix Pass 1) ----------
+// A genuine cross-entity search over state that is already loaded (no
+// server-side full-text search — see scope). This is deliberately kept
+// independent of the per-view scoped-filter behavior already wired to this
+// same #global-search input (see the "module-scoped" input listener below):
+// that listener still drives the Projects/Tasks/Project Details/Team
+// in-page filters exactly as before; this is an additive, separate
+// cross-entity dropdown so the two behaviors don't get tangled together.
+const GLOBAL_SEARCH_LIMIT = 5;
+
+function matchesGlobalSearch(value, normalizedQuery) {
+  return !!value && String(value).toLowerCase().replace(/\s+/g, ' ').includes(normalizedQuery);
+}
+
+function getGlobalSearchResults(rawQuery) {
+  const q = String(rawQuery || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  if (!q) return [];
+
+  const groups = [];
+
+  const projects = state.projects
+    .filter(p => matchesGlobalSearch(p.project_name, q) || matchesGlobalSearch(p.project_code, q) || matchesGlobalSearch(p.client, q))
+    .slice(0, GLOBAL_SEARCH_LIMIT)
+    .map(p => ({ id: p.id, label: p.project_name || 'Untitled project', meta: p.client || p.project_code || '', action: 'open-project-details' }));
+  if (projects.length) groups.push({ label: 'Projects', items: projects });
+
+  const tasks = state.tasks
+    .filter(t => matchesGlobalSearch(t.task_info, q) || matchesGlobalSearch(t.assigned_to, q))
+    .slice(0, GLOBAL_SEARCH_LIMIT)
+    .map(t => {
+      const project = state.projects.find(p => Number(p.id) === Number(t.project_id));
+      return { id: t.id, label: t.task_info || 'Untitled task', meta: project?.project_name || t.assigned_to || '', action: 'open-task-details' };
+    });
+  if (tasks.length) groups.push({ label: 'Tasks', items: tasks });
+
+  const companies = state.crmClients
+    .filter(c => matchesGlobalSearch(c.client_name, q) || matchesGlobalSearch(c.email, q) || matchesGlobalSearch(c.industry, q))
+    .slice(0, GLOBAL_SEARCH_LIMIT)
+    .map(c => ({ id: c.id, label: c.client_name, meta: c.industry || c.email || '', action: 'open-client-details' }));
+  if (companies.length) groups.push({ label: 'Companies', items: companies });
+
+  const contacts = state.crmContacts
+    .filter(c => matchesGlobalSearch(c.contact_name, q) || matchesGlobalSearch(c.email, q) || matchesGlobalSearch(c.phone, q))
+    .slice(0, GLOBAL_SEARCH_LIMIT)
+    .map(c => {
+      const client = state.crmClients.find(cl => Number(cl.id) === Number(c.client_id));
+      return { id: c.id, label: c.contact_name, meta: client?.client_name || c.email || '', action: 'open-contact-details' };
+    });
+  if (contacts.length) groups.push({ label: 'Contacts', items: contacts });
+
+  const leads = state.crmLeads
+    .filter(l => matchesGlobalSearch(l.lead_name, q) || matchesGlobalSearch(l.email, q) || matchesGlobalSearch(l.company_name, q))
+    .slice(0, GLOBAL_SEARCH_LIMIT)
+    .map(l => ({ id: l.id, label: l.lead_name || 'Untitled lead', meta: l.company_name || l.email || '', action: 'open-lead-details' }));
+  if (leads.length) groups.push({ label: 'Leads', items: leads });
+
+  const deals = state.crmDeals
+    .filter(d => matchesGlobalSearch(d.deal_name, q))
+    .slice(0, GLOBAL_SEARCH_LIMIT)
+    .map(d => {
+      const client = state.crmClients.find(cl => Number(cl.id) === Number(d.client_id));
+      return { id: d.id, label: d.deal_name || 'Untitled deal', meta: client?.client_name || '', action: 'open-deal-details' };
+    });
+  if (deals.length) groups.push({ label: 'Deals', items: deals });
+
+  const team = state.teamMembers
+    .filter(m => matchesGlobalSearch(m.name, q) || matchesGlobalSearch(m.email, q) || matchesGlobalSearch(m.job_title, q))
+    .slice(0, GLOBAL_SEARCH_LIMIT)
+    .map(m => ({ id: m.id, label: m.name, meta: m.job_title || m.department || '', action: 'open-member-details' }));
+  if (team.length) groups.push({ label: 'Team Members', items: team });
+
+  return groups;
+}
+
+function hideGlobalSearchResults() {
+  const container = $('#global-search-results');
+  if (container) container.classList.add('hidden');
+}
+
+function renderGlobalSearchResults(rawQuery) {
+  const container = $('#global-search-results');
+  if (!container) return;
+  const q = String(rawQuery || '').trim();
+  if (!q) { hideGlobalSearchResults(); container.innerHTML = ''; return; }
+
+  const groups = getGlobalSearchResults(q);
+  if (groups.length === 0) {
+    container.innerHTML = `<p class="px-3 py-4 text-xs text-gray-400 text-center">No results found</p>`;
+    container.classList.remove('hidden');
+    return;
+  }
+
+  container.innerHTML = groups.map(g => `
+    <div class="px-2 pt-2 pb-1 text-[10px] font-semibold text-gray-400 uppercase tracking-wide">${escapeHtml(g.label)}</div>
+    ${g.items.map(item => `
+      <button type="button" class="task-th-popover-option" style="white-space:normal;" data-action="${item.action}" data-id="${item.id}">
+        <span class="block text-gray-900 font-medium truncate">${escapeHtml(item.label || '—')}</span>
+        ${item.meta ? `<span class="block text-xs text-gray-400 truncate">${escapeHtml(item.meta)}</span>` : ''}
+      </button>
+    `).join('')}
+  `).join('');
+  container.classList.remove('hidden');
+  refreshIcons();
 }
 
 function setView(view) {
@@ -14146,11 +14502,18 @@ function closeSidebar() {
 }
 
 // ---------- Form Handlers ----------
+// PART 1: trims every text value and normalizes empty optional strings to
+// null before any entity-specific normalization/validation runs. Trimming
+// only strips leading/trailing whitespace — it never collapses internal
+// spacing, so multiline Notes formatting is preserved untouched.
 function normalizePayload(formData) {
   const payload = {};
   for (const [k, v] of formData.entries()) {
-    if (v === '' || v === null) {
+    if (v === null) {
       payload[k] = null;
+    } else if (typeof v === 'string') {
+      const trimmed = v.trim();
+      payload[k] = trimmed === '' ? null : trimmed;
     } else {
       payload[k] = v;
     }
@@ -14547,6 +14910,7 @@ function openEditClientModal(id) {
   form.whatsapp.value    = client.whatsapp || '';
   form.email.value       = client.email || '';
   form.address.value     = client.address || '';
+  form.country.value     = client.country || '';
   form.source.value      = client.source || 'unknown';
   updateClientReferredByVisibility(form.source.value, form);
   form.referred_by.value    = client.referred_by || '';
@@ -14614,7 +14978,7 @@ async function handleClientSubmit(e) {
 function populateContactClientSelect() {
   const select = $('#contact-client-id');
   if (!select) return;
-  select.innerHTML = '<option value="">No company</option>' +
+  select.innerHTML = '<option value="">Select company…</option>' +
     state.crmClients.filter(c => !c.is_archived)
       .map(c => `<option value="${c.id}">${escapeHtml(c.client_name)}</option>`).join('');
 }
@@ -14658,9 +15022,13 @@ function openEditContactModal(id) {
   populateContactClientSelect();
   form.contact_name.value = contact.contact_name || '';
   form.title.value = contact.title || '';
+  form.department.value = contact.department || '';
+  form.preferred_contact_method.value = contact.preferred_contact_method || '';
   form.phone.value = contact.phone || '';
   form.whatsapp.value = contact.whatsapp || '';
   form.email.value = contact.email || '';
+  form.linkedin_url.value = contact.linkedin_url || '';
+  form.is_decision_maker.checked = Boolean(contact.is_decision_maker);
   form.notes.value = contact.notes || '';
   if (form.status) form.status.value = getCrmContactStatus(contact);
   const sel = $('#contact-client-id');
@@ -14679,12 +15047,23 @@ async function handleContactSubmit(e) {
   const form = e.target;
   const submitBtn = form.querySelector('button[type=submit]');
   const isEditing = state.editingContactId !== null;
+  // PART 6A: Company is required for every Contact — checked here (in
+  // addition to the HTML `required` attribute and the create/update data
+  // layer) so submission fails fast with a clear toast instead of a round trip.
+  if (!form.client_id.value) {
+    toast('Select a company before saving this contact.', 'error');
+    return;
+  }
   submitBtn.disabled = true;
   submitBtn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> ${isEditing ? 'Updating…' : 'Saving…'}`;
   refreshIcons();
   const payload = normalizePayload(new FormData(form));
   if (payload.client_id) payload.client_id = Number(payload.client_id);
   if (!payload.status) payload.status = 'active';
+  // Checkboxes are absent from FormData when unchecked, so normalizePayload
+  // never sees an "is_decision_maker" key to normalize to false — set it
+  // explicitly from the live checkbox state instead.
+  payload.is_decision_maker = form.is_decision_maker.checked;
   let result = null;
   if (isEditing) { payload.updated_at = new Date().toISOString(); result = await updateCrmContact(state.editingContactId, payload); }
   else { result = await createCrmContact(payload); }
@@ -16871,7 +17250,17 @@ function renderProjectDetails() {
     (p) => Number(p.id) === Number(state.selectedProjectId)
   );
 
-  if (!project) return;
+  // PART 9: a stale/deleted project id (e.g. restored from history on Back,
+  // or from localStorage after the record was removed elsewhere) must fall
+  // back to the Projects list, not leave this view showing empty/stale
+  // content — mirrors the same guard already in renderClientDetails/
+  // renderContactDetails/renderLeadDetails.
+  if (!project) {
+    state.selectedProjectId = null;
+    localStorage.removeItem('tgora_selected_project_id');
+    setView('projects');
+    return;
+  }
 
   $('#details-project-name').textContent = project.project_name || 'Untitled';
   $('#details-project-code').textContent = project.project_code || '—';
@@ -18399,7 +18788,14 @@ function openMemberDetails(memberId) {
     (m) => Number(m.id) === Number(memberId)
   );
 
-  if (!member) return;
+  // PART 9: a stale/deleted member id must fall back to the Team list, not
+  // silently no-op and leave whatever view was showing before.
+  if (!member) {
+    state.selectedMemberId = null;
+    localStorage.removeItem('tgora_selected_member_id');
+    setView('team');
+    return;
+  }
 
 state.selectedMemberId = Number(memberId);
 
@@ -18779,13 +19175,71 @@ function wireEvents() {
   });
 });
 
-window.addEventListener('popstate', () => {
-  const viewFromHash = window.location.hash.replace('#', '');
+// PART 9 (UAT Fix Pass 1) — every pushState call in this file already
+// writes a { view, <entity>Id } state object, but this handler used to
+// throw it away and instead re-derive the target by matching location.hash
+// against `#view-<hash>` DOM ids. That only works for plain view hashes
+// (#crm, #projects); every id-suffixed detail hash (#client-details-42,
+// #contact-details-7, #project-details-11, #lead-details-3,
+// #team-member-9) never matches an element (the real sections are
+// `#view-client-details` etc., with no id suffix), so Back on any nested
+// detail view always fell through to the `else` branch and dumped the user
+// on the Dashboard. Reading the state object we already have fixes this
+// without adding a new routing framework.
+//
+// This handler only ever calls setView()/render*()/openMemberDetails() —
+// never pushState/replaceState — so restoring history never adds a
+// duplicate entry to the stack.
+window.addEventListener('popstate', (event) => {
+  const s = event.state;
 
-  if (viewFromHash && $(`#view-${viewFromHash}`)) {
-    setView(viewFromHash);
-  } else {
-    setView('dashboard');
+  // No state object (the very first/landing entry pre-dates any pushState
+  // call in this session) — fall back to the pre-existing hash-matching
+  // behavior for plain views, or Dashboard as the last resort.
+  if (!s) {
+    const viewFromHash = window.location.hash.replace('#', '');
+    if (viewFromHash && $(`#view-${viewFromHash}`)) setView(viewFromHash);
+    else setView('dashboard');
+    return;
+  }
+
+  closeModal();
+
+  // Task Details is a modal layered over whatever view was showing
+  // underneath, not its own routed view — close it and restore the parent.
+  if (s.modal === 'task-details') {
+    setView(s.parentView && $(`#view-${s.parentView}`) ? s.parentView : 'dashboard');
+    if (s.parentView === 'project-details' && state.selectedProjectId) renderProjectDetails();
+    return;
+  }
+
+  switch (s.view) {
+    case 'client-details':
+      state.selectedClientId = s.clientId;
+      setView('client-details');
+      renderClientDetails(); // falls back to the Companies list if clientId no longer exists
+      break;
+    case 'contact-details':
+      state.selectedContactId = s.contactId;
+      setView('contact-details');
+      renderContactDetails(); // falls back to the Contacts list if contactId no longer exists
+      break;
+    case 'lead-details':
+      state.selectedLeadId = s.leadId;
+      setView('lead-details');
+      renderLeadDetails(); // falls back to CRM if leadId no longer exists
+      break;
+    case 'project-details':
+      state.selectedProjectId = s.projectId;
+      setView('project-details');
+      renderProjectDetails(); // falls back to the Projects list if projectId no longer exists
+      break;
+    case 'team-member':
+      openMemberDetails(s.memberId); // falls back to the Team list if memberId no longer exists
+      break;
+    default:
+      if (s.view && $(`#view-${s.view}`)) setView(s.view);
+      else setView('dashboard');
   }
 });
 
@@ -19014,6 +19468,16 @@ if (action === 'open-task-details') {
   const id = Number(trigger.dataset.id);
 
   console.log('OPEN TASK DETAILS CLICKED:', id);
+
+  // PART 9: Task Details is a modal, not its own routed view — push a
+  // history entry recording the view it was opened over (parentView) so
+  // Back closes the modal and restores that view instead of falling
+  // through to the popstate handler's default (Dashboard).
+  window.history.pushState(
+    { modal: 'task-details', taskId: id, parentView: state.view },
+    '',
+    `#task-details-${id}`
+  );
 
   openTaskDetailsModal(id);
   return;
@@ -20093,6 +20557,13 @@ document.addEventListener('click', async (e) => {
     alertsDropdown?.classList.add('hidden');
 
     if (kind === 'task' && entityId) {
+      // PART 9: match the open-task-details data-action handler so Back
+      // closes the modal and restores the view it was opened over.
+      window.history.pushState(
+        { modal: 'task-details', taskId: entityId, parentView: state.view },
+        '',
+        `#task-details-${entityId}`
+      );
       openTaskDetailsModal(entityId);
       return;
     }
@@ -20104,6 +20575,14 @@ document.addEventListener('click', async (e) => {
       localStorage.setItem(
         'tgora_selected_project_id',
         entityId
+      );
+
+      // PART 9: match the open-project-details data-action handler so Back
+      // returns here instead of falling through to Dashboard.
+      window.history.pushState(
+        { view: 'project-details', projectId: entityId },
+        '',
+        `#project-details-${entityId}`
       );
 
       setView('project-details');
@@ -20159,6 +20638,11 @@ if (item) {
   $('#notifications-dropdown')?.classList.add('hidden');
 
   if (entityType === 'task' && entityId) {
+    window.history.pushState(
+      { modal: 'task-details', taskId: entityId, parentView: state.view },
+      '',
+      `#task-details-${entityId}`
+    );
     openTaskDetailsModal(entityId);
     return;
   }
@@ -20172,12 +20656,23 @@ if (item) {
       entityId
     );
 
+    window.history.pushState(
+      { view: 'project-details', projectId: entityId },
+      '',
+      `#project-details-${entityId}`
+    );
+
     setView('project-details');
     renderProjectDetails();
     return;
   }
 
   if (entityType === 'team_member' && entityId) {
+    window.history.pushState(
+      { view: 'team-member', memberId: entityId },
+      '',
+      `#team-member-${entityId}`
+    );
     openMemberDetails(entityId);
     return;
   }
@@ -20191,6 +20686,12 @@ if (item) {
 
   if (!e.target.closest('#alerts-dropdown')) {
     alertsDropdown?.classList.add('hidden');
+  }
+
+  // PART 8: click outside the global search box or its results dropdown
+  // closes the dropdown, matching the alerts/notifications pattern above.
+  if (!e.target.closest('#global-search-results') && !e.target.closest('#global-search')) {
+    hideGlobalSearchResults();
   }
 });
 
@@ -20397,6 +20898,19 @@ $('#project-details-tasks-empty-reset-btn')?.addEventListener('click', () => res
     }
   });
 
+  // PART 8: genuine cross-entity global search — additive to the
+  // module-scoped listener above, so it runs on every view (not just the
+  // 4 handled above) without altering that listener's behavior at all.
+  $('#global-search').addEventListener('input', (e) => {
+    renderGlobalSearchResults(e.target.value);
+  });
+  $('#global-search').addEventListener('focus', (e) => {
+    if (e.target.value.trim()) renderGlobalSearchResults(e.target.value);
+  });
+  $('#global-search-results')?.addEventListener('click', (e) => {
+    if (e.target.closest('[data-action]')) hideGlobalSearchResults();
+  });
+
   // Esc to close modals
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
@@ -20404,6 +20918,7 @@ $('#project-details-tasks-empty-reset-btn')?.addEventListener('click', () => res
       closeConfirm();
       closeSidebar();
       closeAllHeaderFilterPopovers();
+      hideGlobalSearchResults();
     }
   });
 }
