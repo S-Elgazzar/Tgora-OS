@@ -2230,6 +2230,9 @@
     </div>
   </div>
 
+  <!-- KPI summary (UAT Fix Pass 2) -->
+  <div id="client-details-kpis" class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3 mb-6"></div>
+
   <!-- Timeline (Sprint CRM-4.5B — moved directly under the header, ahead of the related-record cards, per the fix-pass layout requirement) -->
   <div class="bg-white border border-gray-200 rounded-xl p-5 shadow-sm mb-6">
     <h3 class="text-sm font-semibold text-gray-900 mb-3">Timeline</h3>
@@ -2254,9 +2257,9 @@
     <div id="client-details-social-links" class="flex flex-wrap gap-2"></div>
   </div>
 
-  <!-- Notes (own notes field) -->
+  <!-- Company Notes — the long-form notes field stored on crm_clients.notes, editable via Company Edit -->
   <div class="stat-card mb-6">
-    <h3 class="text-sm font-semibold text-gray-900 mb-2">Notes</h3>
+    <h3 class="text-sm font-semibold text-gray-900 mb-2">Company Notes</h3>
     <p id="client-details-notes" class="text-sm text-gray-600 whitespace-pre-wrap">No notes yet.</p>
   </div>
 
@@ -2307,10 +2310,10 @@
       <div id="client-details-proposals-list"></div>
     </div>
 
-    <!-- CRM Notes panel -->
+    <!-- Follow-up Notes panel — separate dated crm_notes records, created via Add Note -->
     <div class="bg-white border border-gray-200 rounded-xl p-5 shadow-sm">
       <div class="flex items-center justify-between mb-3">
-        <h3 class="text-sm font-semibold text-gray-900">Notes</h3>
+        <h3 class="text-sm font-semibold text-gray-900">Follow-up Notes</h3>
         <button id="client-details-note-panel-btn" data-action="open-note-modal" data-client-id="" class="text-xs text-indigo-600 hover:text-indigo-700 font-medium">+ Add</button>
       </div>
       <div id="client-details-notes-list"></div>
@@ -3635,7 +3638,7 @@
 
           <div>
             <label class="form-label">Status</label>
-            <select name="status" class="form-input">
+            <select name="status" id="lead-status" class="form-input">
               <option value="new" selected>New</option>
               <option value="contacted">Contacted</option>
               <option value="qualified">Qualified</option>
@@ -3643,6 +3646,7 @@
               <option value="converted">Converted</option>
               <option value="disqualified">Disqualified</option>
             </select>
+            <p id="lead-status-locked-note" class="text-xs text-gray-400 mt-1">Selecting Converted and saving opens the Deal step — the Lead only becomes Converted once that Deal is saved.</p>
           </div>
 
           <div>
@@ -4206,6 +4210,35 @@
           </button>
           <button id="confirm-delete-btn" class="h-9 px-4 inline-flex items-center gap-2 bg-rose-600 hover:bg-rose-700 text-white text-sm font-medium rounded-lg shadow-sm">
             <i data-lucide="trash-2" class="w-4 h-4"></i> Delete
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ LEAD CONVERSION CONFIRM MODAL ============
+       Stacks on top of the still-open Lead Edit modal (same pattern as
+       #confirm-modal stacking on top of Deal Details — see
+       state.pendingDelete.fromDealModal). Its own dedicated close action
+       (close-lead-conversion-confirm) hides only itself, never the generic
+       close-modal, so the Lead Edit modal and its unsaved field values are
+       left completely untouched on Cancel. -->
+  <div id="lead-conversion-confirm-modal" class="modal hidden">
+    <div class="modal-overlay" data-action="close-lead-conversion-confirm"></div>
+    <div class="modal-panel max-w-sm">
+      <div class="px-6 py-6 text-center">
+        <div class="w-12 h-12 mx-auto rounded-full bg-amber-50 text-amber-600 flex items-center justify-center mb-4">
+          <i data-lucide="alert-triangle" class="w-5 h-5"></i>
+        </div>
+        <h3 class="text-base font-semibold text-gray-900">Continue to Deal Conversion?</h3>
+        <p class="text-xs text-gray-500 mt-1">You changed other Lead fields. Those changes will not be saved during conversion. Save them separately before converting, or continue and discard them.</p>
+
+        <div class="flex items-center justify-center gap-2 mt-6">
+          <button data-action="close-lead-conversion-confirm" class="h-9 px-4 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg">
+            Cancel
+          </button>
+          <button data-action="continue-lead-conversion" class="h-9 px-4 inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg shadow-sm">
+            <i data-lucide="arrow-right" class="w-4 h-4"></i> Continue Conversion
           </button>
         </div>
       </div>

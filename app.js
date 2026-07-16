@@ -169,6 +169,18 @@ const state = {
   // null by openNewDealModal()/openEditDealModal() so a cancelled or
   // unrelated deal creation never leaks a stale redirect target.
   dealCreationSourceLeadId: null,
+  // UAT Fix Pass 2 — set while the Deal modal is open in atomic "Convert
+  // Lead to Deal" mode, so handleDealSubmit() calls the convert_crm_lead_to_deal
+  // RPC (creates the Deal and flips the Lead to Converted in one DB
+  // transaction) instead of a plain Deal insert. Always reset to null by
+  // openNewDealModal()/openEditDealModal() so a cancelled or unrelated deal
+  // creation never leaks a stale conversion target.
+  dealConversionLeadId: null,
+  // UAT UX safety fix — set while lead-conversion-confirm-modal is open
+  // (the "you have unsaved other-field edits" warning), so
+  // continue-lead-conversion knows which Lead to proceed with. Reset to
+  // null by both the Cancel and Continue handlers.
+  pendingLeadConversionId: null,
   // Sprint CRM-5 — set while the New Project modal is open in "Create
   // Project from Deal" mode, so handleProjectSubmit() knows to attach
   // deal_id to the new Project and return the user to that Deal's
@@ -1819,6 +1831,28 @@ async function createCrmDeal(payload) {
   if (error) { console.error('createCrmDeal', error); toast(error.message || 'Failed to create deal', 'error'); return null; }
   return data;
 }
+
+// UAT Fix Pass 2 — atomic Lead -> Deal conversion. Calls the
+// convert_crm_lead_to_deal RPC (crm_uat_fix_pass2_lead_to_deal_conversion_migration.sql),
+// which creates the Deal and flips the Lead to 'converted' inside a single
+// database transaction — never two independent client-side writes. Returns
+// { deal, lead, duplicate } on success (duplicate: true means an existing
+// linked Deal was returned instead of creating a new one), or null on
+// failure (nothing was written; the caller's local state is left untouched).
+async function convertCrmLeadToDeal(leadId, dealPayload) {
+  if (!isAdmin()) return null;
+  const { data, error } = await supabaseClient.rpc('convert_crm_lead_to_deal', {
+    p_lead_id: leadId,
+    p_deal: dealPayload,
+  });
+  if (error) {
+    console.error('convertCrmLeadToDeal', error);
+    toast(error.message || 'Failed to convert lead to deal', 'error');
+    return null;
+  }
+  return data;
+}
+
 async function updateCrmDeal(id, payload) {
   if (!isAdmin()) return null;
   // Same requirement as createCrmDeal, but an update payload can legitimately
@@ -6403,23 +6437,31 @@ function setCrmTab(tab) {
 }
 
 // ---------- CRM Timeline Helper ----------
+// item: { type, title, subtitle?, date, owner_id?, action?, id? }. When
+// `action`/`id` are set (an existing open-*-details data-action), the title
+// becomes a clickable link to that record — used by the Company Timeline
+// (UAT Fix Pass 2) for Contact/Lead/Deal/Company events. Types without a
+// real details view (note/activity/proposal) stay plain text, unchanged.
 function buildCrmTimeline(items) {
   if (!items.length) return '<p class="text-sm text-gray-400 py-3">No activity yet.</p>';
+  const icons = { activity: 'activity', note: 'sticky-note', proposal: 'file-text', company: 'building-2', contact: 'user', lead: 'target', deal: 'handshake' };
   return items
     .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
     .map(item => {
-      const icons = { activity: 'activity', note: 'sticky-note', proposal: 'file-text' };
       const icon = icons[item.type] || 'circle';
       const owner = item.owner_id
         ? state.teamMembers.find(m => Number(m.id) === Number(item.owner_id))
         : null;
+      const titleHtml = (item.action && item.id != null)
+        ? `<button class="text-sm font-medium text-gray-900 hover:text-indigo-600 text-left" data-action="${item.action}" data-id="${item.id}">${escapeHtml(item.title)}</button>`
+        : `<p class="text-sm font-medium text-gray-900">${escapeHtml(item.title)}</p>`;
       return `
         <div class="flex gap-3 py-2 border-b border-gray-100 last:border-0">
           <div class="flex-shrink-0 w-6 h-6 rounded-full bg-gray-100 flex items-center justify-center mt-0.5">
             <i data-lucide="${icon}" class="w-3 h-3 text-gray-500"></i>
           </div>
           <div class="min-w-0 flex-1">
-            <p class="text-sm font-medium text-gray-900">${escapeHtml(item.title)}</p>
+            ${titleHtml}
             ${item.subtitle ? `<p class="text-xs text-gray-500">${escapeHtml(item.subtitle)}</p>` : ''}
             <div class="flex items-center gap-2 mt-0.5">
               ${item.date ? `<span class="text-xs text-gray-400">${fmtDate(item.date)}</span>` : ''}
@@ -6441,6 +6483,13 @@ const CRM_TAB_FILTER_MODULES = {
   leads: 'crmLeads',
   deals: 'crmDeals',
   activities: 'crmActivities',
+  // UAT Fix Pass 2 — added so the Company KPI cards (renderClientDetails())
+  // can navigate Contacts/Proposals filtered to this Company via the same
+  // crm-kpi-nav path the CRM Dashboard already uses; both modules already
+  // had a working `client` filter (see HEADER_FILTER_MODULES), just no tab
+  // entry to reach them from a KPI-card click.
+  contacts: 'crmContacts',
+  proposals: 'crmProposals',
 };
 
 // Currency-safe aggregation shared by the Pipeline Value KPI and the
@@ -7071,6 +7120,34 @@ function findDealsForLead(leadId) {
     .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
 }
 
+// UAT Fix Pass 2 (blocking-workflow correction) — only these active
+// qualification stages may be converted from scratch. 'disqualified' is
+// deliberately excluded: if a Disqualified Lead becomes viable again, the
+// user must first edit its status to one of these and save, then edit it
+// again and select Converted to trigger the Deal step.
+const CRM_LEAD_CONVERTIBLE_STATUSES = ['new', 'contacted', 'qualified', 'proposal_sent'];
+
+// UAT Fix Pass 2 (+ UAT Workflow Refinement) — a Lead is eligible for the
+// atomic Lead -> Deal conversion when it is not archived, has a linked
+// Company, the current user is Admin, and either its status is one of
+// CRM_LEAD_CONVERTIBLE_STATUSES OR it's a legacy Converted Lead with no
+// linked Deal (repair case only — Disqualified is never eligible, even to
+// "repair"). A Converted Lead that already has a Deal is not eligible here
+// — "Add Another Deal" (openCreateDealFromLead) covers the approved
+// multi-Deal-per-Lead case instead. There is no longer a dedicated
+// "Convert to Deal" button; this same function now gates two call sites:
+// handleLeadSubmit() (Edit Lead, status -> Converted, Save) and the
+// Lead Details "Repair Conversion" button (legacy orphaned-Converted
+// Leads only). Mirrored server-side in convert_crm_lead_to_deal() (see
+// crm_uat_fix_pass2_lead_to_deal_conversion_migration.sql) so a direct RPC
+// call bypassing this UI-layer check is rejected too.
+function canConvertLeadToDeal(lead) {
+  if (!lead || lead.is_archived || lead.client_id == null || !isAdmin()) return false;
+  const status = normalizeCrmLeadStatusForDisplay(lead.status || 'new');
+  if (status === 'converted') return findDealsForLead(lead.id).length === 0;
+  return CRM_LEAD_CONVERTIBLE_STATUSES.includes(status);
+}
+
 // ---------- Lead Details ----------
 function renderLeadDetails() {
   const lead = state.crmLeads.find(
@@ -7169,6 +7246,8 @@ function renderLeadDetails() {
   const dealChipEl = $('#lead-details-deal-chip');
   if (dealChipEl) {
     const relatedDeals = findDealsForLead(lead.id);
+    const legacyOrphan = status === 'converted' && relatedDeals.length === 0;
+
     const listHtml = relatedDeals.length > 0
       ? relatedDeals.map((d) => `
           <div class="flex items-center justify-between gap-2">
@@ -7176,19 +7255,38 @@ function renderLeadDetails() {
             ${renderStatusBadge(d.stage || 'discovery')}
           </div>
         `).join('')
-      : `<span class="text-xs text-gray-400">${status === 'converted' ? 'No related deals yet' : 'Available once this lead is Converted'}</span>`;
+      : legacyOrphan
+        ? `<span class="text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 inline-block">Converted Lead has no linked Deal.</span>`
+        : `<span class="text-xs text-gray-400">No related deals yet</span>`;
 
-    const createBtnHtml = status === 'converted'
+    // UAT Workflow Refinement — the general "Convert to Deal" button is
+    // gone; conversion now happens through Edit Lead (status = Converted +
+    // Save — see handleLeadSubmit()). "Repair Conversion" is the one
+    // surviving exception: it exists only to fix historical data where a
+    // Lead is already Converted with no linked Deal (normal users, whose
+    // Leads only ever become Converted via the atomic RPC, should never see
+    // this). Reuses the exact same openConvertLeadToDealModal()/RPC path.
+    const repairBtnHtml = (legacyOrphan && canConvertLeadToDeal(lead))
       ? `<button
-           data-action="create-deal-from-lead"
+           data-action="convert-lead-to-deal"
            data-id="${lead.id}"
-           class="h-8 px-3 inline-flex items-center gap-2 text-xs font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition self-start"
+           class="h-8 px-3 inline-flex items-center gap-2 text-xs font-medium text-white bg-amber-600 rounded-lg hover:bg-amber-700 transition self-start"
          >
-           <i data-lucide="briefcase" class="w-3.5 h-3.5"></i> Create Deal
+           <i data-lucide="wrench" class="w-3.5 h-3.5"></i> Repair Conversion
          </button>`
       : '';
 
-    dealChipEl.innerHTML = `<div class="flex flex-col gap-2 w-full">${listHtml}${createBtnHtml}</div>`;
+    const addAnotherBtnHtml = (status === 'converted' && relatedDeals.length > 0 && isAdmin())
+      ? `<button
+           data-action="create-deal-from-lead"
+           data-id="${lead.id}"
+           class="h-8 px-3 inline-flex items-center gap-2 text-xs font-medium text-gray-700 border border-gray-200 rounded-lg hover:bg-gray-50 transition self-start"
+         >
+           <i data-lucide="plus" class="w-3.5 h-3.5"></i> Add Another Deal
+         </button>`
+      : '';
+
+    dealChipEl.innerHTML = `<div class="flex flex-col gap-2 w-full">${listHtml}${repairBtnHtml}${addAnotherBtnHtml}</div>`;
   }
 
   // Timeline
@@ -7461,14 +7559,60 @@ function renderClientDetails() {
         `).join('');
   }
 
-  // Timeline panel
+  // KPI summary (UAT Fix Pass 2) — compact relationship counts from
+  // already-loaded state, scoped to this Company. Open Deals / Pipeline
+  // Value have no safe existing filtered nav target (the Deals tab's stage
+  // filter is an exact match, not "not won/lost"), so those two — and
+  // Follow-up Notes, which has no standalone tab at all — stay read-only.
+  const kpisEl = $('#client-details-kpis');
+  if (kpisEl) {
+    const openDeals = deals.filter(d => d.stage !== 'won' && d.stage !== 'lost');
+    const pipeline = crmCurrencySafeTotal(openDeals);
+    const cards = [
+      { label: 'Contacts', value: contacts.length, tab: 'contacts', icon: 'users' },
+      { label: 'Leads', value: leads.length, tab: 'leads', icon: 'target' },
+      { label: 'Deals', value: deals.length, tab: 'deals', icon: 'handshake' },
+      { label: 'Activities', value: activities.length, tab: 'activities', icon: 'activity' },
+      { label: 'Proposals', value: proposals.length, tab: 'proposals', icon: 'file-text' },
+      { label: 'Follow-up Notes', value: notes.length, tab: null, icon: 'sticky-note' },
+      { label: 'Open Deals', value: openDeals.length, tab: null, icon: 'trending-up' },
+      { label: 'Pipeline Value', value: pipeline.display, sub: pipeline.mixed ? pipeline.grouped : null, tab: null, icon: 'wallet' },
+    ];
+    kpisEl.innerHTML = cards.map(c => `
+      <div class="stat-card kpi-card kpi-card--compact" ${c.tab ? `data-action="crm-kpi-nav" data-crm-tab="${c.tab}" data-crm-filters="client=${client.id}"` : ''}>
+        <div class="kpi-card-top">
+          <div class="kpi-card-icon-wrap bg-indigo-50">
+            <i data-lucide="${c.icon}" class="w-4 h-4 text-indigo-500"></i>
+          </div>
+        </div>
+        <p class="kpi-card-label">${escapeHtml(c.label)}</p>
+        <p class="kpi-card-value text-indigo-600">${c.value}</p>
+        ${c.sub ? `<p class="text-[11px] text-gray-400 mt-0.5 truncate">${escapeHtml(c.sub)}</p>` : ''}
+      </div>
+    `).join('');
+  }
+
+  // Timeline panel — Sprint UAT Fix Pass 2: previously only Notes/Activities/
+  // Proposals fed the timeline, so it stayed "No activity yet" even after
+  // Contacts/Leads/Deals existed. Company/Contact/Lead/Deal events are
+  // sourced from real created_at (and, for Lead Converted, updated_at —
+  // there is no dedicated converted_at column) and are clickable through to
+  // their existing details view; Note/Activity/Proposal entries are
+  // unchanged (no details view to link to).
   const timelineEl = $('#client-details-timeline');
   if (timelineEl) {
     const timelineItems = [
+      client.created_at ? { type: 'company', title: 'Company created', subtitle: client.client_name, date: client.created_at } : null,
+      ...contacts.map(c => ({ type: 'contact', title: 'Contact created', subtitle: c.contact_name, date: c.created_at, action: 'open-contact-details', id: c.id })),
+      ...leads.map(l => ({ type: 'lead', title: 'Lead created', subtitle: l.lead_name, date: l.created_at, action: 'open-lead-details', id: l.id })),
+      ...leads
+        .filter(l => normalizeCrmLeadStatusForDisplay(l.status) === 'converted' && l.updated_at && l.updated_at !== l.created_at)
+        .map(l => ({ type: 'lead', title: 'Lead marked Converted', subtitle: l.lead_name, date: l.updated_at, action: 'open-lead-details', id: l.id })),
+      ...deals.map(d => ({ type: 'deal', title: 'Deal created', subtitle: d.deal_name, date: d.created_at, action: 'open-deal-details', id: d.id })),
       ...notes.map(n => ({ type: 'note', title: n.body ? n.body.substring(0, 60) + (n.body.length > 60 ? '…' : '') : 'Note', date: n.created_at, owner_id: n.created_by })),
       ...activities.map(a => ({ type: 'activity', title: a.title || labelize(a.activity_type), subtitle: labelize(a.status), date: a.activity_date || a.created_at, owner_id: a.owner_id })),
       ...proposals.map(p => ({ type: 'proposal', title: p.proposal_title, subtitle: labelize(p.status), date: p.sent_date || p.created_at, owner_id: p.owner_id })),
-    ];
+    ].filter(Boolean);
     timelineEl.innerHTML = buildCrmTimeline(timelineItems);
   }
 
@@ -14745,6 +14889,10 @@ function openEditLeadModal(id) {
   form.referred_by.value       = lead.referred_by || '';
   form.expected_budget.value   = lead.expected_budget || '';
   form.priority.value          = lead.priority || 'medium';
+  // UAT Workflow Refinement — Converted is a normal, always-selectable
+  // status again. Selecting it and saving no longer writes directly (see
+  // handleLeadSubmit()); it launches the Deal Create modal instead, so no
+  // locking/disabling is needed here.
   form.status.value            = normalizeCrmLeadStatusForDisplay(lead.status || 'new');
   form.owner_id.value          = lead.owner_id != null ? String(lead.owner_id) : '';
   form.next_follow_up.value    = lead.next_follow_up || '';
@@ -14767,6 +14915,46 @@ function openEditLeadModal(id) {
   openModal('lead-modal');
 }
 
+// UAT UX safety fix — fields a user can actually edit in the Lead form.
+// Deliberately excludes `status` (that's the very reason this check runs —
+// it's compared separately) and the hidden legacy snapshot fields
+// (company_name/contact_person/phone/whatsapp/email): renderLeadContactPreview()
+// overwrites those from the *live* linked Contact/Company on every modal
+// open (see its own comment — "always derived here, never typed by the
+// user"), so they routinely differ from the Lead's own stored columns even
+// with zero user action. Including them would false-positive this warning
+// on almost every conversion attempt.
+const LEAD_FORM_COMPARABLE_FIELDS = [
+  'client_id', 'contact_id', 'lead_name', 'source', 'referred_by',
+  'service_interest', 'expected_budget', 'priority', 'owner_id',
+  'next_follow_up', 'notes',
+];
+
+// Returns the subset of LEAD_FORM_COMPARABLE_FIELDS whose current form
+// value differs from the stored Lead. Read-only — never mutates the form.
+function getChangedLeadFields(form, existingLead) {
+  const payload = normalizePayload(new FormData(form));
+  return LEAD_FORM_COMPARABLE_FIELDS.filter((key) => {
+    const formVal = payload[key] == null ? '' : String(payload[key]).trim();
+    const existingVal = existingLead[key] == null ? '' : String(existingLead[key]).trim();
+    return formVal !== existingVal;
+  });
+}
+
+// Opens the "Continue to Deal Conversion?" warning on top of the still-open
+// Lead Edit modal (mirrors the existing #confirm-modal-stacked-on-Deal-
+// Details pattern). Its own dedicated close action hides only itself —
+// never the generic close-modal — so the Lead Edit modal and every
+// unsaved field value the user entered stay exactly as they were.
+function openLeadConversionConfirm(leadId) {
+  state.pendingLeadConversionId = leadId;
+  openModal('lead-conversion-confirm-modal');
+}
+function closeLeadConversionConfirm() {
+  state.pendingLeadConversionId = null;
+  $('#lead-conversion-confirm-modal')?.classList.add('hidden');
+}
+
 async function handleLeadSubmit(e) {
   e.preventDefault();
   if (!isAdmin()) return;
@@ -14782,6 +14970,52 @@ async function handleLeadSubmit(e) {
   const contactSel = $('#lead-contact-id');
   if (contactSel && !contactSel.disabled && contactSel.options.length > 1 && !contactSel.value) {
     toast('Select a contact for this lead', 'error');
+    return;
+  }
+
+  // UAT Workflow Refinement — selecting "Converted" and pressing Save never
+  // writes the Lead directly. Instead it launches the existing Deal Create
+  // modal (openConvertLeadToDealModal — the exact same prefill the former
+  // dedicated "Convert to Deal" button used), and the Lead only becomes
+  // Converted as a side effect of convert_crm_lead_to_deal() succeeding
+  // once that Deal is saved. No lead write, no RPC call, happens here —
+  // this only ever redirects to the Deal modal or falls through to the
+  // ordinary save below. A no-op reselection of "Converted" on a Lead
+  // that's already Converted is NOT intercepted — it falls through and
+  // saves normally like any other field edit.
+  const selectedStatus = form.status ? form.status.value : null;
+  const existingLead = isEditing ? state.crmLeads.find((l) => Number(l.id) === state.editingLeadId) : null;
+  const existingStatus = existingLead ? normalizeCrmLeadStatusForDisplay(existingLead.status || 'new') : null;
+
+  if (selectedStatus === 'converted' && existingStatus !== 'converted') {
+    if (!isEditing || !existingLead) {
+      toast('Save the Lead first, then edit it to select Converted.', 'error');
+      return;
+    }
+    if (!canConvertLeadToDeal(existingLead)) {
+      toast('This lead is not eligible for conversion. Change its status to an active stage and save first, then select Converted.', 'error');
+      return;
+    }
+
+    // UAT UX safety fix — any other field edits made in this same session
+    // would otherwise be silently discarded (conversion never saves the
+    // Lead — see below). Warn instead of silently dropping them: if
+    // anything besides status changed, ask before proceeding. The Lead
+    // Edit modal stays open and untouched here — nothing is written and
+    // nothing is closed until the user picks Continue or Cancel.
+    const changedFields = getChangedLeadFields(form, existingLead);
+    if (changedFields.length > 0) {
+      openLeadConversionConfirm(existingLead.id);
+      return;
+    }
+
+    // No other field edits — proceed straight to the Deal modal exactly as
+    // before. The Lead itself is left completely untouched until
+    // convert_crm_lead_to_deal() succeeds.
+    state.editingLeadId = null;
+    state.leadEditReturnView = null;
+    closeModal();
+    openConvertLeadToDealModal(existingLead.id);
     return;
   }
 
@@ -15215,6 +15449,7 @@ function openNewDealModal(prefillClientId) {
   if (!isAdmin()) return;
   state.editingDealId = null;
   state.dealCreationSourceLeadId = null;
+  state.dealConversionLeadId = null;
   const form = $('#deal-form');
   form.reset();
   populateDealClientSelect();
@@ -15251,12 +15486,54 @@ function openCreateDealFromLead(leadId) {
   $('#deal-modal-title').textContent = 'Create Deal from Lead';
 }
 
+// UAT Fix Pass 2 (+ UAT Workflow Refinement) — the atomic Lead -> Deal
+// conversion's shared entry point. Two callers: handleLeadSubmit() (normal
+// path — Edit Lead, status -> Converted, Save) and the Lead Details
+// "Repair Conversion" button (legacy orphaned-Converted Leads only; there
+// is no longer a standalone "Convert to Deal" button anywhere). Opens the
+// same Deal Create modal/prefill as openCreateDealFromLead, but sets
+// state.dealConversionLeadId so handleDealSubmit() (the Deal form's submit
+// handler) routes the submit through the convert_crm_lead_to_deal RPC
+// instead of a plain Deal insert — the Lead only flips to Converted as a
+// result of that RPC succeeding, never from this modal opening.
+function openConvertLeadToDealModal(leadId) {
+  if (!isAdmin()) return;
+  const lead = state.crmLeads.find(l => Number(l.id) === Number(leadId));
+  if (!lead) { toast('Lead not found', 'error'); return; }
+  if (!canConvertLeadToDeal(lead)) {
+    toast('This lead cannot be converted right now.', 'error');
+    return;
+  }
+
+  openNewDealModal(lead.client_id != null ? lead.client_id : undefined);
+  populateDealLeadSelect(lead.client_id != null ? lead.client_id : null, lead.id);
+  handleDealLeadAutofill();
+
+  // Deal Name is the one field handleDealLeadAutofill() deliberately never
+  // fills (see its comment) because company/lead names alone aren't a safe
+  // guess for the "Add Another Deal" case. A Convert-to-Deal is a 1:1
+  // conversion though, so the Lead's own title is a reasonable starting
+  // point — still fully editable before the user confirms.
+  const form = $('#deal-form');
+  if (form && form.deal_name && !form.deal_name.value.trim()) {
+    form.deal_name.value = lead.lead_name || '';
+  }
+
+  state.dealCreationSourceLeadId = lead.id;
+  state.dealConversionLeadId = lead.id;
+  $('#deal-modal-title').textContent = 'Convert Lead to Deal';
+  const submitBtn = form.querySelector('button[type=submit]');
+  if (submitBtn) submitBtn.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i> Convert to Deal';
+  refreshIcons();
+}
+
 function openEditDealModal(id) {
   if (!isAdmin()) return;
   const deal = state.crmDeals.find(d => Number(d.id) === id);
   if (!deal) { toast('Deal not found', 'error'); return; }
   state.editingDealId = id;
   state.dealCreationSourceLeadId = null;
+  state.dealConversionLeadId = null;
   const form = $('#deal-form');
   form.reset();
   populateDealClientSelect();
@@ -15291,6 +15568,7 @@ async function handleDealSubmit(e) {
   const form = e.target;
   const submitBtn = form.querySelector('button[type=submit]');
   const isEditing = state.editingDealId !== null;
+  const conversionLeadId = state.dealConversionLeadId;
 
   // Company is a hard requirement — mirrors the same check already done for
   // Lead (form.client_id is also now a required select; this is the
@@ -15301,7 +15579,7 @@ async function handleDealSubmit(e) {
   }
 
   submitBtn.disabled = true;
-  submitBtn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> ${isEditing ? 'Updating…' : 'Saving…'}`;
+  submitBtn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> ${isEditing ? 'Updating…' : conversionLeadId ? 'Converting…' : 'Saving…'}`;
   refreshIcons();
   const payload = normalizePayload(new FormData(form));
   if (payload.client_id) payload.client_id = Number(payload.client_id);
@@ -15325,6 +15603,57 @@ async function handleDealSubmit(e) {
   // Sprint CRM-4.5D Fix Pass 2 — a Lead may qualify multiple Deals (approved
   // business rule), so linking more than one Deal to the same lead_id is no
   // longer blocked here or anywhere else in this write path.
+
+  // UAT Fix Pass 2 — atomic "Convert Lead to Deal" path. client_id/lead_id
+  // are always derived server-side from the Lead row inside the RPC (never
+  // from this form), so whatever the form carries for them is discarded.
+  if (conversionLeadId) {
+    // Re-check eligibility here (not just when the modal was opened) —
+    // this is the actual write path, so a stale modal state or a direct
+    // dispatch of the convert-lead-to-deal action on an ineligible Lead
+    // (e.g. Disqualified) must still be blocked before the RPC is called,
+    // not only by the button being hidden in the UI.
+    const conversionLead = state.crmLeads.find((l) => Number(l.id) === Number(conversionLeadId));
+    if (!canConvertLeadToDeal(conversionLead)) {
+      toast('This lead is not eligible for Convert to Deal.', 'error');
+      submitBtn.disabled = false;
+      submitBtn.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i> Convert to Deal';
+      refreshIcons();
+      return;
+    }
+
+    delete payload.client_id;
+    delete payload.lead_id;
+
+    const result = await convertCrmLeadToDeal(conversionLeadId, payload);
+    submitBtn.disabled = false;
+    submitBtn.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i> Convert to Deal';
+    refreshIcons();
+    if (!result) return; // error already toasted; nothing was written, local state untouched
+
+    state.dealConversionLeadId = null;
+    state.dealCreationSourceLeadId = null;
+    form.reset();
+    closeModal();
+
+    const dealIdx = state.crmDeals.findIndex((d) => Number(d.id) === Number(result.deal.id));
+    if (dealIdx !== -1) state.crmDeals[dealIdx] = result.deal;
+    else state.crmDeals.push(result.deal);
+
+    const leadIdx = state.crmLeads.findIndex((l) => Number(l.id) === Number(result.lead.id));
+    if (leadIdx !== -1) state.crmLeads[leadIdx] = result.lead;
+
+    toast(
+      result.duplicate ? 'A deal already exists for this lead — showing it below.' : 'Lead converted to Deal.',
+      result.duplicate ? 'info' : 'success'
+    );
+
+    // Narrow re-render only — no full refetch, no page reload.
+    CRM_RENDERERS.leads();
+    if (Number(state.selectedLeadId) === Number(result.lead.id)) renderLeadDetails();
+    if (Number(state.selectedClientId) === Number(result.lead.client_id)) renderClientDetails();
+    return;
+  }
 
   let result = null;
   if (isEditing) { payload.updated_at = new Date().toISOString(); result = await updateCrmDeal(state.editingDealId, payload); }
@@ -19437,6 +19766,30 @@ document.addEventListener('click', (e) => {
     return;
   }
 
+  if (action === 'close-lead-conversion-confirm') {
+    closeLeadConversionConfirm();
+    return;
+  }
+
+  if (action === 'continue-lead-conversion') {
+    const leadId = state.pendingLeadConversionId;
+    state.pendingLeadConversionId = null;
+    $('#lead-conversion-confirm-modal')?.classList.add('hidden');
+    const lead = state.crmLeads.find((l) => Number(l.id) === Number(leadId));
+    if (!lead || !canConvertLeadToDeal(lead)) {
+      // Re-checked here too (not just when the warning was opened) — the
+      // actual write path (openConvertLeadToDealModal -> handleDealSubmit)
+      // re-checks again regardless, but fail fast with a clear message.
+      toast('This lead is not eligible for conversion right now.', 'error');
+      return;
+    }
+    state.editingLeadId = null;
+    state.leadEditReturnView = null;
+    closeModal();
+    openConvertLeadToDealModal(lead.id);
+    return;
+  }
+
   if (action === 'back-to-projects') {
     state.selectedProjectId = null;
     setView('projects');
@@ -19642,6 +19995,12 @@ if (action === 'create-deal-from-lead') {
   return;
 }
 
+if (action === 'convert-lead-to-deal') {
+  const id = Number(trigger.dataset.id);
+  openConvertLeadToDealModal(id);
+  return;
+}
+
 if (action === 'back-to-client-list') {
   state.selectedClientId = null;
   localStorage.removeItem('tgora_selected_client_id');
@@ -19828,6 +20187,11 @@ if (action === 'restore-proposal') {
 }
 
 if (action === 'crm-kpi-nav') {
+  // UAT Fix Pass 2 — Company Details' KPI cards reuse this same action, but
+  // that view lives outside #view-crm. Switching there first is a no-op
+  // when already on the CRM Dashboard (setView() just re-toggles the same
+  // .hidden classes), so this is safe for the existing Dashboard cards too.
+  setView('crm');
   const tab = trigger.dataset.crmTab;
   const filtersAttr = trigger.dataset.crmFilters;
   const moduleKey = CRM_TAB_FILTER_MODULES[tab];
