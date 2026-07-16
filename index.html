@@ -1554,14 +1554,28 @@
   <div id="crm-section-leads" class="hidden">
     <div class="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-4">
       <div>
-        <h3 class="text-lg font-semibold text-gray-900">Leads</h3>
+        <div class="flex items-center gap-1.5">
+          <h3 class="text-lg font-semibold text-gray-900">Leads</h3>
+          <span class="widget-info-icon" tabindex="0" role="button" aria-label="What is a Lead?" data-tooltip-title="What is a Lead?" data-tooltip-desc="A Lead is a potential customer who has shown interest but is not yet a confirmed sales opportunity. Typical characteristics: budget may not yet be confirmed; the final decision maker may still be unknown; purchase intent is still being qualified. The goal is to qualify the Lead and convert it into a Deal.">
+            <i data-lucide="info" class="w-3.5 h-3.5"></i>
+          </span>
+        </div>
         <p class="text-sm text-gray-500 mt-1">Track and qualify incoming leads.</p>
       </div>
       <div class="flex items-center gap-2">
+        <div class="flex items-center gap-0.5 bg-gray-100 rounded-lg p-0.5" id="crm-leads-view-switcher">
+          <button type="button" class="view-mode-btn archive-toggle-btn" data-view-mode="kanban" title="Kanban view">
+            <i data-lucide="layout-dashboard" class="w-3.5 h-3.5"></i>
+          </button>
+          <button type="button" class="view-mode-btn archive-toggle-btn" data-view-mode="table" title="Table view">
+            <i data-lucide="list" class="w-3.5 h-3.5"></i>
+          </button>
+        </div>
         <input id="crm-leads-search" type="search" placeholder="Search leads…" class="h-9 px-3 text-sm bg-white border border-gray-200 rounded-lg focus:border-brand-500 focus:ring-2 focus:ring-brand-100 outline-none transition w-44 sm:w-56" />
         <select id="crm-leads-status-filter" class="h-9 px-3 text-sm bg-white border border-gray-200 rounded-lg outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100 transition">
           <option value="active" selected>Active</option>
           <option value="archived">Archived</option>
+          <option value="all">All</option>
         </select>
         <button id="crm-leads-clear-filters" type="button" class="hidden h-9 px-3 inline-flex items-center gap-1.5 text-xs font-medium text-gray-500 hover:text-gray-700 border border-gray-200 rounded-lg transition">
           <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i> Clear Filters
@@ -1574,6 +1588,7 @@
       <h4 class="text-base font-semibold text-gray-900">No leads yet</h4>
       <p class="text-sm text-gray-500 mt-1 max-w-sm">Start by adding your first CRM lead.</p>
     </div>
+    <div id="crm-leads-kanban-container" class="hidden"></div>
     <div id="crm-leads-table-wrapper" class="hidden bg-white rounded-xl border border-gray-200 shadow-card overflow-hidden">
       <div class="table-scroll-container">
         <table class="w-full text-sm">
@@ -1771,14 +1786,28 @@
   <div id="crm-section-deals" class="hidden">
     <div class="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-4">
       <div>
-        <h3 class="text-lg font-semibold text-gray-900">Deals</h3>
+        <div class="flex items-center gap-1.5">
+          <h3 class="text-lg font-semibold text-gray-900">Deals</h3>
+          <span class="widget-info-icon" tabindex="0" role="button" aria-label="What is a Deal?" data-tooltip-title="What is a Deal?" data-tooltip-desc="A Deal is a qualified sales opportunity with identified commercial potential. Typical characteristics: the required service is understood; an estimated commercial value is available; sales discussion or negotiation is in progress. The goal is to win the Deal and create a Project.">
+            <i data-lucide="info" class="w-3.5 h-3.5"></i>
+          </span>
+        </div>
         <p class="text-sm text-gray-500 mt-1">Track the commercial opportunity — pipeline stage, value, and probability.</p>
       </div>
       <div class="flex items-center gap-2 flex-wrap">
+        <div class="flex items-center gap-0.5 bg-gray-100 rounded-lg p-0.5" id="crm-deals-view-switcher">
+          <button type="button" class="view-mode-btn archive-toggle-btn" data-view-mode="kanban" title="Kanban view">
+            <i data-lucide="layout-dashboard" class="w-3.5 h-3.5"></i>
+          </button>
+          <button type="button" class="view-mode-btn archive-toggle-btn" data-view-mode="table" title="Table view">
+            <i data-lucide="list" class="w-3.5 h-3.5"></i>
+          </button>
+        </div>
         <input id="crm-deals-search" type="search" placeholder="Search deals…" class="h-9 px-3 text-sm bg-white border border-gray-200 rounded-lg focus:border-brand-500 focus:ring-2 focus:ring-brand-100 outline-none transition w-44 sm:w-56" />
         <select id="crm-deals-status-filter" class="h-9 px-3 text-sm bg-white border border-gray-200 rounded-lg outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100 transition">
           <option value="active" selected>Active</option>
           <option value="archived">Archived</option>
+          <option value="all">All</option>
         </select>
         <button id="crm-deals-clear-filters" type="button" class="hidden h-9 px-3 inline-flex items-center gap-1.5 text-xs font-medium text-gray-500 hover:text-gray-700 border border-gray-200 rounded-lg transition">
           <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i> Clear Filters
@@ -1791,6 +1820,7 @@
       <h4 class="text-base font-semibold text-gray-900">No deals yet</h4>
       <p class="text-sm text-gray-500 mt-1 max-w-sm">Create your first deal to start tracking opportunities.</p>
     </div>
+    <div id="crm-deals-kanban-container" class="hidden"></div>
     <div id="crm-deals-table-wrapper" class="hidden bg-white rounded-xl border border-gray-200 shadow-card overflow-hidden">
       <div class="table-scroll-container">
         <table class="w-full text-sm">
@@ -4239,6 +4269,34 @@
           </button>
           <button data-action="continue-lead-conversion" class="h-9 px-4 inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg shadow-sm">
             <i data-lucide="arrow-right" class="w-4 h-4"></i> Continue Conversion
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ DEAL CONVERSION CONFIRM MODAL ============
+       Same pattern as #lead-conversion-confirm-modal: stacks on top of the
+       still-open Deal Edit modal. Its own dedicated close action
+       (close-deal-conversion-confirm) hides only itself, never the generic
+       close-modal, so the Deal Edit modal and its unsaved field values are
+       left completely untouched on Cancel. -->
+  <div id="deal-conversion-confirm-modal" class="modal hidden">
+    <div class="modal-overlay" data-action="close-deal-conversion-confirm"></div>
+    <div class="modal-panel max-w-sm">
+      <div class="px-6 py-6 text-center">
+        <div class="w-12 h-12 mx-auto rounded-full bg-amber-50 text-amber-600 flex items-center justify-center mb-4">
+          <i data-lucide="alert-triangle" class="w-5 h-5"></i>
+        </div>
+        <h3 class="text-base font-semibold text-gray-900">Continue to Project Creation?</h3>
+        <p class="text-xs text-gray-500 mt-1">You changed other Deal fields. Those changes will not be saved during Project creation. Save them separately before marking the Deal as Won, or continue and discard them.</p>
+
+        <div class="flex items-center justify-center gap-2 mt-6">
+          <button data-action="close-deal-conversion-confirm" class="h-9 px-4 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg">
+            Cancel
+          </button>
+          <button data-action="continue-deal-conversion" class="h-9 px-4 inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg shadow-sm">
+            <i data-lucide="arrow-right" class="w-4 h-4"></i> Continue
           </button>
         </div>
       </div>

@@ -214,6 +214,10 @@ const state = {
   teamPerformanceRanking: [],
   teamPerformanceNotEnoughData: [],
   tasksViewMode: localStorage.getItem('tgora_tasks_view_mode') || 'table',
+  crmLeadsViewMode: localStorage.getItem('tgora_crm_leads_view_mode') || 'kanban',
+  crmDealsViewMode: localStorage.getItem('tgora_crm_deals_view_mode') || 'kanban',
+  projectConversionForceNew: false,
+  pendingDealConversionId: null,
 };
 
 // ---------- DOM Helpers ----------
@@ -1872,6 +1876,58 @@ async function archiveCrmDeal(id) {
 }
 async function restoreCrmDeal(id) {
   return updateCrmDeal(id, { is_archived: false, updated_at: new Date().toISOString() });
+}
+
+// CRM Kanban Sprint — atomic Deal -> Project conversion. Calls the
+// convert_crm_deal_to_project RPC (crm_deal_to_project_conversion_migration.sql),
+// which creates the Project and flips the Deal to 'won' inside a single
+// database transaction — never two independent client-side writes. Returns
+// { deal, project, duplicate } on success (duplicate: true means an
+// existing linked Project was returned instead of creating a new one), or
+// null on failure (nothing was written; the caller's local state is left
+// untouched). p_force_new is only ever true for the explicit "Create
+// Additional Project" action on a Deal that already has a linked Project.
+async function convertCrmDealToProject(dealId, projectPayload, forceNew = false) {
+  if (!isAdmin()) return null;
+  const { data, error } = await supabaseClient.rpc('convert_crm_deal_to_project', {
+    p_deal_id: dealId,
+    p_project: projectPayload,
+    p_force_new: forceNew,
+  });
+  if (error) {
+    console.error('convertCrmDealToProject', error);
+    toast(error.message || 'Failed to convert deal to project', 'error');
+    return null;
+  }
+  return data;
+}
+
+// Projects linked to a given Deal — shared by canConvertDealToProject() and
+// the Deal Details repair/additional-project UI so both agree on what
+// "already has a Project" means.
+function getProjectsForDeal(dealId) {
+  return state.projects.filter((p) => Number(p.deal_id) === Number(dealId));
+}
+
+// Stage eligibility for a *first-time* Won transition — mirrors
+// CRM_LEAD_CONVERTIBLE_STATUSES. 'lost' is deliberately excluded (business-
+// rule correction applied during planning): a Lost Deal must be moved back
+// to an active stage and saved before it can become Won.
+const CRM_DEAL_CONVERTIBLE_STAGES = ['discovery', 'proposal', 'negotiation'];
+
+// Single shared gate used by Kanban drag, the Deal Edit -> Won interception,
+// and the modal-opener, so the eligibility rule lives in exactly one place.
+// forceNew mirrors the RPC's p_force_new: true only for the explicit
+// "Create Additional Project" action, where the Deal is expected to already
+// be Won (possibly with an existing Project) — the normal (non-forceNew)
+// path additionally allows the legacy-repair case (Won + zero Projects).
+function canConvertDealToProject(deal, { forceNew = false } = {}) {
+  if (!deal || deal.is_archived || deal.client_id == null || !isAdmin()) return false;
+  const stage = deal.stage || 'discovery';
+  if (forceNew) return stage === 'won';
+  if (CRM_DEAL_CONVERTIBLE_STAGES.includes(stage)) return true;
+  // Legacy repair: already Won, but no Project linked yet.
+  return stage === 'won' && getProjectsForDeal(deal.id).length === 0;
 }
 
 // ---------- CRM Activities Data Layer ----------
@@ -6148,7 +6204,7 @@ function getFilteredCrmLeads() {
   today.setHours(0, 0, 0, 0);
 
   let leads = state.crmLeads.filter((l) =>
-    f.archived === 'archived' ? l.is_archived : !l.is_archived
+    f.archived === 'archived' ? l.is_archived : f.archived === 'all' ? true : !l.is_archived
   );
 
   if (search) {
@@ -6189,10 +6245,349 @@ function getFilteredCrmLeads() {
   return leads;
 }
 
+// ---------- CRM Kanban (reusable foundation, Leads + Deals) ----------
+// Config shape consumed by renderCrmKanbanBoard():
+//   columns: [{ status, label }]
+//   records: already-filtered array (reuse getFilteredCrmLeads/Deals so
+//            search/owner/etc. filters apply identically to both views)
+//   statusOf(record) -> status string matching one of `columns`
+//   renderCard(record) -> inner HTML string (include its own
+//            data-action="open-lead-details"/"open-deal-details" element,
+//            same convention the table renderers already use, so the
+//            existing global dispatcher opens Details with no new wiring)
+//   canDrag(record) -> bool (false blocks both the browser drag gesture via
+//            the missing draggable attribute AND the drop handler)
+//   emptyMessage(status) -> string shown in an empty column
+//   onDrop(record, fromStatus, toStatus) -> async; fully owns the DB write.
+//            Only on success should it patch state + re-render — a failed
+//            write leaves state (and therefore the rendered board) unchanged,
+//            so the card naturally stays in its original column with no
+//            manual "revert" step required (Part 3: no optimistic UI).
+const CRM_KANBAN_COLUMN_ACCENT = {
+  new: 'crm-kanban-accent-slate',
+  contacted: 'crm-kanban-accent-blue',
+  qualified: 'crm-kanban-accent-indigo',
+  proposal_sent: 'crm-kanban-accent-violet',
+  converted: 'crm-kanban-accent-emerald',
+  disqualified: 'crm-kanban-accent-rose',
+  discovery: 'crm-kanban-accent-slate',
+  proposal: 'crm-kanban-accent-blue',
+  negotiation: 'crm-kanban-accent-violet',
+  won: 'crm-kanban-accent-emerald',
+  lost: 'crm-kanban-accent-rose',
+};
+
+// Notice shown above the board when Kanban is used with the "All" filter —
+// archived records are never shown as Kanban cards (no selection/bulk model
+// there), so this makes that limitation explicit instead of silently
+// dropping rows the Table view would show.
+const CRM_KANBAN_ARCHIVED_HIDDEN_NOTICE = `
+  <div class="crm-kanban-notice">
+    <i data-lucide="info" class="w-3.5 h-3.5"></i>
+    <span>Archived records are hidden in Kanban — switch to Table to view them.</span>
+  </div>
+`;
+
+// Builds one card as a real DOM node (refinement: prefer real DOM nodes
+// over large HTML strings in the reusable engine so future column-only
+// updates can patch a single node instead of re-parsing markup). The
+// per-entity `renderCard(record)` template still returns an HTML fragment
+// for the card's inner content — only the reusable structural layer
+// (board/column/card wrapper) is built via createElement.
+function buildCrmKanbanCardEl(record, config) {
+  const card = document.createElement('div');
+  card.className = 'crm-kanban-card';
+  card.dataset.kanbanCard = '';
+  card.dataset.id = String(record.id);
+  if (config.canDrag(record)) card.draggable = true;
+  card.innerHTML = config.renderCard(record);
+  return card;
+}
+
+// (Re)populates one column body with the given records — shared by the
+// initial full board build and the targeted single-column refresh below.
+function populateCrmKanbanColumnBody(bodyEl, status, records, config) {
+  bodyEl.innerHTML = '';
+  if (records.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'crm-kanban-col-empty';
+    empty.textContent = config.emptyMessage(status);
+    bodyEl.appendChild(empty);
+    return;
+  }
+  records.forEach((record) => bodyEl.appendChild(buildCrmKanbanCardEl(record, config)));
+}
+
+function buildCrmKanbanColumnEl(status, label, records, config) {
+  const col = document.createElement('div');
+  const accent = CRM_KANBAN_COLUMN_ACCENT[status] || '';
+  col.className = accent ? `crm-kanban-col ${accent}` : 'crm-kanban-col';
+  col.dataset.kanbanStatus = status;
+
+  const header = document.createElement('div');
+  header.className = 'crm-kanban-col-header';
+  const labelEl = document.createElement('span');
+  labelEl.className = 'crm-kanban-col-label';
+  labelEl.textContent = label;
+  const countEl = document.createElement('span');
+  countEl.className = 'crm-kanban-col-count';
+  countEl.textContent = String(records.length);
+  header.appendChild(labelEl);
+  header.appendChild(countEl);
+
+  const body = document.createElement('div');
+  body.className = 'crm-kanban-col-body';
+  populateCrmKanbanColumnBody(body, status, records, config);
+
+  col.appendChild(header);
+  col.appendChild(body);
+  return col;
+}
+
+// Full board (re)build — used on entity-render (search/filter/tab change)
+// and the first paint. `opts.notice` renders a small banner above the
+// board (Kanban + "All" filter — see CRM_KANBAN_ARCHIVED_HIDDEN_NOTICE).
+function renderCrmKanbanBoard(containerId, config, opts = {}) {
+  const container = $(`#${containerId}`);
+  if (!container) return;
+
+  const grouped = {};
+  config.columns.forEach(({ status }) => { grouped[status] = []; });
+  config.records.forEach((record) => {
+    const s = config.statusOf(record);
+    if (grouped[s] === undefined) grouped[s] = [];
+    grouped[s].push(record);
+  });
+
+  container.innerHTML = '';
+
+  if (opts.notice) {
+    const notice = document.createElement('div');
+    notice.innerHTML = opts.notice;
+    container.appendChild(notice.firstElementChild);
+  }
+
+  const board = document.createElement('div');
+  board.className = 'crm-kanban-board';
+  config.columns.forEach(({ status, label }) => {
+    board.appendChild(buildCrmKanbanColumnEl(status, label, grouped[status] || [], config));
+  });
+  container.appendChild(board);
+
+  refreshIcons();
+}
+
+// Targeted refresh after a successful drag write (refinement: avoid
+// rebuilding the whole board on every drop). Only the columns named in
+// `statuses` (normally just [fromStatus, toStatus]) have their body
+// contents and count rebuilt — every other column's DOM is left alone.
+function updateCrmKanbanColumns(containerId, config, statuses) {
+  const container = $(`#${containerId}`);
+  if (!container) return;
+  statuses.forEach((status) => {
+    const col = container.querySelector(`[data-kanban-status="${status}"]`);
+    if (!col) return;
+    const records = config.records.filter((r) => config.statusOf(r) === status);
+    const countEl = col.querySelector('.crm-kanban-col-count');
+    if (countEl) countEl.textContent = String(records.length);
+    const bodyEl = col.querySelector('.crm-kanban-col-body');
+    if (bodyEl) populateCrmKanbanColumnBody(bodyEl, status, records, config);
+  });
+  refreshIcons();
+}
+
+// Transient drag state, shared across both CRM boards — ephemeral UI, not
+// app data (mirrors the Tasks Kanban's _draggedTaskId/_dragInFlight). Only
+// one drag gesture can be in flight at a time, so a single pair of module
+// vars (rather than one per board) is sufficient; the containerId on the
+// state is what keeps a drop event from being misattributed to the wrong
+// board if that ever became possible.
+let _crmKanbanDrag = null; // { containerId, id, fromStatus }
+let _crmKanbanDragInFlight = false;
+
+// Attaches delegated drag/drop listeners once to a persistent container
+// (never destroyed across re-renders, only its children change — same
+// approach as #tasks-kanban-container). `getConfig()` is called fresh on
+// every dragstart/drop so it always sees the current filtered records.
+function wireCrmKanbanDragDrop(containerId, getConfig) {
+  const container = $(`#${containerId}`);
+  if (!container) return;
+
+  container.addEventListener('dragstart', (e) => {
+    const card = e.target.closest('[data-kanban-card]');
+    if (!card) return;
+    const config = getConfig();
+    const record = config.records.find((r) => Number(r.id) === Number(card.dataset.id));
+    if (!record) return;
+    _crmKanbanDrag = { containerId, id: record.id, fromStatus: config.statusOf(record) };
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', String(record.id));
+    card.classList.add('is-dragging');
+  });
+
+  container.addEventListener('dragover', (e) => {
+    const col = e.target.closest('[data-kanban-status]');
+    if (!col) return;
+    e.preventDefault();
+    $$(`#${containerId} [data-kanban-status]`).forEach((c) => c.classList.remove('drag-over'));
+    col.classList.add('drag-over');
+  });
+
+  container.addEventListener('dragleave', (e) => {
+    const col = e.target.closest('[data-kanban-status]');
+    if (!col) return;
+    if (!col.contains(e.relatedTarget)) col.classList.remove('drag-over');
+  });
+
+  container.addEventListener('drop', async (e) => {
+    const col = e.target.closest('[data-kanban-status]');
+    if (!col) return;
+    e.preventDefault();
+    $$(`#${containerId} [data-kanban-status]`).forEach((c) => c.classList.remove('drag-over'));
+
+    if (!_crmKanbanDrag || _crmKanbanDrag.containerId !== containerId || _crmKanbanDragInFlight) return;
+    const { id, fromStatus } = _crmKanbanDrag;
+    const targetStatus = col.dataset.kanbanStatus;
+    if (fromStatus === targetStatus) return;
+
+    const config = getConfig();
+    const record = config.records.find((r) => Number(r.id) === Number(id));
+    if (!record || !config.canDrag(record)) return;
+
+    _crmKanbanDragInFlight = true;
+    try {
+      await config.onDrop(record, fromStatus, targetStatus);
+    } finally {
+      _crmKanbanDragInFlight = false;
+    }
+  });
+
+  container.addEventListener('dragend', () => {
+    $$(`#${containerId} [data-kanban-card].is-dragging`).forEach((el) => el.classList.remove('is-dragging'));
+    _crmKanbanDrag = null;
+    $$(`#${containerId} [data-kanban-status]`).forEach((c) => c.classList.remove('drag-over'));
+  });
+}
+
+// Refinement: Active -> Kanban or Table; Archived -> Table only (no
+// selection/bulk model in Kanban); All -> Kanban or Table, but Kanban+All
+// shows only active cards with CRM_KANBAN_ARCHIVED_HIDDEN_NOTICE above the
+// board rather than silently omitting archived rows.
+function getCrmLeadsEffectiveViewMode() {
+  return state.filters.crmLeads.archived === 'archived' ? 'table' : state.crmLeadsViewMode;
+}
+
+// Shared by both CRM view switchers — toggles the active button and hides
+// the switcher entirely when the current filter forces Table (Kanban isn't
+// a real choice in that state, so offering it would be misleading).
+function syncCrmKanbanViewSwitcherUI(switcherId, activeMode, kanbanAvailable) {
+  const el = $(`#${switcherId}`);
+  if (!el) return;
+  el.classList.toggle('hidden', !kanbanAvailable);
+  $$(`#${switcherId} .view-mode-btn`).forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.viewMode === activeMode);
+  });
+}
+
+const CRM_LEAD_KANBAN_COLUMNS = [
+  { status: 'new', label: 'New' },
+  { status: 'contacted', label: 'Contacted' },
+  { status: 'qualified', label: 'Qualified' },
+  { status: 'proposal_sent', label: 'Proposal Sent' },
+  { status: 'converted', label: 'Converted' },
+  { status: 'disqualified', label: 'Disqualified' },
+];
+
+// Compact card — only the fields Part 5 calls out, nothing more.
+// Compact: at most 2 sub-lines (company+contact combined, service+budget
+// combined) instead of 4 separate ones, so every field from Part 5 is still
+// shown but the card stays short.
+function renderCrmLeadKanbanCard(l) {
+  const owner = state.teamMembers.find((m) => Number(m.id) === Number(l.owner_id));
+  const linkedClient = l.client_id ? state.crmClients.find(c => Number(c.id) === Number(l.client_id)) : null;
+  const linkedContact = l.contact_id ? state.crmContacts.find(c => Number(c.id) === Number(l.contact_id)) : null;
+  const companyLabel = linkedClient ? linkedClient.client_name : l.company_name;
+
+  const ownerRow = owner
+    ? `<div class="crm-kanban-card-owner">
+         <div class="w-5 h-5 rounded-full ${avatarColor(owner.name)} flex items-center justify-center text-white text-[9px] font-semibold flex-shrink-0">${initials(owner.name)}</div>
+         <span>${escapeHtml(owner.name)}</span>
+       </div>`
+    : '';
+
+  const companyContactLine = [companyLabel, linkedContact?.contact_name].filter(Boolean).join(' · ');
+  const serviceBudgetLine = [l.service_interest, l.expected_budget].filter(Boolean).join(' · ');
+
+  return `
+    <button type="button" class="crm-kanban-card-title" data-action="open-lead-details" data-id="${l.id}">${escapeHtml(l.lead_name)}</button>
+    ${companyContactLine ? `<p class="crm-kanban-card-sub">${escapeHtml(companyContactLine)}</p>` : ''}
+    ${serviceBudgetLine ? `<p class="crm-kanban-card-sub">${escapeHtml(serviceBudgetLine)}</p>` : ''}
+    <div class="crm-kanban-card-footer">
+      ${ownerRow}
+      <div class="crm-kanban-card-badges">
+        ${renderPriorityBadge((l.priority || 'medium').toLowerCase())}
+      </div>
+    </div>
+    ${l.next_follow_up ? `<p class="crm-kanban-card-followup">Next: ${fmtDate(l.next_follow_up)}</p>` : ''}
+  `;
+}
+
+// Kanban drag rules (Part 5): Converted is never a direct write — dragging
+// into it launches the existing atomic Lead->Deal conversion modal instead,
+// and canConvertLeadToDeal() (unchanged, existing eligibility rule) already
+// rejects Disqualified/ineligible leads here, so that block is inherited
+// for free rather than re-implemented. Every other transition is a plain
+// status update.
+async function handleCrmLeadKanbanDrop(lead, fromStatus, toStatus) {
+  if (toStatus === 'converted') {
+    if (!canConvertLeadToDeal(lead)) {
+      toast('This lead is not eligible for conversion. Change its status to an active stage and save first, then select Converted.', 'error');
+      return;
+    }
+    openConvertLeadToDealModal(lead.id);
+    return;
+  }
+
+  const updated = await updateCrmLead(lead.id, { status: toStatus, updated_at: new Date().toISOString() });
+  if (!updated) return; // error already toasted; nothing written, card stays put
+
+  const idx = state.crmLeads.findIndex((l) => Number(l.id) === Number(lead.id));
+  if (idx !== -1) state.crmLeads[idx] = updated;
+
+  // Targeted refresh: only the two columns that could have actually changed
+  // membership, not the whole board (refinement — avoid unnecessary
+  // full-board re-renders after a drag). Falls back to a full render if the
+  // view somehow isn't Kanban anymore (e.g. the filter changed mid-drag).
+  if (getCrmLeadsEffectiveViewMode() === 'kanban') {
+    updateCrmKanbanColumns('crm-leads-kanban-container', getCrmLeadsKanbanConfig(getFilteredCrmLeads()), [fromStatus, toStatus]);
+  } else {
+    CRM_RENDERERS.leads();
+  }
+  if (Number(state.selectedLeadId) === Number(lead.id)) renderLeadDetails();
+}
+
+// `leads` is whatever the caller already fetched via getFilteredCrmLeads()
+// — archived rows are stripped here (not there) so this stays the single
+// place that decides what Kanban is allowed to show, regardless of which
+// archived/all state produced the input array.
+function getCrmLeadsKanbanConfig(leads) {
+  const records = state.filters.crmLeads.archived === 'all' ? leads.filter((l) => !l.is_archived) : leads;
+  return {
+    columns: CRM_LEAD_KANBAN_COLUMNS,
+    records,
+    statusOf: (l) => normalizeCrmLeadStatusForDisplay(l.status || 'new'),
+    canDrag: (l) => isAdmin() && normalizeCrmLeadStatusForDisplay(l.status || 'new') !== 'converted',
+    renderCard: renderCrmLeadKanbanCard,
+    emptyMessage: () => 'No leads',
+    onDrop: handleCrmLeadKanbanDrop,
+  };
+}
+
 function renderCrmLeads() {
   const tbody = $('#crm-leads-table-body');
   const empty = $('#crm-leads-empty');
   const wrapper = $('#crm-leads-table-wrapper');
+  const kanbanContainer = $('#crm-leads-kanban-container');
 
   if (!tbody || !empty || !wrapper) return;
 
@@ -6202,16 +6597,37 @@ function renderCrmLeads() {
   let leads = getFilteredCrmLeads();
   pruneCrmSelection('leads', leads);
 
+  const kanbanAvailable = state.filters.crmLeads.archived !== 'archived';
+  const effectiveMode = getCrmLeadsEffectiveViewMode();
+  syncCrmKanbanViewSwitcherUI('crm-leads-view-switcher', effectiveMode, kanbanAvailable);
+
   if (leads.length === 0) {
     tbody.innerHTML = '';
     empty.classList.remove('hidden');
     wrapper.classList.add('hidden');
+    if (kanbanContainer) kanbanContainer.classList.add('hidden');
     refreshIcons();
     renderCrmSelectionUI('leads');
     return;
   }
 
   empty.classList.add('hidden');
+
+  if (effectiveMode === 'kanban') {
+    wrapper.classList.add('hidden');
+    if (kanbanContainer) {
+      kanbanContainer.classList.remove('hidden');
+      const notice = state.filters.crmLeads.archived === 'all' ? CRM_KANBAN_ARCHIVED_HIDDEN_NOTICE : '';
+      renderCrmKanbanBoard('crm-leads-kanban-container', getCrmLeadsKanbanConfig(leads), { notice });
+    }
+    // Part 3: no bulk selection in Kanban — keep the toolbar out of view
+    // even if rows were selected before switching from Table.
+    $('#crm-bulk-toolbar')?.classList.add('hidden');
+    refreshIcons();
+    return;
+  }
+
+  if (kanbanContainer) kanbanContainer.classList.add('hidden');
   wrapper.classList.remove('hidden');
 
   const admin = isAdmin();
@@ -6444,7 +6860,7 @@ function setCrmTab(tab) {
 // real details view (note/activity/proposal) stay plain text, unchanged.
 function buildCrmTimeline(items) {
   if (!items.length) return '<p class="text-sm text-gray-400 py-3">No activity yet.</p>';
-  const icons = { activity: 'activity', note: 'sticky-note', proposal: 'file-text', company: 'building-2', contact: 'user', lead: 'target', deal: 'handshake' };
+  const icons = { activity: 'activity', note: 'sticky-note', proposal: 'file-text', company: 'building-2', contact: 'user', lead: 'target', deal: 'handshake', project: 'folder' };
   return items
     .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
     .map(item => {
@@ -6854,7 +7270,7 @@ function getFilteredCrmDeals() {
   today.setHours(0, 0, 0, 0);
 
   let deals = state.crmDeals.filter(d =>
-    f.archived === 'archived' ? d.is_archived : !d.is_archived
+    f.archived === 'archived' ? d.is_archived : f.archived === 'all' ? true : !d.is_archived
   );
   if (search) {
     deals = deals.filter(d =>
@@ -6882,10 +7298,103 @@ function getFilteredCrmDeals() {
   return deals;
 }
 
+// Same Active/Archived/All matrix as Leads — see getCrmLeadsEffectiveViewMode.
+function getCrmDealsEffectiveViewMode() {
+  return state.filters.crmDeals.archived === 'archived' ? 'table' : state.crmDealsViewMode;
+}
+
+const CRM_DEAL_KANBAN_COLUMNS = [
+  { status: 'discovery', label: 'Discovery' },
+  { status: 'proposal', label: 'Proposal' },
+  { status: 'negotiation', label: 'Negotiation' },
+  { status: 'won', label: 'Won' },
+  { status: 'lost', label: 'Lost' },
+];
+
+// Compact: company + service combined onto one line instead of two, so
+// every field from Part 6 is still shown but the card stays short.
+function renderCrmDealKanbanCard(d) {
+  const client = state.crmClients.find(c => Number(c.id) === Number(d.client_id));
+  const owner = state.teamMembers.find(m => Number(m.id) === Number(d.owner_id));
+  const value = d.value != null ? `${Number(d.value).toLocaleString()} ${d.currency || 'EGP'}` : null;
+  const serviceLabel = d.service_type_id ? getCrmServiceTypeLabel(d.service_type_id) : '';
+
+  const ownerRow = owner
+    ? `<div class="crm-kanban-card-owner">
+         <div class="w-5 h-5 rounded-full ${avatarColor(owner.name)} flex items-center justify-center text-white text-[9px] font-semibold flex-shrink-0">${initials(owner.name)}</div>
+         <span>${escapeHtml(owner.name)}</span>
+       </div>`
+    : '';
+
+  const companyServiceLine = [client?.client_name, serviceLabel].filter(Boolean).join(' · ');
+
+  return `
+    <button type="button" class="crm-kanban-card-title" data-action="open-deal-details" data-id="${d.id}">${escapeHtml(d.deal_name)}</button>
+    ${companyServiceLine ? `<p class="crm-kanban-card-sub">${escapeHtml(companyServiceLine)}</p>` : ''}
+    ${value ? `<p class="crm-kanban-card-value">${value}</p>` : ''}
+    <div class="crm-kanban-card-footer">
+      ${ownerRow}
+      ${d.probability != null ? `<span class="crm-kanban-card-probability">${d.probability}%</span>` : ''}
+    </div>
+    ${d.expected_close_date ? `<p class="crm-kanban-card-followup">Close: ${fmtDate(d.expected_close_date)}</p>` : ''}
+  `;
+}
+
+// Kanban drag rules (Part 6, with the Lost-blocked correction applied
+// during planning): Won is never a direct write — dragging into it launches
+// the atomic Deal->Project conversion modal (openDealToProjectModal),
+// except from Lost, which is blocked outright (a Lost Deal must be moved
+// back to an active stage and saved first). Every other transition
+// (including into/out of Lost) is a plain stage update.
+async function handleCrmDealKanbanDrop(deal, fromStatus, toStatus) {
+  if (toStatus === 'won') {
+    if (fromStatus === 'lost') {
+      toast('Move this deal to an active stage (Discovery/Proposal/Negotiation) and save, before marking it Won.', 'error');
+      return;
+    }
+    openDealToProjectModal(deal.id, { forceNew: false });
+    return;
+  }
+
+  const updated = await updateCrmDeal(deal.id, { stage: toStatus, updated_at: new Date().toISOString() });
+  if (!updated) return; // error already toasted; nothing written, card stays put
+
+  const idx = state.crmDeals.findIndex((d) => Number(d.id) === Number(deal.id));
+  if (idx !== -1) state.crmDeals[idx] = updated;
+
+  // Targeted refresh: only the two columns that could have actually changed
+  // membership, not the whole board (refinement — avoid unnecessary
+  // full-board re-renders after a drag). Falls back to a full render if the
+  // view somehow isn't Kanban anymore (e.g. the filter changed mid-drag).
+  if (getCrmDealsEffectiveViewMode() === 'kanban') {
+    updateCrmKanbanColumns('crm-deals-kanban-container', getCrmDealsKanbanConfig(getFilteredCrmDeals()), [fromStatus, toStatus]);
+  } else {
+    CRM_RENDERERS.deals();
+  }
+  if (Number(state.selectedDealId) === Number(deal.id)) openDealDetailsModal(deal.id);
+}
+
+// `deals` is whatever the caller already fetched via getFilteredCrmDeals()
+// — archived rows are stripped here (not there), same reasoning as
+// getCrmLeadsKanbanConfig.
+function getCrmDealsKanbanConfig(deals) {
+  const records = state.filters.crmDeals.archived === 'all' ? deals.filter((d) => !d.is_archived) : deals;
+  return {
+    columns: CRM_DEAL_KANBAN_COLUMNS,
+    records,
+    statusOf: (d) => d.stage || 'discovery',
+    canDrag: (d) => isAdmin() && (d.stage || 'discovery') !== 'won',
+    renderCard: renderCrmDealKanbanCard,
+    emptyMessage: () => 'No deals',
+    onDrop: handleCrmDealKanbanDrop,
+  };
+}
+
 function renderCrmDeals() {
   const tbody = $('#crm-deals-table-body');
   const empty = $('#crm-deals-empty');
   const wrapper = $('#crm-deals-table-wrapper');
+  const kanbanContainer = $('#crm-deals-kanban-container');
   if (!tbody || !empty || !wrapper) return;
 
   renderActiveFilterChips('crmDeals');
@@ -6894,15 +7403,34 @@ function renderCrmDeals() {
   let deals = getFilteredCrmDeals();
   pruneCrmSelection('deals', deals);
 
+  const kanbanAvailable = state.filters.crmDeals.archived !== 'archived';
+  const effectiveMode = getCrmDealsEffectiveViewMode();
+  syncCrmKanbanViewSwitcherUI('crm-deals-view-switcher', effectiveMode, kanbanAvailable);
+
   if (deals.length === 0) {
     tbody.innerHTML = '';
     empty.classList.remove('hidden');
     wrapper.classList.add('hidden');
+    if (kanbanContainer) kanbanContainer.classList.add('hidden');
     refreshIcons();
     renderCrmSelectionUI('deals');
     return;
   }
   empty.classList.add('hidden');
+
+  if (effectiveMode === 'kanban') {
+    wrapper.classList.add('hidden');
+    if (kanbanContainer) {
+      kanbanContainer.classList.remove('hidden');
+      const notice = state.filters.crmDeals.archived === 'all' ? CRM_KANBAN_ARCHIVED_HIDDEN_NOTICE : '';
+      renderCrmKanbanBoard('crm-deals-kanban-container', getCrmDealsKanbanConfig(deals), { notice });
+    }
+    $('#crm-bulk-toolbar')?.classList.add('hidden');
+    refreshIcons();
+    return;
+  }
+
+  if (kanbanContainer) kanbanContainer.classList.add('hidden');
   wrapper.classList.remove('hidden');
 
   const admin = isAdmin();
@@ -7609,6 +8137,19 @@ function renderClientDetails() {
         .filter(l => normalizeCrmLeadStatusForDisplay(l.status) === 'converted' && l.updated_at && l.updated_at !== l.created_at)
         .map(l => ({ type: 'lead', title: 'Lead marked Converted', subtitle: l.lead_name, date: l.updated_at, action: 'open-lead-details', id: l.id })),
       ...deals.map(d => ({ type: 'deal', title: 'Deal created', subtitle: d.deal_name, date: d.created_at, action: 'open-deal-details', id: d.id })),
+      // Deal Stage Changed is intentionally NOT synthesized here. There is no
+      // dedicated stage-history table, and updated_at is not a reliable proxy
+      // for "stage changed" — it also moves on unrelated edits (Notes, Owner,
+      // Value, etc.), which would misattribute those edits as a Won/Lost
+      // transition. Showing no event is preferable to showing a
+      // plausible-looking but potentially wrong one; revisit this once a
+      // real stage-change timestamp/history exists.
+      // Project Created — Projects linked to any of this Company's Deals via
+      // projects.deal_id (the atomic Deal->Project conversion RPC always
+      // sets this server-side).
+      ...state.projects
+        .filter(p => deals.some(d => Number(d.id) === Number(p.deal_id)))
+        .map(p => ({ type: 'project', title: 'Project created', subtitle: p.project_name, date: p.created_at, action: 'open-project-details', id: p.id })),
       ...notes.map(n => ({ type: 'note', title: n.body ? n.body.substring(0, 60) + (n.body.length > 60 ? '…' : '') : 'Note', date: n.created_at, owner_id: n.created_by })),
       ...activities.map(a => ({ type: 'activity', title: a.title || labelize(a.activity_type), subtitle: labelize(a.status), date: a.activity_date || a.created_at, owner_id: a.owner_id })),
       ...proposals.map(p => ({ type: 'proposal', title: p.proposal_title, subtitle: labelize(p.status), date: p.sent_date || p.created_at, owner_id: p.owner_id })),
@@ -7854,23 +8395,44 @@ function openDealDetailsModal(id) {
         `).join('');
   }
 
-  // Related Projects — Sprint CRM-5 (multi-project fix). A Won Deal may
-  // produce any number of Projects, so the Create Project button always
-  // stays available once Won, and every linked Project is listed below it.
+  // Related Projects — multi-project-per-Deal is an approved business rule
+  // (crm_deal_project_multi_project_fix_migration.sql), so a Won Deal may
+  // have any number of linked Projects. Three distinct states now:
+  //   - not Won yet: unchanged placeholder.
+  //   - Won with zero Projects (legacy data, e.g. "NovaBuild Launch
+  //     Campaign"): warning banner + a Repair button that runs the same
+  //     atomic RPC as the normal Won flow.
+  //   - Won with >=1 Project: list them, plus an explicit "Create
+  //     Additional Project" action (admin-only) for deliberately adding
+  //     another — the RPC's duplicate-guard only protects a double-fire of
+  //     the SAME click, so this always goes through with p_force_new=true.
   const projectEl = $('#deal-details-modal-project');
   if (projectEl) {
-    const linkedProjects = state.projects.filter(p => Number(p.deal_id) === id);
+    const linkedProjects = getProjectsForDeal(id);
     if (deal.stage !== 'won') {
       projectEl.innerHTML = '<p class="text-sm text-gray-400">Available once this Deal is Won.</p>';
-    } else {
-      const createBtn = `
-        <button class="h-9 px-4 inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg shadow-sm" data-action="create-project-from-deal" data-id="${deal.id}">
-          <i data-lucide="folder-plus" class="w-4 h-4"></i> Create Project
-        </button>
+    } else if (linkedProjects.length === 0) {
+      const repairBtn = isAdmin()
+        ? `<button class="h-9 px-4 inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg shadow-sm" data-action="repair-deal-project" data-id="${deal.id}">
+             <i data-lucide="folder-plus" class="w-4 h-4"></i> Create Linked Project (Repair)
+           </button>`
+        : '';
+      projectEl.innerHTML = `
+        <div class="space-y-3">
+          <div class="flex items-start gap-2 px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-lg">
+            <i data-lucide="alert-triangle" class="w-4 h-4 text-amber-600 shrink-0 mt-0.5"></i>
+            <p class="text-sm text-amber-800">Won Deal has no linked Project.</p>
+          </div>
+          ${repairBtn}
+        </div>
       `;
-      const list = linkedProjects.length === 0
-        ? '<p class="text-sm text-gray-400">No related projects yet.</p>'
-        : `<div class="space-y-2">${linkedProjects.map(p => {
+    } else {
+      const additionalBtn = isAdmin()
+        ? `<button class="h-9 px-4 inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg shadow-sm" data-action="create-additional-project" data-id="${deal.id}">
+             <i data-lucide="folder-plus" class="w-4 h-4"></i> Create Additional Project
+           </button>`
+        : '';
+      const list = `<div class="space-y-2">${linkedProjects.map(p => {
             const status = (p.status || 'planning').toLowerCase();
             return `
               <button class="w-full flex items-center justify-between gap-3 py-2 px-3 border border-gray-200 rounded-lg hover:bg-gray-50 transition text-left" data-action="open-project-details" data-id="${p.id}">
@@ -7882,7 +8444,7 @@ function openDealDetailsModal(id) {
               </button>
             `;
           }).join('')}</div>`;
-      projectEl.innerHTML = `<div class="space-y-3">${createBtn}${list}</div>`;
+      projectEl.innerHTML = `<div class="space-y-3">${list}${additionalBtn}</div>`;
     }
     refreshIcons();
   }
@@ -14668,6 +15230,7 @@ function normalizePayload(formData) {
 function openCreateProjectModal() {
   state.editingProjectId = null;
   state.projectCreationSourceDealId = null;
+  state.projectConversionForceNew = false;
 
   const form = $('#project-form');
 
@@ -14701,32 +15264,44 @@ function openCreateProjectModal() {
   openModal('project-modal');
 }
 
-// Sprint CRM-5 — explicit, user-triggered "Create Project" action from a Won
-// Deal (see the Related Projects section in openDealDetailsModal()). Project
-// creation is never automatic on stage change; this is the only path that
-// creates a Project from a Deal, and only when the user clicks it. Reuses
-// the existing New Project modal/handler rather than a separate form. A Deal
-// may produce multiple Projects, so the only guard is that the Deal must be
-// Won — re-checked in handleProjectSubmit() as the authoritative enforcement
-// point; this function's check only prevents the modal from opening in an
-// invalid state.
-function openCreateProjectFromDeal(dealId) {
-  if (!isAdmin()) return;
+// Explicit, user-triggered Deal -> Project conversion entry point (Kanban
+// Won drag, Deal Edit -> Won interception, and the Deal Details repair /
+// "Create Additional Project" buttons all funnel through this one
+// function). Reuses the existing New Project modal/handler rather than a
+// separate form. Unlike the old openCreateProjectFromDeal() this replaces,
+// it does NOT require the Deal to already be Won — it runs *before* the
+// Deal becomes Won; the atomic convert_crm_deal_to_project RPC flips the
+// stage only once the Project is actually saved (handleProjectSubmit() is
+// the authoritative re-check, since state can go stale while this modal
+// sits open). forceNew=true is only used by "Create Additional Project" on
+// a Deal that already has a Won stage and >=1 linked Project.
+function openDealToProjectModal(dealId, { forceNew = false } = {}) {
   const deal = state.crmDeals.find(d => Number(d.id) === Number(dealId));
   if (!deal) { toast('Deal not found', 'error'); return; }
-  if (deal.stage !== 'won') { toast('This Deal must be Won before creating a Project.', 'error'); return; }
+  if (!canConvertDealToProject(deal, { forceNew })) {
+    if (deal.stage === 'lost') {
+      toast('Move this deal to an active stage (Discovery/Proposal/Negotiation) and save, before marking it Won.', 'error');
+    } else {
+      toast('This deal is not eligible for Project conversion right now.', 'error');
+    }
+    return;
+  }
 
   openCreateProjectModal();
 
   const client = state.crmClients.find(c => Number(c.id) === Number(deal.client_id));
   const form = $('#project-form');
+  if (form?.project_name && !form.project_name.value.trim()) {
+    form.project_name.value = deal.deal_name || '';
+  }
   if (form?.client && client) {
     form.client.value = client.client_name || '';
   }
 
   state.projectCreationSourceDealId = deal.id;
+  state.projectConversionForceNew = forceNew;
   const title = $('#project-modal-title');
-  if (title) title.textContent = 'Create Project from Deal';
+  if (title) title.textContent = forceNew ? 'Create Additional Project' : 'Create Project from Deal';
 }
 
 function openEditProjectModal(id) {
@@ -14739,6 +15314,7 @@ function openEditProjectModal(id) {
 
   state.editingProjectId = id;
   state.projectCreationSourceDealId = null;
+  state.projectConversionForceNew = false;
 
   const form = $('#project-form');
 
@@ -15562,6 +16138,43 @@ function openEditDealModal(id) {
   openModal('deal-modal');
 }
 
+// Fields a user can actually edit in the Deal form — mirrors
+// LEAD_FORM_COMPARABLE_FIELDS. Deliberately excludes `stage` itself (that's
+// the very reason this check runs — it's compared separately).
+const DEAL_FORM_COMPARABLE_FIELDS = [
+  'client_id', 'deal_name', 'value', 'currency', 'expected_close_date',
+  'probability', 'owner_id', 'service_type_id', 'lead_id', 'notes',
+];
+
+// Returns the subset of DEAL_FORM_COMPARABLE_FIELDS whose current form
+// value differs from the stored Deal. Read-only — never mutates the form.
+function getChangedDealFields(form, existingDeal) {
+  const payload = normalizePayload(new FormData(form));
+  // Expected Close Date is disabled (and therefore excluded from FormData)
+  // whenever the Stage select shows Won/Lost — see updateDealExpectedCloseLock().
+  // Read it directly from the input instead so a locked-but-unchanged date
+  // never false-positives this check during the very Won transition it guards.
+  if (form.expected_close_date) payload.expected_close_date = form.expected_close_date.value || '';
+  return DEAL_FORM_COMPARABLE_FIELDS.filter((key) => {
+    const formVal = payload[key] == null ? '' : String(payload[key]).trim();
+    const existingVal = existingDeal[key] == null ? '' : String(existingDeal[key]).trim();
+    return formVal !== existingVal;
+  });
+}
+
+// Opens the "Continue to Project Creation?" warning on top of the still-open
+// Deal Edit modal (mirrors openLeadConversionConfirm()). Its own dedicated
+// close action hides only itself — never the generic close-modal — so the
+// Deal Edit modal and every unsaved field value stay exactly as they were.
+function openDealConversionConfirm(dealId) {
+  state.pendingDealConversionId = dealId;
+  openModal('deal-conversion-confirm-modal');
+}
+function closeDealConversionConfirm() {
+  state.pendingDealConversionId = null;
+  $('#deal-conversion-confirm-modal')?.classList.add('hidden');
+}
+
 async function handleDealSubmit(e) {
   e.preventDefault();
   if (!isAdmin()) return;
@@ -15575,6 +16188,52 @@ async function handleDealSubmit(e) {
   // explicit JS backstop, same pattern as Lead's contact check above).
   if (!form.client_id.value) {
     toast('Select a company before saving this deal.', 'error');
+    return;
+  }
+
+  // Won-transition interception (Parts 7 + 11) — mirrors handleLeadSubmit's
+  // 'converted' interception exactly. Selecting Won and saving never writes
+  // the Deal directly; it launches the atomic Deal->Project conversion
+  // modal instead, and the Deal only becomes Won as a side effect of
+  // convert_crm_deal_to_project() succeeding once that Project is saved.
+  // Skipped entirely when converting from a Lead (conversionLeadId set) —
+  // that's a different, unrelated creation flow this sprint doesn't touch.
+  const selectedStage = form.stage ? form.stage.value : null;
+  const existingDeal = isEditing ? state.crmDeals.find((d) => Number(d.id) === Number(state.editingDealId)) : null;
+  const existingStage = existingDeal ? (existingDeal.stage || 'discovery') : null;
+
+  if (!conversionLeadId && selectedStage === 'won' && existingStage !== 'won') {
+    if (!isEditing || !existingDeal) {
+      toast('Save the Deal first, then edit it to set Won.', 'error');
+      return;
+    }
+    if (!canConvertDealToProject(existingDeal)) {
+      if (existingDeal.stage === 'lost') {
+        toast('Move this deal to an active stage (Discovery/Proposal/Negotiation) and save, before marking it Won.', 'error');
+      } else {
+        toast('This deal is not eligible for Project conversion right now.', 'error');
+      }
+      return;
+    }
+
+    // Any other field edits made in this same session would otherwise be
+    // silently discarded (conversion never saves the Deal — see below).
+    // Warn instead of silently dropping them, same UX safety fix already
+    // applied to Lead conversion. The Deal Edit modal stays open and
+    // untouched here — nothing is written and nothing is closed until the
+    // user picks Continue or Cancel.
+    const changedFields = getChangedDealFields(form, existingDeal);
+    if (changedFields.length > 0) {
+      openDealConversionConfirm(existingDeal.id);
+      return;
+    }
+
+    // No other field edits — proceed straight to the Project modal. The
+    // Deal itself is left completely untouched until
+    // convert_crm_deal_to_project() succeeds.
+    state.editingDealId = null;
+    closeModal();
+    openDealToProjectModal(existingDeal.id, { forceNew: false });
     return;
   }
 
@@ -16152,23 +16811,23 @@ async function handleProjectSubmit(e) {
   const form = e.target;
   const submitBtn = form.querySelector('button[type=submit]');
   const isEditing = state.editingProjectId !== null;
+  const sourceDealId = !isEditing ? state.projectCreationSourceDealId : null;
+  const forceNew = state.projectConversionForceNew;
 
-  // Sprint CRM-5 — authoritative guard for Deal → Project conversion. The
-  // modal only opens in this state via openCreateProjectFromDeal(), which
-  // already checked this, but state can go stale (e.g. the Deal was edited
-  // in another tab while this modal sat open), so re-validate here as the
-  // real enforcement point rather than trusting the UI alone. A Deal may
-  // produce multiple Projects, so the only requirement is that it's Won.
-  let sourceDealId = null;
-  if (!isEditing && state.projectCreationSourceDealId != null) {
-    const deal = state.crmDeals.find(d => Number(d.id) === Number(state.projectCreationSourceDealId));
-    if (!deal || deal.stage !== 'won') {
+  // Authoritative guard for Deal -> Project conversion. openDealToProjectModal()
+  // already checked this when the modal opened, but state can go stale (e.g.
+  // the Deal was edited in another tab while this modal sat open), so
+  // re-validate here as the real enforcement point rather than trusting the
+  // UI alone.
+  if (sourceDealId != null) {
+    const deal = state.crmDeals.find(d => Number(d.id) === Number(sourceDealId));
+    if (!deal || !canConvertDealToProject(deal, { forceNew })) {
       toast('This Deal can no longer be converted to a Project. Please re-open it from Deal Details.', 'error');
       state.projectCreationSourceDealId = null;
+      state.projectConversionForceNew = false;
       closeModal();
       return;
     }
-    sourceDealId = deal.id;
   }
 
   submitBtn.disabled = true;
@@ -16180,7 +16839,51 @@ async function handleProjectSubmit(e) {
 
   if (!isEditing) {
     payload.project_code = generateProjectCode();
-    if (sourceDealId != null) payload.deal_id = sourceDealId;
+  }
+
+  // Deal -> Project conversion: atomic RPC, narrow patch, no full refresh.
+  if (sourceDealId != null) {
+    const result = await convertCrmDealToProject(sourceDealId, payload, forceNew);
+
+    submitBtn.disabled = false;
+    submitBtn.innerHTML = `<i data-lucide="check" class="w-4 h-4"></i> Create project`;
+    refreshIcons();
+
+    if (!result) return; // error already toasted; nothing written, local state untouched
+
+    state.projectCreationSourceDealId = null;
+    state.projectConversionForceNew = false;
+    form.reset();
+    closeModal();
+
+    const projectIdx = state.projects.findIndex((p) => Number(p.id) === Number(result.project.id));
+    if (projectIdx !== -1) state.projects[projectIdx] = result.project;
+    else state.projects.push(result.project);
+
+    const dealIdx = state.crmDeals.findIndex((d) => Number(d.id) === Number(result.deal.id));
+    if (dealIdx !== -1) state.crmDeals[dealIdx] = result.deal;
+
+    if (!result.duplicate) {
+      await notifyAdmins({
+        title: `${getActorName()} created a project`,
+        message: `${result.project.project_name || 'A project'} was created.`,
+        type: 'project_created',
+        entityType: 'project',
+        entityId: result.project.id,
+      });
+    }
+
+    toast(
+      result.duplicate ? 'A project already exists for this deal — showing it below.' : 'Deal converted to Project.',
+      result.duplicate ? 'info' : 'success'
+    );
+
+    // Narrow re-render only — no full refetch, no page reload.
+    CRM_RENDERERS.deals();
+    renderProjects();
+    if (Number(state.selectedDealId) === Number(result.deal.id)) openDealDetailsModal(Number(result.deal.id));
+    if (Number(state.selectedClientId) === Number(result.deal.client_id)) renderClientDetails();
+    return;
   }
 
   let result = null;
@@ -16209,12 +16912,7 @@ async function handleProjectSubmit(e) {
     closeModal();
 
     await refreshDataAndRender();
-
-    if (sourceDealId != null) {
-      openDealDetailsModal(Number(sourceDealId));
-    } else {
-      setView('projects');
-    }
+    setView('projects');
   }
 }
 
@@ -19790,6 +20488,29 @@ document.addEventListener('click', (e) => {
     return;
   }
 
+  if (action === 'close-deal-conversion-confirm') {
+    closeDealConversionConfirm();
+    return;
+  }
+
+  if (action === 'continue-deal-conversion') {
+    const dealId = state.pendingDealConversionId;
+    state.pendingDealConversionId = null;
+    $('#deal-conversion-confirm-modal')?.classList.add('hidden');
+    const deal = state.crmDeals.find((d) => Number(d.id) === Number(dealId));
+    if (!deal || !canConvertDealToProject(deal)) {
+      // Re-checked here too (not just when the warning was opened) — the
+      // actual write path (openDealToProjectModal -> handleProjectSubmit)
+      // re-checks again regardless, but fail fast with a clear message.
+      toast('This deal is not eligible for Project conversion right now.', 'error');
+      return;
+    }
+    state.editingDealId = null;
+    closeModal();
+    openDealToProjectModal(deal.id, { forceNew: false });
+    return;
+  }
+
   if (action === 'back-to-projects') {
     state.selectedProjectId = null;
     setView('projects');
@@ -20074,9 +20795,15 @@ if (action === 'edit-deal') {
   return;
 }
 
-if (action === 'create-project-from-deal') {
+if (action === 'repair-deal-project') {
   closeModal(); // Deal Details is a modal — close it first so the Project modal isn't stacked behind it
-  openCreateProjectFromDeal(Number(trigger.dataset.id));
+  openDealToProjectModal(Number(trigger.dataset.id), { forceNew: false });
+  return;
+}
+
+if (action === 'create-additional-project') {
+  closeModal(); // Deal Details is a modal — close it first so the Project modal isn't stacked behind it
+  openDealToProjectModal(Number(trigger.dataset.id), { forceNew: true });
   return;
 }
 
@@ -21189,6 +21916,29 @@ $('#tasks-view-switcher')?.addEventListener('click', (e) => {
   renderTasks();
 });
 
+// CRM Leads/Deals view mode switchers (Kanban / Table) — same pattern as
+// the Tasks switcher above, persisted separately per entity (Part 4).
+$('#crm-leads-view-switcher')?.addEventListener('click', (e) => {
+  const btn = e.target.closest('.view-mode-btn');
+  if (!btn) return;
+  state.crmLeadsViewMode = btn.dataset.viewMode;
+  localStorage.setItem('tgora_crm_leads_view_mode', state.crmLeadsViewMode);
+  renderCrmLeads();
+});
+$('#crm-deals-view-switcher')?.addEventListener('click', (e) => {
+  const btn = e.target.closest('.view-mode-btn');
+  if (!btn) return;
+  state.crmDealsViewMode = btn.dataset.viewMode;
+  localStorage.setItem('tgora_crm_deals_view_mode', state.crmDealsViewMode);
+  renderCrmDeals();
+});
+
+// CRM Kanban drag & drop wiring (Leads + Deals) — reuses the generic
+// wireCrmKanbanDragDrop() engine; each getConfig() call re-derives the
+// current filtered records so a drop always validates against live data.
+wireCrmKanbanDragDrop('crm-leads-kanban-container', () => getCrmLeadsKanbanConfig(getFilteredCrmLeads()));
+wireCrmKanbanDragDrop('crm-deals-kanban-container', () => getCrmDealsKanbanConfig(getFilteredCrmDeals()));
+
 // Kanban drag & drop — delegated from the persistent container so listeners
 // survive innerHTML re-renders of the board.
 const _kanbanContainer = $('#tasks-kanban-container');
@@ -21715,10 +22465,8 @@ subscribeToRealtimeChanges();
   await runMonthlyTaskArchiveIfNeeded();
 }
 
-// KPI / widget info icon tooltip (delegated hover)
-document.addEventListener('mouseover', (e) => {
-  const circle = e.target.closest('.kpi-info-circle, .widget-info-icon');
-  if (!circle) return;
+// KPI / widget info icon tooltip (delegated hover + keyboard focus)
+function showInfoIconTooltip(circle) {
   let tip = document.getElementById('kpi-tooltip-popup');
   if (!tip) {
     tip = document.createElement('div');
@@ -21736,14 +22484,34 @@ document.addEventListener('mouseover', (e) => {
   tip.style.left = `${left}px`;
   tip.style.top  = `${rect.bottom + 6 + window.scrollY}px`;
   tip.classList.remove('hidden');
+}
+function hideInfoIconTooltip() {
+  const tip = document.getElementById('kpi-tooltip-popup');
+  if (tip) tip.classList.add('hidden');
+}
+document.addEventListener('mouseover', (e) => {
+  const circle = e.target.closest('.kpi-info-circle, .widget-info-icon');
+  if (!circle) return;
+  showInfoIconTooltip(circle);
 });
 document.addEventListener('mouseout', (e) => {
   const circle = e.target.closest('.kpi-info-circle, .widget-info-icon');
   if (!circle) return;
   if (e.relatedTarget && circle.contains(e.relatedTarget)) return;
-  const tip = document.getElementById('kpi-tooltip-popup');
-  if (tip) tip.classList.add('hidden');
+  hideInfoIconTooltip();
 });
+// Keyboard-focus support (Part 2 accessibility requirement) — same popup,
+// triggered by focus/blur instead of hover so tabbing to the icon shows it.
+document.addEventListener('focus', (e) => {
+  const circle = e.target.closest?.('.kpi-info-circle, .widget-info-icon');
+  if (!circle) return;
+  showInfoIconTooltip(circle);
+}, true);
+document.addEventListener('blur', (e) => {
+  const circle = e.target.closest?.('.kpi-info-circle, .widget-info-icon');
+  if (!circle) return;
+  hideInfoIconTooltip();
+}, true);
 
 document.addEventListener('DOMContentLoaded', async () => {
   const loginForm = $('#login-form');
